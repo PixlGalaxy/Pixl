@@ -9,6 +9,11 @@ on:
       - main
   release:
     types: [created]
+    
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
 
 jobs:
   docker:
