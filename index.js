@@ -93,7 +93,7 @@ try {
     prism.FFmpeg.getInfo(true);
 } catch {
     console.info("[INFO] Couldn't find FFmpeg/avconv, trying to install ffmpeg-static...");
-    npmInstall(false, false, ["--no-save", "ffmpeg-static"]);
+    npmInstall(false, false, ["add", "ffmpeg-static"]);
     console.info("[INFO] ffmpeg-static has been installed.");
 }
 
