@@ -10,7 +10,7 @@ COPY package.json pnpm-lock.yaml *.npmrc  ./
 RUN pnpm fetch
 
 # Install dependencies
-RUN pnpm install --offline --frozen-lockfile --legacy-peer-deps
+RUN pnpm install --offline --frozen-lockfile --strict-peer-dependencies=false
 
 # Copy Project files
 COPY . .
