@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { ActionRowBuilder, ApplicationCommandOptionType, CommandInteractionOptionResolver, ComponentType, escapeMarkdown, Message, SelectMenuComponentOptionData, StringSelectMenuBuilder, StringSelectMenuInteraction } from "discord.js";
+import { ActionRowBuilder, ApplicationCommandOptionType, CommandInteractionOptionResolver, ComponentType, escapeMarkdown, Message, SelectMenuComponentOptionData, StringSelectMenuBuilder, StringSelectMenuInteraction, TextChannel } from "discord.js";
 import i18n from "../../config/index.js";
 import { BaseCommand } from "../../structures/BaseCommand.js";
 import { CommandContext } from "../../structures/CommandContext.js";
@@ -64,8 +64,11 @@ export class SearchCommand extends BaseCommand {
                 .channel?.messages.fetch((ctx.context as StringSelectMenuInteraction).message.id)
                 .catch(() => void 0);
             if (prev !== undefined) {
-                const selection = prev.components[0].components.find(x => x.type === ComponentType.StringSelect);
-                if (!selection) return;
+                const selection = prev.components
+                    .filter(row => row.type === ComponentType.ActionRow)
+                    .flatMap(row => row.components)
+                    .find(x => x.type === ComponentType.StringSelect);
+                if (selection === undefined) return;
                 const disabledMenu = new StringSelectMenuBuilder()
                     .setDisabled(true)
                     .setCustomId(selection.customId ?? "")
@@ -145,7 +148,7 @@ export class SearchCommand extends BaseCommand {
                     .setFooter({ text: i18n.__mf("commands.music.search.cancelMessage", { cancel: "cancel", c: "c" }) })
             ]
         });
-        const respond = await msg.channel
+        const respond = await (msg.channel as TextChannel)
             .awaitMessages({
                 errors: ["time"],
                 filter: ms => {
@@ -159,7 +162,7 @@ export class SearchCommand extends BaseCommand {
                 max: 1
             })
             .catch(() => void 0);
-        if (!respond) {
+        if (respond === undefined) {
             await msg.delete().catch((error: unknown) => this.client.logger.error("SEARCH_SELECTION_DELETE_MSG_ERR:", error));
             await ctx.reply({
                 embeds: [createEmbed("error", i18n.__("commands.music.search.noSelection"), true)]

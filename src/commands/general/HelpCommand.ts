@@ -105,8 +105,11 @@ export class HelpCommand extends BaseCommand {
                 .fetch((ctx.context as StringSelectMenuInteraction).message.id)
                 .catch(() => void 0);
             if (msg !== undefined) {
-                const selection = msg.components[0].components.find(x => x.type === ComponentType.StringSelect);
-                if (!selection) return;
+                const selection = msg.components
+                    .filter(row => row.type === ComponentType.ActionRow)
+                    .flatMap(row => row.components)
+                    .find(x => x.type === ComponentType.StringSelect);
+                if (selection === undefined) return;
                 const disabledMenu = new StringSelectMenuBuilder()
                     .setCustomId(selection.customId ?? "")
                     .setDisabled(true)
