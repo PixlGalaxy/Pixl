@@ -16,12 +16,11 @@ function args(url, options) {
     const optArgs = Object.entries(options)
         .flatMap(([key, val]) => {
             const flag = key.replaceAll(/[A-Z]/gu, ms => `-${ms.toLowerCase()}`);
-            return [
-                `--${(typeof v === "boolean") && !val ? "no-" : ""}${flag}`,
-                typeof v === "boolean" ? "" : val
-            ]
-        })
-        .filter(Boolean);
+            if (typeof val === "boolean") {
+                return [`--${val ? "" : "no-"}${flag}`];
+            }
+            return [`--${flag}`, String(val)];
+        });
 
     return [url, ...optArgs];
 }
