@@ -27,15 +27,9 @@ export async function handleVideos(
         }
 
         const opening = i18n.__mf("utils.generalHandler.handleVideoInitial", { length: toQueue.length });
-        const pages = await Promise.all(
-            chunk(toQueue, 10).map(async (vals, i) => {
-                const texts = await Promise.all(
-                    vals.map((song, index) => `${i * 10 + (index + 1)}.) ${escapeMarkdown(parseHTMLElements(song.title))}`)
-                );
-
-                return texts.join("\n");
-            })
-        );
+        const pages = chunk(toQueue, 10).map((vals, i) => vals
+            .map((song, index) => `${i * 10 + (index + 1)}.) ${escapeMarkdown(parseHTMLElements(song.title))}`)
+            .join("\n"));
         const embed = createEmbed("info", opening);
         const msg = await ctx.reply({ embeds: [embed] }, true);
 
@@ -99,8 +93,8 @@ export async function handleVideos(
         );
 
         client.logger.error("PLAY_CMD_ERR:", error);
-        await ctx
-            .channel?.send({
+        await (ctx.channel as TextChannel | null)
+            ?.send({
                 embeds: [
                     createEmbed(
                         "error",
