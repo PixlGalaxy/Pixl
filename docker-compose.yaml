@@ -15,9 +15,11 @@ services:
       - net
     volumes:
       - pixl:/app/scripts
+      - pixl-data:/app/data
 
 networks:
   net:
 
 volumes:
   pixl:
+  pixl-data:

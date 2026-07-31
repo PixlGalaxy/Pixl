@@ -43,6 +43,7 @@ ENV NODE_ENV production
 
 # Add scripts volumes
 VOLUME /app/scripts
+VOLUME /app/data
 
 # Start the app with node
 CMD ["node", "--es-module-specifier-resolution=node", "index.js"]
