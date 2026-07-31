@@ -11,7 +11,7 @@ export class SongManager extends Collection<Snowflake, QueueSong> {
     }
 
     public addSong(song: Song, requester: GuildMember): Snowflake {
-        const key = SnowflakeUtil.generate().toLocaleString();
+        const key = SnowflakeUtil.generate().toString();
         const data: QueueSong = {
             index: this.id++,
             key,
@@ -29,6 +29,7 @@ export class SongManager extends Collection<Snowflake, QueueSong> {
             "SONG_MANAGER",
             `New value added to ${this.guild.name}(${this.guild.id}) song manager. Key: ${key}`
         );
+        (this.client as Rawon | undefined)?.queueState.requestSave();
         return super.set(key, data);
     }
 
@@ -38,7 +39,13 @@ export class SongManager extends Collection<Snowflake, QueueSong> {
             "SONG_MANAGER",
             `Value ${key} deleted from ${this.guild.name}(${this.guild.id}) song manager.`
         );
+        (this.client as Rawon | undefined)?.queueState.requestSave();
         return super.delete(key);
+    }
+
+    public clear(): void {
+        super.clear();
+        (this.client as Rawon | undefined)?.queueState.requestSave();
     }
 
     public sortByIndex(): this {
