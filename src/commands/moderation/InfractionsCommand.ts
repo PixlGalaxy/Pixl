@@ -54,19 +54,13 @@ export class InfractionsCommand extends BaseCommand {
             return;
         }
 
-        const pages = await Promise.all(
-            chunk(infractions, 10).map(async (st, ind) => {
-                const infracts = await Promise.all(
-                    st.map(
-                        (inf, i) =>
-                            `${ind * 10 + (i + 1)}. ${formatTime(inf.on)} - ${inf.reason ?? i18n.__("commands.moderation.common.noReasonString")
-                            }`
-                    )
-                );
-
-                return infracts.join("\n");
-            })
-        );
+        const pages = chunk(infractions, 10).map((st, ind) => st
+            .map(
+                (inf, i) =>
+                    `${ind * 10 + (i + 1)}. ${formatTime(inf.on)} - ${inf.reason ?? i18n.__("commands.moderation.common.noReasonString")
+                    }`
+            )
+            .join("\n"));
         const msg = await ctx.reply({
             embeds: [
                 embed.setDescription(pages[0]).setFooter({
