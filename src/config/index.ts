@@ -9,9 +9,9 @@ import { lang, enablePrefix, enableSlashCommand } from "./env.js";
 const intents: number[] = [
     IntentsBitField.Flags.Guilds,
     IntentsBitField.Flags.GuildMessages,
-    IntentsBitField.Flags.GuildEmojisAndStickers,
+    IntentsBitField.Flags.GuildExpressions,
     IntentsBitField.Flags.GuildVoiceStates,
-    IntentsBitField.Flags.GuildBans
+    IntentsBitField.Flags.GuildModeration
 ];
 
 // Check if enablePrefix is true and activate MessageContent
@@ -25,26 +25,45 @@ if (!enablePrefix && !enableSlashCommand) {
     process.exit(1);
 }
 
+const botUserSweepFilter = (user: { bot: boolean; id: string; client: { user: { id: string } } }): boolean =>
+    user.bot && user.id !== user.client.user.id;
+
 // Define client options
 export const clientOptions: ClientOptions = {
     allowedMentions: { parse: ["users"], repliedUser: true },
     intents,
     makeCache: Options.cacheWithLimits({
-        MessageManager: { maxSize: Infinity },
-        ThreadManager: { maxSize: Infinity }
+        ...Options.DefaultMakeCacheSettings,
+        MessageManager: { maxSize: 50 },
+        ThreadManager: { maxSize: 50 },
+        PresenceManager: 0,
+        ReactionManager: 0,
+        ReactionUserManager: 0,
+        GuildEmojiManager: 0,
+        GuildStickerManager: 0,
+        BaseGuildEmojiManager: 0,
+        GuildScheduledEventManager: 0,
+        GuildInviteManager: 0,
+        AutoModerationRuleManager: 0,
+        StageInstanceManager: 0
     }),
     sweepers: {
+        ...Options.DefaultSweeperSettings,
         messages: {
             interval: 300,
-            filter: Sweepers.filterByLifetime({ lifetime: 10_800 })
+            filter: Sweepers.filterByLifetime({ lifetime: 3_600 })
         },
         threads: {
             interval: 300,
             filter: Sweepers.filterByLifetime({
-                lifetime: 10_800,
+                lifetime: 3_600,
                 getComparisonTimestamp: (el) => el.archiveTimestamp ?? 0,
                 excludeFromSweep: (el) => el.archived !== true
             })
+        },
+        users: {
+            interval: 3_600,
+            filter: () => botUserSweepFilter
         }
     }
 };
