@@ -14,4 +14,13 @@ export default [...common, ...modules, ...node, ...prettier, ...extend(typescrip
         "play-dl-importer/*",
         "play-dl-fix/*"
     ]
+}, {
+    rules: {
+        "tsdoc/syntax": "off",
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-argument": "off",
+        "typescript/no-unsafe-return": "off"
+    }
 }];
