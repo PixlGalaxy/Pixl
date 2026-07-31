@@ -1,12 +1,13 @@
-import { setInterval } from "node:timers";
+import { setInterval, setTimeout } from "node:timers";
 import { ActivityType, Presence } from "discord.js";
 import i18n from "../config/index.js";
 import { BaseEvent } from "../structures/BaseEvent.js";
 import { EnvActivityTypes } from "../typings/index.js";
 import { Event } from "../utils/decorators/Event.js";
 import { formatMS } from "../utils/functions/formatMS.js";
+import { restoreQueues } from "../utils/handlers/general/restoreQueues.js";
 
-@Event<typeof ReadyEvent>("ready")
+@Event<typeof ReadyEvent>("clientReady")
 export class ReadyEvent extends BaseEvent {
     public async execute(): Promise<void> {
         if (this.client.application?.owner) {
@@ -26,6 +27,12 @@ export class ReadyEvent extends BaseEvent {
         })
         await this.client.commands.load();
         this.client.logger.info(`Ready took ${formatMS(Date.now() - this.client.startTimestamp)}`);
+
+        this.client.queueState.start();
+        await restoreQueues(this.client).catch((error: unknown) =>
+            this.client.logger.error("QUEUE_RESTORE_ERR:", error)
+        );
+        setTimeout(() => void this.client.queueState.cleanOrphanFiles(), 300_000).unref();
 
         await this.doPresence();
         this.client.logger.info(
