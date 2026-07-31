@@ -1,4 +1,4 @@
-import { AudioPlayerPlayingState } from "@discordjs/voice";
+import { AudioPlayerPlayingState, AudioResource } from "@discordjs/voice";
 import i18n from "../../config/index.js";
 import { BaseCommand } from "../../structures/BaseCommand.js";
 import { CommandContext } from "../../structures/CommandContext.js";
@@ -22,23 +22,20 @@ import { SongManager } from "../../utils/structures/SongManager.js";
 export class QueueCommand extends BaseCommand {
     @haveQueue
     public async execute(ctx: CommandContext): Promise<void> {
-        const np = (ctx.guild?.queue?.player.state as AudioPlayerPlayingState).resource.metadata as QueueSong;
+        const np = (
+            ctx.guild?.queue?.player.state as (AudioPlayerPlayingState & { resource: AudioResource | undefined }) | undefined
+        )?.resource?.metadata as QueueSong | undefined;
         const full = ctx.guild?.queue?.songs.sortByIndex() as unknown as SongManager;
-        const songs = ctx.guild?.queue?.loopMode === "QUEUE" ? full : full.filter(val => val.index >= np.index);
-        const pages = await Promise.all(
-            chunk([...songs.values()], 10).map(async (sngs, ind) => {
-                const names = await Promise.all(
-                    sngs.map((song, i) => {
-                        const npKey = np.key;
-                        const addition = song.key === npKey ? "**" : "";
+        const songs = ctx.guild?.queue?.loopMode === "QUEUE" || np === undefined
+            ? full
+            : full.filter(val => val.index >= np.index);
+        const pages = chunk([...songs.values()], 10).map((sngs, ind) => sngs
+            .map((song, i) => {
+                const addition = song.key === np?.key ? "**" : "";
 
-                        return `${addition}${ind * 10 + (i + 1)} - [${song.song.title}](${song.song.url})${addition}`;
-                    })
-                );
-
-                return names.join("\n");
+                return `${addition}${ind * 10 + (i + 1)} - [${song.song.title}](${song.song.url})${addition}`;
             })
-        );
+            .join("\n"));
         const embed = createEmbed("info", pages[0]).setThumbnail(ctx.guild?.iconURL({ extension: "png", size: 1_024 }) ?? null);
         const msg = await ctx.reply({ embeds: [embed] });
 
