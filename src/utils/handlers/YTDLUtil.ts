@@ -1,5 +1,7 @@
 /* eslint-disable unicorn/filename-case */
 /* eslint-disable typescript/naming-convention */
+import { spawn } from "node:child_process";
+import process from "node:process";
 import type { Readable } from "node:stream";
 import ytdl, { exec } from "../../../yt-dlp-utils/index.js";
 import { streamStrategy } from "../../config/index.js";
@@ -15,47 +17,61 @@ export async function getStream(client: Rawon, url: string): Promise<Readable> {
     if (streamStrategy === "play-dl") {
         const isSoundcloudUrl = checkQuery(url);
         if (isSoundcloudUrl.sourceType === "soundcloud") {
-            return client.soundcloud.util.streamTrack(url) as unknown as Readable;
+            return client.soundcloud.util.streamTrack(url);
         }
         const rawPlayDlStream = await pldlStream?.(url, { discordPlayerCompatibility: true });
         return rawPlayDlStream?.stream as unknown as Readable;
     }
 
-  return new Promise<Readable>((resolve, reject) => {
-    const proc = exec(
-      url,
-      {
-        output: "-",
-        quiet: true,
-        format: "bestaudio",
-        limitRate: "300K"
-      },
-      { stdio: ["ignore", "pipe", "ignore"] }
-    );
+    return new Promise<Readable>((resolve, reject) => {
+        const proc = exec(
+            url,
+            {
+                output: "-",
+                quiet: true,
+                format: "bestaudio",
+                limitRate: "300K",
+                noPlaylist: true
+            },
+            { stdio: ["ignore", "pipe", "ignore"] }
+        );
 
-    if (!proc.stdout) {
-      reject(new Error("Error obtaining stdout from process."));
-      return;
-    }
+        const stdout = proc.stdout;
+        if (!stdout) {
+            reject(new Error("Error obtaining stdout from process."));
+            return;
+        }
 
-    proc.once("error", err => {
-      proc.kill("SIGKILL");
-      reject(err);
+        let exited = false;
+        proc.once("exit", () => {
+            exited = true;
+        });
+
+        const kill = (): void => {
+            if (exited) return;
+            if (process.platform === "win32" && typeof proc.pid === "number") {
+                spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+            } else {
+                proc.kill("SIGKILL");
+            }
+        };
+
+        proc.once("error", err => {
+            kill();
+            reject(err);
+        });
+
+        stdout.once("error", err => {
+            kill();
+            reject(err);
+        });
+
+        stdout.once("close", kill);
+
+        proc.once("spawn", () => {
+            resolve(stdout as unknown as Readable);
+        });
     });
-
-    proc.stdout.once("error", err => {
-      proc.kill("SIGKILL");
-      reject(err);
-    });
-
-    proc.stdout.once("end", () => {
-      proc.kill("SIGKILL");
-    });
-
-    void proc.once("spawn", () => {
-      resolve(proc.stdout as unknown as Readable);
-    });
-  });
 }
 
 export async function getInfo(url: string): Promise<BasicYoutubeVideoInfo> {
