@@ -26,7 +26,7 @@ export class CommandManager extends Collection<string, CommandComponent> {
             const categories = await fs.readdir(nodePath.resolve(this.path));
             this.client.logger.info(`Found ${categories.length} categories, registering...`);
 
-            for await (const category of categories) {
+            for (const category of categories) {
                 try {
                     const meta = (
                         await import(
@@ -44,7 +44,7 @@ export class CommandManager extends Collection<string, CommandComponent> {
                     this.client.logger.info(`Found ${files.length} of commands in ${category}, loading...`);
                     const allCmd = await (this.client.application as unknown as NonNullable<typeof this.client.application>).commands.fetch();
 
-                    for await (const file of files) {
+                    for (const file of files) {
                         try {
                             const path = pathStringToURLString(nodePath.resolve(this.path, category, file));
                             const command = await this.client.utils.import<CommandComponent>(path, this.client);
@@ -60,7 +60,13 @@ export class CommandManager extends Collection<string, CommandComponent> {
                             }
                             this.set(command.meta.name, command);
 
-                            if ((command.meta.contextChat?.length ?? 0) > 0) {
+                            const hasAppCmd = (name: string, type: ApplicationCommandType): boolean =>
+                                allCmd.some(cmd => cmd.name === name && cmd.type === type);
+
+                            if (
+                                (command.meta.contextChat?.length ?? 0) > 0 &&
+                                !hasAppCmd(command.meta.contextChat ?? "", ApplicationCommandType.Message)
+                            ) {
                                 await this.registerCmd(
                                     {
                                         name: command.meta.contextChat ?? "",
@@ -84,7 +90,10 @@ export class CommandManager extends Collection<string, CommandComponent> {
                                         `Registered ${command.meta.name} to message context for global.`
                                     );
                             }
-                            if ((command.meta.contextUser?.length ?? 0) > 0) {
+                            if (
+                                (command.meta.contextUser?.length ?? 0) > 0 &&
+                                !hasAppCmd(command.meta.contextUser ?? "", ApplicationCommandType.User)
+                            ) {
                                 await this.registerCmd(
                                     {
                                         name: command.meta.contextUser ?? "",
@@ -107,11 +116,7 @@ export class CommandManager extends Collection<string, CommandComponent> {
                                         `Registered ${command.meta.name} to user context for global.`
                                     );
                             }
-                            if (
-                                !allCmd.has(command.meta.name) &&
-                                command.meta.slash &&
-                                this.client.config.enableSlashCommand
-                            ) {
+                            if (command.meta.slash) {
                                 if ((command.meta.slash.name?.length ?? 0) === 0) {
                                     Object.assign(command.meta.slash, {
                                         name: command.meta.name
@@ -122,7 +127,13 @@ export class CommandManager extends Collection<string, CommandComponent> {
                                         description: command.meta.description
                                     });
                                 }
+                            }
 
+                            if (
+                                !hasAppCmd(command.meta.name, ApplicationCommandType.ChatInput) &&
+                                command.meta.slash &&
+                                this.client.config.enableSlashCommand
+                            ) {
                                 await this.registerCmd(command.meta.slash as ApplicationCommandData, {
                                     onError: (gld, err) =>
                                         this.client.logger.error(
@@ -207,7 +218,7 @@ export class CommandManager extends Collection<string, CommandComponent> {
             if (now < expirationTime) {
                 const timeLeft = (expirationTime - now) / 1_000;
                 (async () => {
-                    await message.channel
+                    await (message.channel as TextChannel)
                     .send({
                         embeds: [
                             createEmbed(
@@ -222,7 +233,7 @@ export class CommandManager extends Collection<string, CommandComponent> {
                     })
                     .then(msg => {
                         // eslint-disable-next-line promise/no-nesting
-                        setTimeout(async () => msg.delete().catch((error: unknown) => this.client.logger.error("PROMISE_ERR:", error)), 3_500);
+                        setTimeout(() => void msg.delete().catch((error: unknown) => this.client.logger.error("PROMISE_ERR:", error)), 3_500);
                         return 0;
                     })
                     .catch((error: unknown) => this.client.logger.error("PROMISE_ERR:", error))
