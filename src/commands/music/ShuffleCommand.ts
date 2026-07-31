@@ -36,7 +36,7 @@ export class ShuffleCommand extends BaseCommand {
     @haveQueue
     @sameVC
     public execute(ctx: CommandContext): void {
-        const newState = ctx.options?.getString("state") ?? (ctx.args[0] as string | undefined);
+        const newState = ctx.options?.getString("state") ?? (ctx.args[0]);
         if ((newState?.length ?? 0) === 0) {
             void ctx.reply({
                 embeds: [

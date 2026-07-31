@@ -43,7 +43,7 @@ export class StayInQueueCommand extends BaseCommand {
             });
         }
 
-        const newState = ctx.options?.getString("state") ?? (ctx.args[0] as string | undefined);
+        const newState = ctx.options?.getString("state") ?? (ctx.args[0]);
 
         if ((newState?.length ?? 0) === 0) {
             return ctx.reply({

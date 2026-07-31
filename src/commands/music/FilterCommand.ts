@@ -87,10 +87,10 @@ export class FilterCommand extends BaseCommand {
         const subcmd = mode[
             (
                 ctx.options?.getSubcommand() ??
-                ctx.args[0] as string | undefined
-            )?.toLowerCase() as unknown as string
+                ctx.args[0]
+            )?.toLowerCase()
         ] as FilterSubCmd | undefined;
-        const filter = (ctx.options?.getString("filter") ?? ctx.args[subcmd ? 1 : 0] as string | undefined)?.toLowerCase() as keyof typeof filterArgs;
+        const filter = (ctx.options?.getString("filter") ?? ctx.args[subcmd ? 1 : 0])?.toLowerCase() as keyof typeof filterArgs;
         if (subcmd === "enable" || subcmd === "disable") {
             if (!filterArgs[filter]) {
                 return ctx.reply({
@@ -143,7 +143,7 @@ export class FilterCommand extends BaseCommand {
                         {
                             name: i18n.__("commands.music.filter.currentlyUsedFilters"),
                             value: keys
-                                .filter(x => ctx.guild?.queue?.filters[x])
+                                .filter(x => ctx.guild?.queue?.filters[x] === true)
                                 .map(x => `\`${x}\``)
                                 .join("\n") || "-",
                             inline: true
