@@ -146,6 +146,7 @@ export class ServerQueue {
         clearTimeout(this.timeout ?? undefined);
         clearTimeout(this.dcTimeout ?? undefined);
         delete this.textChannel.guild.queue;
+        this.client.queueState.requestSave();
     }
 
     public get volume(): number {
@@ -156,7 +157,7 @@ export class ServerQueue {
         this._volume = newVol;
         (
             this.player.state as AudioPlayerPlayingState & { resource: AudioResource | undefined }
-        ).resource.volume?.setVolumeLogarithmic(this._volume / 100);
+        ).resource?.volume?.setVolumeLogarithmic(this._volume / 100);
     }
 
     public get skipVoters(): Snowflake[] {
