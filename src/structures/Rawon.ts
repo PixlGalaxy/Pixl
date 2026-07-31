@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import path from "node:path";
 import process from "node:process";
 import type { ClientOptions } from "discord.js";
@@ -14,6 +15,7 @@ import { DebugLogManager } from "../utils/structures/DebugLogManager.js";
 import { EventsLoader } from "../utils/structures/EventsLoader.js";
 import { JSONDataManager } from "../utils/structures/JSONDataManager.js";
 import { ModerationLogs } from "../utils/structures/ModerationLogs.js";
+import { QueueStateManager } from "../utils/structures/QueueStateManager.js";
 import { RawonLogger } from "../utils/structures/RawonLogger.js";
 
 export class Rawon extends Client {
@@ -21,7 +23,11 @@ export class Rawon extends Client {
     public readonly config = config;
     public readonly commands = new CommandManager(this, path.resolve(importURLToString(import.meta.url), "..", "commands"));
     public readonly events = new EventsLoader(this, path.resolve(importURLToString(import.meta.url), "..", "events"));
-    public readonly data = new JSONDataManager<Record<string, GuildData>>(path.resolve(process.cwd(), "data.json"));
+    public readonly data = new JSONDataManager<Record<string, GuildData>>(
+        path.resolve(process.cwd(), "data", "data.json"),
+        path.resolve(process.cwd(), "data.json")
+    );
+    public readonly queueState = new QueueStateManager(this, path.resolve(process.cwd(), "data"));
     public readonly logger = new RawonLogger({ prod: this.config.isProd });
     public readonly debugLog = new DebugLogManager(this.config.debugMode, this.config.isProd);
     public readonly modlogs = new ModerationLogs(this);
@@ -35,7 +41,7 @@ export class Rawon extends Client {
                     this.debugLog.logData("error", "GOT_REQUEST", [
                         ["URL", error.options.url?.toString() ?? "[???]"],
                         ["Code", error.code],
-                        ["Response", error.response?.rawBody.toString("ascii") ?? "[???]"]
+                        ["Response", error.response ? Buffer.from(error.response.rawBody).toString() : "[???]"]
                     ]);
 
                     return error;
