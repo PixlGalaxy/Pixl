@@ -1,4 +1,5 @@
 import type EventEmitter from "node:events";
+import { pipeline } from "node:stream";
 import { clearTimeout, setTimeout } from "node:timers";
 import { AudioPlayerError, createAudioResource, entersState, StreamType, VoiceConnectionStatus } from "@discordjs/voice";
 import type { Guild } from "discord.js";
@@ -49,7 +50,10 @@ export async function play(guild: Guild, nextSong?: string, wasIdle?: boolean): 
     const stream = new prism.FFmpeg({
         args: ffmpegArgs(queue.filters)
     });
-    await getStream(queue.client, song.song.url).then(x => x.pipe(stream as unknown as NodeJS.WritableStream));
+    const source = await getStream(queue.client, song.song.url);
+    pipeline(source, stream as unknown as NodeJS.WritableStream, () => {
+        if (!source.destroyed) source.destroy();
+    });
 
     const resource = createAudioResource(stream, { inlineVolume: true, inputType: StreamType.OggOpus, metadata: song });
 
