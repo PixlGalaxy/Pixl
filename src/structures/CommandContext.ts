@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import type { BaseMessageOptions, ChatInputCommandInteraction, GuildMember, Interaction, InteractionReplyOptions, InteractionResponse, MessageMentions, MessagePayload, MessageReplyOptions, ModalSubmitFields, StringSelectMenuInteraction, TextBasedChannel, User } from "discord.js";
+import type { BaseMessageOptions, ChatInputCommandInteraction, GuildMember, Interaction, InteractionEditReplyOptions, InteractionReplyOptions, InteractionResponse, MessageMentions, MessagePayload, MessageReplyOptions, ModalSubmitFields, StringSelectMenuInteraction, TextBasedChannel, User } from "discord.js";
 import { ActionRowBuilder, BaseInteraction, ButtonBuilder, ButtonInteraction, ButtonStyle, Collection, CommandInteraction, ContextMenuCommandInteraction, Message, MessageComponentInteraction, ModalSubmitInteraction } from "discord.js";
 import type { MessageInteractionAction } from "../typings/index.js";
 
@@ -59,7 +59,7 @@ export class CommandContext {
         }
 
         // @ts-expect-error-next-line
-        // eslint-disable-next-line typescript/no-unsafe-return
+         
         return rep instanceof Message ? rep : new Message(this.context.client, rep);
     }
 
@@ -87,15 +87,26 @@ export class CommandContext {
             ];
         }
         if (this.isInteraction()) {
-            (options as InteractionReplyOptions).fetchReply = true;
-            const msg = (await (this.context as CommandInteraction)[type](
-                options as InteractionReplyOptions | MessagePayload | string
-            )) as Message;
+            const context = this.context as CommandInteraction;
+            let msg: Message;
+            if (type === "reply") {
+                const response = await context.reply({
+                    ...(typeof options === "string" ? { content: options } : options),
+                    withResponse: true
+                } as InteractionReplyOptions & { withResponse: true });
+                const resourceMsg = response.resource?.message ?? null;
+                if (resourceMsg === null) throw new Error("Unable to retrieve the interaction reply message.");
+                msg = resourceMsg;
+            } else if (type === "editReply") {
+                msg = await context.editReply(options as InteractionEditReplyOptions | MessagePayload | string);
+            } else {
+                msg = await context.followUp(options as InteractionReplyOptions | MessagePayload | string);
+            }
             const channel = this.context.channel;
             const res = await channel?.messages.fetch(msg.id).catch(() => null);
             return res ?? msg;
         }
-        if ((options as InteractionReplyOptions).ephemeral === true) {
+        if ((options as Record<string, unknown>).ephemeral === true) {
             throw new Error("Cannot send ephemeral message in a non-interaction context.");
         }
         if (typeof options === "string") {
