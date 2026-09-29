@@ -233,10 +233,15 @@
                 "description": "Phát nhạc",
                 "noSongData": "URL không có dữ liệu bài hát.",
                 "slashQueryDescription": "Tìm kiếm truy vấn",
-                "usage": "{prefix}play <truy vấn | url>"
+                "usage": "{prefix}play <truy vấn | url>",
+                "privateOrUnavailable": "That playlist/song is private, deleted or not available in this region.",
+                "spotifyUnavailable": "Spotify is not reachable right now. Configure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET or try again later.",
+                "unsupportedURL": "That link is not supported. Use a YouTube, Spotify or SoundCloud link, or search by name."
             },
             "queue": {
-                "description": "Hiển thị danh sách hàng đợi"
+                "description": "Hiển thị danh sách hàng đợi",
+                "selectPlaceholder": "Jump to a song...",
+                "title": "Queue of {guild}"
             },
             "remove": {
                 "description": "Xóa (các) bài hát khỏi hàng đợi",
@@ -281,7 +286,9 @@
             "shuffle": {
                 "actualState": "Chế độ phát ngẫu nhiên hiện tại là **`{state}`**",
                 "description": "Đặt chế độ cho tính năng phát ngẫu nhiên",
-                "newState": "Chế độ phát ngẫu nhiên được đặt thành **`{state}`**"
+                "newState": "Chế độ phát ngẫu nhiên được đặt thành **`{state}`**",
+                "shuffledInfo": "{count} upcoming songs were shuffled.",
+                "restoredInfo": "{count} upcoming songs are back in their original order."
             },
             "skip": {
                 "description": "Bỏ qua bài nhạc",
@@ -353,7 +360,13 @@
     },
     "reusable": {
         "invalidUsage": "Cách sử dụng không hợp lệ, vui lòng nhập **`{prefix} {name}`** để biết thêm thông tin.",
-        "pageFooter": "Trang {actual} trong {total}"
+        "pageFooter": "Trang {actual} trong {total}",
+        "pagination": {
+            "notYours": "Only {author} can use these buttons.",
+            "jumpTitle": "Go to page",
+            "jumpLabel": "Page number (1 - {total})",
+            "invalidPage": "Enter a number between 1 and {total}."
+        }
     },
     "utils": {
         "cooldownMessage": "{author}, vui lòng đợi **`{timeleft}`**.",
@@ -364,7 +377,10 @@
             "leftVC": "Rời khỏi kênh thoại do không hoạt động quá lâu.",
             "queueEnded": "Hàng đợi đã hết, sử dụng **`{usage}`** để phát thêm nhạc.",
             "startPlaying": "Bắt đầu phát **{song}**",
-            "stopPlaying": "Dừng phát **{song}**"
+            "stopPlaying": "Dừng phát **{song}**",
+            "noPlayableSource": "Couldn't find a playable source for {song}, skipping it.",
+            "queuePosition": "Position in queue: #{position}",
+            "addedToQueue": "Added to the queue"
         },
         "musicDecorator": {
             "noInVC": "Xin lỗi, bạn cần ở trong kênh thoại để dùng lệnh.",
@@ -373,5 +389,24 @@
             "validVCJoinable": "Xin lỗi, nhưng tôi không thể **`KẾT NỐI`** với kênh thoại của bạn, hãy đảm bảo rằng tôi có quyền phù hợp.",
             "validVCPermission": "Xin lỗi, nhưng tôi không thể **`NÓI`** trong kênh thoại này; hãy đảm bảo rằng tôi có quyền phù hợp."
         }
+    },
+    "player": {
+        "nowPlaying": "Now playing",
+        "paused": "Paused",
+        "endsAt": "Ends {time}",
+        "live": "Live",
+        "requestedBy": "Requested by {user}",
+        "on": "ON",
+        "off": "OFF",
+        "loop": "Loop",
+        "shuffle": "Shuffle",
+        "inQueue": "{count} up next",
+        "upNext": "Up next",
+        "resume": "Resume",
+        "pause": "Pause",
+        "skip": "Skip",
+        "queue": "Queue",
+        "lyrics": "Lyrics",
+        "totalSongs": "{count} songs"
     }
 }

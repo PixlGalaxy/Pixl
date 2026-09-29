@@ -1,11 +1,12 @@
-/* eslint-disable typescript/strict-boolean-expressions */
 import { URL } from "node:url";
 import type { QueryData } from "../../../typings/index.js";
+import { getYouTubePlaylistId, getYouTubeVideoId, isYouTubeURL } from "../../functions/youtubeUrl.js";
+import { parseSpotifyURL } from "../SpotifyUtil.js";
 
 export function checkQuery(string: string): QueryData {
     let url: URL;
     try {
-        url = new URL(string);
+        url = new URL(string.trim());
     } catch {
         return {
             isURL: false,
@@ -13,41 +14,44 @@ export function checkQuery(string: string): QueryData {
         };
     }
 
-    const result: QueryData = {
-        isURL: true
-    };
-
-    if (/soundcloud|snd/gu.test(url.hostname)) {
-        result.sourceType = "soundcloud";
-
-        result.type = url.pathname.includes("/sets/") ? "playlist" : "track";
-    } else if (/youtube|youtu\.be/gu.test(url.hostname)) {
-        result.sourceType = "youtube";
-
-        if (!/youtu\.be/gu.test(url.hostname) && url.pathname.startsWith("/playlist") || url.searchParams.has("list")) {
-            result.type = "playlist";
-        } else if (
-            (/youtube/gu.exec(url.hostname) && url.pathname.startsWith("/watch")) ??
-            (/youtu\.be/gu.exec(url.hostname) && url.pathname !== "")
-        ) {
-            result.type = "track";
-        } else {
-            result.type = "unknown";
-        }
-    } else if (/spotify/gu.test(url.hostname)) {
-        result.sourceType = "spotify";
-
-        if (["/playlist", "/album"].some((path) => url.pathname.startsWith(path))) {
-            result.type = "playlist";
-        } else if (url.pathname.startsWith("/track")) {
-            result.type = "track";
-        } else {
-            result.type = "unknown";
-        }
-    } else {
-        result.sourceType = "unknown";
-        result.type = "unknown";
+    if (url.protocol === "spotify:" || /(?:^|\.)spotify\.(?:com|link|app\.link)$/u.test(url.hostname)) {
+        const parsed = parseSpotifyURL(url.toString());
+        return {
+            isURL: true,
+            sourceType: "spotify",
+            type: parsed ? (parsed.type === "track" ? "track" : "playlist") : "unknown"
+        };
     }
 
-    return result;
+    if (!["http:", "https:"].includes(url.protocol)) {
+        return { isURL: false, sourceType: "query" };
+    }
+
+    if (/(?:^|\.)(?:soundcloud\.com|snd\.sc)$|soundcloud\.app\.goo\.gl$/u.test(url.hostname)) {
+        return {
+            isURL: true,
+            sourceType: "soundcloud",
+            type: url.pathname.includes("/sets/") ? "playlist" : "track"
+        };
+    }
+
+    if (isYouTubeURL(url)) {
+        const playlist = getYouTubePlaylistId(url);
+        const video = getYouTubeVideoId(url);
+        return {
+            isURL: true,
+            sourceType: "youtube",
+            type: playlist !== null && (video === null || url.pathname.startsWith("/playlist") || url.searchParams.has("list"))
+                ? "playlist"
+                : video === null
+                    ? "unknown"
+                    : "track"
+        };
+    }
+
+    return {
+        isURL: true,
+        sourceType: "unknown",
+        type: "unknown"
+    };
 }

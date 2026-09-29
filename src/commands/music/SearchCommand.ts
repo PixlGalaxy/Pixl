@@ -77,8 +77,11 @@ export class SearchCommand extends BaseCommand {
                         description: "Nothing to select here",
                         value: "Nothing to select here"
                     });
+                // Components V2: keep the rest of the message and only swap the select menu row.
                 await prev.edit({
-                    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(disabledMenu)]
+                    components: prev.components.map(component => component.type === ComponentType.ActionRow
+                        ? new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(disabledMenu)
+                        : component)
                 });
             }
 

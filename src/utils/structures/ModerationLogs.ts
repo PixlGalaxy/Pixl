@@ -2,6 +2,7 @@ import type { Guild, GuildBan, TextChannel, User } from "discord.js";
 import { ChannelType } from "discord.js";
 import i18n from "../../config/index.js";
 import type { Rawon } from "../../structures/Rawon.js";
+import { toV2 } from "../functions/componentsV2.js";
 import { createEmbed } from "../functions/createEmbed.js";
 
 export class ModerationLogs {
@@ -24,7 +25,7 @@ export class ModerationLogs {
                 iconURL: options.author.displayAvatarURL({})
             });
 
-        await ch.send({ embeds: [embed] }).catch((error: unknown) => console.log(`Failed to send warn logs: ${(error as Error).message}`));
+        await ch.send(toV2({ embeds: [embed] })).catch((error: unknown) => console.log(`Failed to send warn logs: ${(error as Error).message}`));
     }
 
     public async handleBanAdd(options: { author?: User; ban: GuildBan }): Promise<void> {
@@ -50,9 +51,9 @@ export class ModerationLogs {
             });
         }
 
-        await ch.send({
+        await ch.send(toV2({
             embeds: [embed]
-        });
+        }));
     }
 
     public async handleBanRemove(options: { author?: User; ban: GuildBan }): Promise<void> {
@@ -78,9 +79,9 @@ export class ModerationLogs {
             });
         }
 
-        await ch.send({
+        await ch.send(toV2({
             embeds: [embed]
-        });
+        }));
     }
 
     private async getCh(guild: Guild): Promise<TextChannel | undefined> {

@@ -232,10 +232,15 @@
                 "description": "Memainkan beberapa lagu",
                 "noSongData": "Link tersebut tidak memiliki data lagu.",
                 "slashQueryDescription": "Kata pencarian",
-                "usage": "{prefix}play <kata pencarian / link>"
+                "usage": "{prefix}play <kata pencarian / link>",
+                "privateOrUnavailable": "That playlist/song is private, deleted or not available in this region.",
+                "spotifyUnavailable": "Spotify is not reachable right now. Configure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET or try again later.",
+                "unsupportedURL": "That link is not supported. Use a YouTube, Spotify or SoundCloud link, or search by name."
             },
             "queue": {
-                "description": "Menunjukkan daftar antrian"
+                "description": "Menunjukkan daftar antrian",
+                "selectPlaceholder": "Jump to a song...",
+                "title": "Queue of {guild}"
             },
             "remove": {
                 "description": "Hapus lagu dari antrian",
@@ -280,7 +285,9 @@
             "shuffle": {
                 "actualState": "Mode acak saat ini adalah **`{state}`**",
                 "description": "Acak antrian",
-                "newState": "Mode acak telah diatur ke **`{state}`**"
+                "newState": "Mode acak telah diatur ke **`{state}`**",
+                "shuffledInfo": "{count} upcoming songs were shuffled.",
+                "restoredInfo": "{count} upcoming songs are back in their original order."
             },
             "skip": {
                 "description": "Lewatkan lagu",
@@ -352,7 +359,13 @@
     },
     "reusable": {
         "invalidUsage": "Penggunaan tidak valid, gunakan **`{prefix} {name}`** untuk informasi lebih lanjut.",
-        "pageFooter": "Halaman {actual} dari {total}"
+        "pageFooter": "Halaman {actual} dari {total}",
+        "pagination": {
+            "notYours": "Only {author} can use these buttons.",
+            "jumpTitle": "Go to page",
+            "jumpLabel": "Page number (1 - {total})",
+            "invalidPage": "Enter a number between 1 and {total}."
+        }
     },
     "utils": {
         "cooldownMessage": "{author}, mohon tunggu selama **`{timeleft}`** detik.",
@@ -363,7 +376,10 @@
             "leftVC": "Keluar dari voice channel karena tidak ada lagi aktivitas.",
             "queueEnded": "Antrian sudah berakhir, gunakan **{usage}** untuk memainkan lagu lagi.",
             "startPlaying": "Mulai memainkan **{song}**",
-            "stopPlaying": "Selesai memainkan **{song}**"
+            "stopPlaying": "Selesai memainkan **{song}**",
+            "noPlayableSource": "Couldn't find a playable source for {song}, skipping it.",
+            "queuePosition": "Position in queue: #{position}",
+            "addedToQueue": "Added to the queue"
         },
         "musicDecorator": {
             "noInVC": "Mohon maaf, tetapi anda harus berada di sebuah voice channel untuk melakukannya.",
@@ -372,5 +388,24 @@
             "validVCJoinable": "Mohon maaf, tetapi saya tidak dapat **`CONNECT`** ke voice channel anda, pastikan saya memiliki izin yang tepat.",
             "validVCPermission": "Mohon maaf, tetapi saya tidak dapat **`SPEAK`** di voice channel, pastikan saya memiliki izin yang tepat."
         }
+    },
+    "player": {
+        "nowPlaying": "Now playing",
+        "paused": "Paused",
+        "endsAt": "Ends {time}",
+        "live": "Live",
+        "requestedBy": "Requested by {user}",
+        "on": "ON",
+        "off": "OFF",
+        "loop": "Loop",
+        "shuffle": "Shuffle",
+        "inQueue": "{count} up next",
+        "upNext": "Up next",
+        "resume": "Resume",
+        "pause": "Pause",
+        "skip": "Skip",
+        "queue": "Queue",
+        "lyrics": "Lyrics",
+        "totalSongs": "{count} songs"
     }
 }

@@ -231,12 +231,17 @@
             "play": {
                 "alreadyPlaying": "El reproductor de música ya está reproduciendo en el canal de voz **`{voiceChannel}`**.",
                 "description": "Reproduce algo de música",
-                "noSongData": "Este URL no tiene datos de canciones.",
+                "noSongData": "No encontré canciones con esa búsqueda o link.",
                 "slashQueryDescription": "Canción a reproducir",
-                "usage": "{prefix}play <consulta / url>"
+                "usage": "{prefix}play <consulta / url>",
+                "privateOrUnavailable": "Esa playlist/canción es privada, fue eliminada o no está disponible en esta región.",
+                "spotifyUnavailable": "Spotify no está disponible ahora mismo. Configura SPOTIFY_CLIENT_ID y SPOTIFY_CLIENT_SECRET o inténtalo más tarde.",
+                "unsupportedURL": "Ese link no es compatible. Usa un link de YouTube, Spotify o SoundCloud, o busca por nombre."
             },
             "queue": {
-                "description": "Muestra la cola de reproducción"
+                "description": "Muestra la cola de reproducción",
+                "selectPlaceholder": "Saltar a una canción...",
+                "title": "Cola de {guild}"
             },
             "remove": {
                 "description": "Quita canciones de la cola",
@@ -281,7 +286,9 @@
             "shuffle": {
                 "actualState": "El modo aleatorio está **`{state}`**",
                 "description": "Aleatoriza la cola",
-                "newState": "El modo aleatorio se estableció ahora a **`{state}`**"
+                "newState": "El modo aleatorio se estableció ahora a **`{state}`**",
+                "shuffledInfo": "Se mezclaron {count} canciones pendientes.",
+                "restoredInfo": "{count} canciones pendientes volvieron a su orden original."
             },
             "skip": {
                 "description": "Salta la canción actual",
@@ -353,18 +360,27 @@
     },
     "reusable": {
         "invalidUsage": "Uso inválido, por favor usa **`{prefix} {name}`** para más información.",
-        "pageFooter": "Página {actual} de {total}"
+        "pageFooter": "Página {actual} de {total}",
+        "pagination": {
+            "notYours": "Solo {author} puede usar estos botones.",
+            "jumpTitle": "Ir a la página",
+            "jumpLabel": "Número de página (1 - {total})",
+            "invalidPage": "Escribe un número entre 1 y {total}."
+        }
     },
     "utils": {
         "cooldownMessage": "{author}, por favor espera **`{timeleft}`** para poder hacer eso.",
         "generalHandler": {
             "errorJoining": "Error al unirse al canal de voz, razón: {message}",
             "errorPlaying": "Ocurrió un error al tratar de reproducir música, razón: ${message}",
-            "handleVideoInitial": "Se han añadido {length} canciones a la cola\n\n",
+            "handleVideoInitial": "Se añadieron {length} canciones a la cola",
             "leftVC": "Dejando el canal de voz porque he estado inactivo mucho tiempo.",
             "queueEnded": "La cola ha terminado, usa **`{usage}`** para reproducir más música.",
             "startPlaying": "Se empezó a reproducir **{song}**",
-            "stopPlaying": "Se detuvo la reproducción **{song}**"
+            "stopPlaying": "Se detuvo la reproducción **{song}**",
+            "noPlayableSource": "No encontré una fuente reproducible para {song}, la salto.",
+            "queuePosition": "Posición en la cola: #{position}",
+            "addedToQueue": "Añadida a la cola"
         },
         "musicDecorator": {
             "noInVC": "Lo siento, pero debes estar en un canal de voz para hacer eso.",
@@ -373,5 +389,24 @@
             "validVCJoinable": "Lo siento, pero no tengo el permiso **`CONECTAR`** en tu servidor.",
             "validVCPermission": "Lo siento, pero no tengo el permiso **`HABLAR`** en tu servidor."
         }
+    },
+    "player": {
+        "nowPlaying": "Reproduciendo ahora",
+        "paused": "En pausa",
+        "endsAt": "Termina {time}",
+        "live": "En vivo",
+        "requestedBy": "Pedida por {user}",
+        "on": "ON",
+        "off": "OFF",
+        "loop": "Repetir",
+        "shuffle": "Aleatorio",
+        "inQueue": "{count} en cola",
+        "upNext": "Siguiente",
+        "resume": "Reanudar",
+        "pause": "Pausa",
+        "skip": "Saltar",
+        "queue": "Cola",
+        "lyrics": "Letra",
+        "totalSongs": "{count} canciones"
     }
 }

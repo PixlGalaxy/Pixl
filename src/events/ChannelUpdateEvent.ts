@@ -3,6 +3,7 @@ import { ChannelType, GuildChannel, VoiceChannel } from "discord.js";
 import i18n from "i18n";
 import { BaseEvent } from "../structures/BaseEvent.js";
 import { Event } from "../utils/decorators/Event.js";
+import { toV2 } from "../utils/functions/componentsV2.js";
 import { createEmbed } from "../utils/functions/createEmbed.js";
 
 @Event("channelUpdate")
@@ -24,16 +25,16 @@ export class ChannelUpdateEvent extends BaseEvent {
         if ((oldChannel as VoiceChannel).rtcRegion !== (newChannel as VoiceChannel).rtcRegion) {
             const queue = newChannel.guild.queue;
 
-            const msg = await queue.textChannel.send({
+            const msg = await queue.textChannel.send(toV2({
                 embeds: [createEmbed("info", i18n.__("events.channelUpdate.reconfigureConnection"))]
-            });
+            }));
             queue.connection?.configureNetworking();
 
             await entersState(queue.connection as unknown as NonNullable<typeof queue.connection>, VoiceConnectionStatus.Ready, 20_000)
                 .then(() => {
-                    void msg.edit({
+                    void msg.edit(toV2({
                         embeds: [createEmbed("success", i18n.__("events.channelUpdate.connectionReconfigured"), true)]
-                    });
+                    }));
                     return 0;
                 })
                 .catch(() => {
@@ -43,11 +44,11 @@ export class ChannelUpdateEvent extends BaseEvent {
                         } Unable to re-configure network on ${newChannel.guild.name
                         } voice channel, the queue was deleted.`
                     );
-                    void msg.edit({
+                    void msg.edit(toV2({
                         embeds: [
                             createEmbed("error", i18n.__("events.channelUpdate.unableReconfigureConnection"), true)
                         ]
-                    });
+                    }));
                 });
         }
     }

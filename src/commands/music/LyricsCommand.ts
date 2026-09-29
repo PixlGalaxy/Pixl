@@ -1,4 +1,4 @@
-import { AudioPlayerPlayingState, AudioResource } from "@discordjs/voice";
+import type { AudioPlayerPlayingState } from "@discordjs/voice";
 import { ApplicationCommandOptionType } from "discord.js";
 import i18n from "../../config/index.js";
 import { BaseCommand } from "../../structures/BaseCommand.js";
@@ -27,19 +27,19 @@ import { ButtonPagination } from "../../utils/structures/ButtonPagination.js";
 })
 export class LyricsCommand extends BaseCommand {
     public async execute(ctx: CommandContext): Promise<void> {
-        const query =
-             
+        const rawQuery =
             ctx.args.length > 0
                 ? ctx.args.join(" ")
                 : (ctx.options?.getString("query")?.length ?? 0) > 0
                     ? ctx.options?.getString("query") ?? ""
                     : (
                         (
-                            (ctx.guild?.queue?.player.state as AudioPlayerPlayingState).resource as
-                            | AudioResource
-                            | undefined
+                            (ctx.guild?.queue?.player.state as AudioPlayerPlayingState | undefined)?.resource
                         )?.metadata as QueueSong | undefined
-                    )?.song.title;
+                    )?.song;
+        const query = typeof rawQuery === "object"
+            ? `${(rawQuery.artist?.length ?? 0) > 0 ? `${rawQuery.artist?.split(",")[0]} - ` : ""}${rawQuery.title}`
+            : rawQuery;
         if ((query?.length ?? 0) === 0) {
             await ctx.reply({
                 embeds: [createEmbed("error", i18n.__("commands.music.lyrics.noQuery"), true)]
@@ -73,26 +73,13 @@ export class LyricsCommand extends BaseCommand {
                 }
 
                 const albumArt = data.album_art ?? "https://cdn.stegripe.org/images/icon.png";
-                const pages: string[] = chunk(data.lyrics ?? "", 2_048);
-                const embed = createEmbed("info", pages[0])
-                    .setAuthor({
-                        name: ((data.song?.length ?? 0) > 0) && ((data.artist?.length ?? 0) > 0) ? `${data.song} - ${data.artist}` : song.toUpperCase()
-                    })
-                    .setThumbnail(albumArt);
-                const msg = await ctx.reply({ embeds: [embed] });
-
-                return new ButtonPagination(msg, {
+                const pages: string[] = chunk(data.lyrics ?? "", 1_800);
+                return ButtonPagination.send(ctx, {
                     author: ctx.author.id,
-                    edit: (i, emb, page) =>
-                        emb.setDescription(page).setFooter({
-                            text: i18n.__mf("reusable.pageFooter", {
-                                actual: i + 1,
-                                total: pages.length
-                            })
-                        }),
-                    embed,
-                    pages
-                }).start();
+                    pages,
+                    thumbnail: albumArt,
+                    title: `🎤 ${((data.song?.length ?? 0) > 0) && ((data.artist?.length ?? 0) > 0) ? `${data.song} - ${data.artist}` : song}`
+                });
             })
             .catch((error: unknown) => console.error(error));
     }

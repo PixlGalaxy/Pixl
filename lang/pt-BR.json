@@ -233,10 +233,15 @@
                 "description": "Toca uma música",
                 "noSongData": "Essa URL não tem nenhuma música.",
                 "slashQueryDescription": "Busca",
-                "usage": "{prefix}play <busca | url>"
+                "usage": "{prefix}play <busca | url>",
+                "privateOrUnavailable": "That playlist/song is private, deleted or not available in this region.",
+                "spotifyUnavailable": "Spotify is not reachable right now. Configure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET or try again later.",
+                "unsupportedURL": "That link is not supported. Use a YouTube, Spotify or SoundCloud link, or search by name."
             },
             "queue": {
-                "description": "Mostra as músicas da fila"
+                "description": "Mostra as músicas da fila",
+                "selectPlaceholder": "Jump to a song...",
+                "title": "Queue of {guild}"
             },
             "remove": {
                 "description": "Remove música(s) da fila",
@@ -281,7 +286,9 @@
             "shuffle": {
                 "actualState": "Modo aleatório está **`{state}`**",
                 "description": "Configura o modo aleatório",
-                "newState": "Modo aleatório agora está **`{state}`**"
+                "newState": "Modo aleatório agora está **`{state}`**",
+                "shuffledInfo": "{count} upcoming songs were shuffled.",
+                "restoredInfo": "{count} upcoming songs are back in their original order."
             },
             "skip": {
                 "description": "Pula a música",
@@ -353,7 +360,13 @@
     },
     "reusable": {
         "invalidUsage": "Uso inválido, por favor use **`{prefix} {name}`** para mais informações.",
-        "pageFooter": "Página {actual} de {total}"
+        "pageFooter": "Página {actual} de {total}",
+        "pagination": {
+            "notYours": "Only {author} can use these buttons.",
+            "jumpTitle": "Go to page",
+            "jumpLabel": "Page number (1 - {total})",
+            "invalidPage": "Enter a number between 1 and {total}."
+        }
     },
     "utils": {
         "cooldownMessage": "{author}, por favor espere **`{timeleft}`** para fazer isso.",
@@ -364,7 +377,10 @@
             "leftVC": "Saindo do canal porque estive inativo por muito tempo.",
             "queueEnded": "A fila terminou, use **`{usage}`** para adicionar mais músicas.",
             "startPlaying": "Começando a tocar **{song}**",
-            "stopPlaying": "Parando de tocar **{song}**"
+            "stopPlaying": "Parando de tocar **{song}**",
+            "noPlayableSource": "Couldn't find a playable source for {song}, skipping it.",
+            "queuePosition": "Position in queue: #{position}",
+            "addedToQueue": "Added to the queue"
         },
         "musicDecorator": {
             "noInVC": "Desculpe, mas você precisa estar em um canal de voz para fazer isso.",
@@ -373,5 +389,24 @@
             "validVCJoinable": "Desculpe, mas não posso me **`CONECTAR`** ao seu canal de voz, certifique-se de que eu tenho as permissões necessárias.",
             "validVCPermission": "Desculpe, mas eu não posso **`FALAR`** nesse canal de voz; certifique-se de que eu tenho as permissões necessárias."
         }
+    },
+    "player": {
+        "nowPlaying": "Now playing",
+        "paused": "Paused",
+        "endsAt": "Ends {time}",
+        "live": "Live",
+        "requestedBy": "Requested by {user}",
+        "on": "ON",
+        "off": "OFF",
+        "loop": "Loop",
+        "shuffle": "Shuffle",
+        "inQueue": "{count} up next",
+        "upNext": "Up next",
+        "resume": "Resume",
+        "pause": "Pause",
+        "skip": "Skip",
+        "queue": "Queue",
+        "lyrics": "Lyrics",
+        "totalSongs": "{count} songs"
     }
 }

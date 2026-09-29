@@ -233,10 +233,15 @@
                 "description": "Jouer de la musique",
                 "noSongData": "Cette URL ne contient pas de données sur les musiques.",
                 "slashQueryDescription": "Requête à rechercher",
-                "usage": "{prefix}play <requête | url>"
+                "usage": "{prefix}play <requête | url>",
+                "privateOrUnavailable": "That playlist/song is private, deleted or not available in this region.",
+                "spotifyUnavailable": "Spotify is not reachable right now. Configure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET or try again later.",
+                "unsupportedURL": "That link is not supported. Use a YouTube, Spotify or SoundCloud link, or search by name."
             },
             "queue": {
-                "description": "Afficher la liste de la file d'attente"
+                "description": "Afficher la liste de la file d'attente",
+                "selectPlaceholder": "Jump to a song...",
+                "title": "Queue of {guild}"
             },
             "remove": {
                 "description": "Retirer le(s) morceau(x) de la file d'attente",
@@ -281,7 +286,9 @@
             "shuffle": {
                 "actualState": "Le mode Shuffle est **`{state}`**",
                 "description": "Définir le mode de la fonction de lecture aléatoire",
-                "newState": "Le mode aléatoire est maintenant réglé sur **`{state}`**"
+                "newState": "Le mode aléatoire est maintenant réglé sur **`{state}`**",
+                "shuffledInfo": "{count} upcoming songs were shuffled.",
+                "restoredInfo": "{count} upcoming songs are back in their original order."
             },
             "skip": {
                 "description": "Sauter la musique",
@@ -353,7 +360,13 @@
     },
     "reusable": {
         "invalidUsage": "Usage invalide, veuillez utiliser **`{prefix} {name}`** pour plus d'informations.",
-        "pageFooter": "Page {actual} sur {total}"
+        "pageFooter": "Page {actual} sur {total}",
+        "pagination": {
+            "notYours": "Only {author} can use these buttons.",
+            "jumpTitle": "Go to page",
+            "jumpLabel": "Page number (1 - {total})",
+            "invalidPage": "Enter a number between 1 and {total}."
+        }
     },
     "utils": {
         "cooldownMessage": "{author}, veuillez attendre **`{timeleft}`** de cooldown.",
@@ -364,7 +377,10 @@
             "leftVC": "Je me suis déconnecté du salon vocal parce que j'ai été inactif pendant trop longtemps.",
             "queueEnded": "La lecture est terminée, utilisez **`{usage}`** pour jouer plus de musique.",
             "startPlaying": "Lancement de la lecture de **{song}**",
-            "stopPlaying": "Arrêt de la lecture de **{song}**"
+            "stopPlaying": "Arrêt de la lecture de **{song}**",
+            "noPlayableSource": "Couldn't find a playable source for {song}, skipping it.",
+            "queuePosition": "Position in queue: #{position}",
+            "addedToQueue": "Added to the queue"
         },
         "musicDecorator": {
             "noInVC": "Désolé, mais vous devez être dans un salon vocal pour faire cela.",
@@ -373,5 +389,24 @@
             "validVCJoinable": "Désolé, mais je ne peux pas **`ME CONNECTER`** à votre salon vocal, veuillez vérifier que j'ai les bonnes permissions.",
             "validVCPermission": "Désolé, mais je ne peux pas **`PARLER`** dans ce salon vocal ; veuillez vérifier que j'ai les bonnes permissions."
         }
+    },
+    "player": {
+        "nowPlaying": "Now playing",
+        "paused": "Paused",
+        "endsAt": "Ends {time}",
+        "live": "Live",
+        "requestedBy": "Requested by {user}",
+        "on": "ON",
+        "off": "OFF",
+        "loop": "Loop",
+        "shuffle": "Shuffle",
+        "inQueue": "{count} up next",
+        "upNext": "Up next",
+        "resume": "Resume",
+        "pause": "Pause",
+        "skip": "Skip",
+        "queue": "Queue",
+        "lyrics": "Lyrics",
+        "totalSongs": "{count} songs"
     }
 }

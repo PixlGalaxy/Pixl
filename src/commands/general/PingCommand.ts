@@ -3,6 +3,7 @@ import i18n from "../../config/index.js";
 import { BaseCommand } from "../../structures/BaseCommand.js";
 import { CommandContext } from "../../structures/CommandContext.js";
 import { Command } from "../../utils/decorators/Command.js";
+import { toV2 } from "../../utils/functions/componentsV2.js";
 import { createEmbed } from "../../utils/functions/createEmbed.js";
 
 @Command<typeof PingCommand>({
@@ -18,7 +19,7 @@ export class PingCommand extends BaseCommand {
     public async execute(ctx: CommandContext): Promise<void> {
         if (ctx.isInteraction() && !ctx.deferred) await ctx.deferReply();
         const before = Date.now();
-        const msg = await ctx.reply({ content: "Calculating..." });
+        const msg = await ctx.reply({ embeds: [createEmbed("info", "⏳ Calculating...")] });
         const latency = Date.now() - before;
         const wsLatency = this.client.ws.ping.toFixed(0);
         const vcLatency = ctx.guild?.queue?.connection?.ping.ws?.toFixed(0) ?? "N/A";
@@ -30,17 +31,17 @@ export class PingCommand extends BaseCommand {
             })
             .addFields(
                 {
-                    name: "📶 **|** API",
+                    name: "📶 API",
                     value: `**\`${latency}\`** ms`,
                     inline: true
                 },
                 {
-                    name: "🌐 **|** WebSocket",
+                    name: "🌐 WebSocket",
                     value: `**\`${wsLatency}\`** ms`,
                     inline: true
                 },
                 {
-                    name: "🔊 **|** Voice",
+                    name: "🔊 Voice",
                     value: `**\`${vcLatency}\`** ms`,
                     inline: true
                 }
@@ -50,7 +51,7 @@ export class PingCommand extends BaseCommand {
                 iconURL: this.client.user?.displayAvatarURL()
             })
             .setTimestamp();
-        await msg.edit({ content: " ", embeds: [embed] }).catch((error: unknown) => this.client.logger.error("PROMISE_ERR:", error));
+        await msg.edit(toV2({ embeds: [embed] })).catch((error: unknown) => this.client.logger.error("PROMISE_ERR:", error));
     }
 
      

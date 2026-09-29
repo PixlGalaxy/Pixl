@@ -1,7 +1,7 @@
 import { ApplicationCommandOptionType } from "discord.js";
 import i18n from "../../config/index.js";
 import { BaseCommand } from "../../structures/BaseCommand.js";
-import { CommandContext } from "../../structures/CommandContext.js";
+import type { CommandContext } from "../../structures/CommandContext.js";
 import { Command } from "../../utils/decorators/Command.js";
 import { haveQueue, inVC, sameVC } from "../../utils/decorators/MusicUtil.js";
 import { createEmbed } from "../../utils/functions/createEmbed.js";
@@ -35,31 +35,29 @@ export class ShuffleCommand extends BaseCommand {
     @inVC
     @haveQueue
     @sameVC
-    public execute(ctx: CommandContext): void {
-        const newState = ctx.options?.getString("state") ?? (ctx.args[0]);
-        if ((newState?.length ?? 0) === 0) {
-            void ctx.reply({
-                embeds: [
-                    createEmbed(
-                        "info",
-                        `🔀 **|** ${i18n.__mf("commands.music.shuffle.actualState", {
-                            state: `\`${ctx.guild?.queue?.shuffle === true ? "ENABLED" : "DISABLED"}\``
-                        })}`
-                    )
-                ]
-            });
-            return;
-        }
+    public async execute(ctx: CommandContext): Promise<void> {
+        const queue = ctx.guild?.queue;
+        if (!queue) return;
 
-        (ctx.guild?.queue as unknown as NonNullable<NonNullable<typeof ctx.guild>["queue"]>).shuffle = newState === "enable";
-        const isShuffle = ctx.guild?.queue?.shuffle;
+        const requested = (ctx.options?.getString("state") ?? ctx.args[0] ?? "").toLowerCase();
+        // Without an explicit state the command toggles shuffle, like the player button.
+        const enable = ["enable", "on", "yes"].includes(requested)
+            ? true
+            : ["disable", "off", "no"].includes(requested)
+                ? false
+                : !queue.shuffle;
 
-        void ctx.reply({
+        queue.shuffle = enable;
+        const upcoming = queue.songs.filter(x => x.index > queue.currentIndex).size;
+
+        await ctx.reply({
             embeds: [
                 createEmbed(
                     "success",
-                    `${isShuffle === true ? "🔀" : "▶"} **|** ${i18n.__mf("commands.music.shuffle.newState", {
-                        state: `\`${isShuffle === true ? "ENABLED" : "DISABLED"}\``
+                    `${enable ? "🔀" : "▶"} ${i18n.__mf("commands.music.shuffle.newState", {
+                        state: `\`${enable ? "ENABLED" : "DISABLED"}\``
+                    })}\n-# ${i18n.__mf(enable ? "commands.music.shuffle.shuffledInfo" : "commands.music.shuffle.restoredInfo", {
+                        count: upcoming
                     })}`
                 )
             ]

@@ -4,6 +4,7 @@ import { BaseCommand } from "../../structures/BaseCommand.js";
 import { CommandContext } from "../../structures/CommandContext.js";
 import { Command } from "../../utils/decorators/Command.js";
 import { botReqPerms, memberReqPerms } from "../../utils/decorators/CommonUtil.js";
+import { toV2 } from "../../utils/functions/componentsV2.js";
 import { createEmbed } from "../../utils/functions/createEmbed.js";
 
 @Command({
@@ -94,7 +95,7 @@ export class MuteCommand extends BaseCommand {
 
         const dm = await member.user.createDM().catch(() => void 0);
         if (dm) {
-            await dm.send({
+            await dm.send(toV2({
                 embeds: [
                     createEmbed(
                         "error",
@@ -118,7 +119,7 @@ export class MuteCommand extends BaseCommand {
                         })
                         .setTimestamp(Date.now())
                 ]
-            });
+            }));
         }
 
         await ctx.reply({

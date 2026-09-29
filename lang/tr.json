@@ -233,10 +233,15 @@
                 "description": "Biraz müzik çalın",
                 "noSongData": "Bu URL'de herhangi bir şarkı verisi yok.",
                 "slashQueryDescription": "Aranacak sorgu",
-                "usage": "{prefix}play <sorgu | url>"
+                "usage": "{prefix}play <sorgu | url>",
+                "privateOrUnavailable": "That playlist/song is private, deleted or not available in this region.",
+                "spotifyUnavailable": "Spotify is not reachable right now. Configure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET or try again later.",
+                "unsupportedURL": "That link is not supported. Use a YouTube, Spotify or SoundCloud link, or search by name."
             },
             "queue": {
-                "description": "Kuyruk listesini göster"
+                "description": "Kuyruk listesini göster",
+                "selectPlaceholder": "Jump to a song...",
+                "title": "Queue of {guild}"
             },
             "remove": {
                 "description": "Şarkı(lar)ı kuyruktan kaldırır",
@@ -281,7 +286,9 @@
             "shuffle": {
                 "actualState": "Geçerli karıştırma modu **`{state}`**",
                 "description": "Karıştırma özelliği için modu ayarlama",
-                "newState": "Karıştırma modu şimdi **`{state}`** olarak ayarlandı"
+                "newState": "Karıştırma modu şimdi **`{state}`** olarak ayarlandı",
+                "shuffledInfo": "{count} upcoming songs were shuffled.",
+                "restoredInfo": "{count} upcoming songs are back in their original order."
             },
             "skip": {
                 "description": "Müziği atlayın",
@@ -353,7 +360,13 @@
     },
     "reusable": {
         "invalidUsage": "Geçersiz kullanım, lütfen daha fazla bilgi için **`{prefix} {name}`** kullanın.",
-        "pageFooter": "Sayfa {actual}/{total}"
+        "pageFooter": "Sayfa {actual}/{total}",
+        "pagination": {
+            "notYours": "Only {author} can use these buttons.",
+            "jumpTitle": "Go to page",
+            "jumpLabel": "Page number (1 - {total})",
+            "invalidPage": "Enter a number between 1 and {total}."
+        }
     },
     "utils": {
         "cooldownMessage": "{author}, lütfen **{timeleft}`** kadar bekleyin.",
@@ -364,7 +377,10 @@
             "leftVC": "Çok uzun süredir aktif olmadığım için ses kanalından ayrıldım.",
             "queueEnded": "Çalma kuyruğu sona erdi, daha fazla müzik çalmak için **`{usage}`** kullanın.",
             "startPlaying": "**{song}** çalınmaya başladı.",
-            "stopPlaying": "**{song}** durduruldu."
+            "stopPlaying": "**{song}** durduruldu.",
+            "noPlayableSource": "Couldn't find a playable source for {song}, skipping it.",
+            "queuePosition": "Position in queue: #{position}",
+            "addedToQueue": "Added to the queue"
         },
         "musicDecorator": {
             "noInVC": "Üzgünüm ama bunu yapmak için bir ses kanalında olmanız gerekiyor.",
@@ -373,5 +389,24 @@
             "validVCJoinable": "Üzgünüm ama ses kanalınıza **`BAĞLANAMIYORUM`**, uygun izinlere sahip olduğumdan emin olun.",
             "validVCPermission": "Üzgünüm ama bu ses kanalında **`KONUŞMA`** yetkim yok; uygun izinlere sahip olduğumdan emin olun."
         }
+    },
+    "player": {
+        "nowPlaying": "Now playing",
+        "paused": "Paused",
+        "endsAt": "Ends {time}",
+        "live": "Live",
+        "requestedBy": "Requested by {user}",
+        "on": "ON",
+        "off": "OFF",
+        "loop": "Loop",
+        "shuffle": "Shuffle",
+        "inQueue": "{count} up next",
+        "upNext": "Up next",
+        "resume": "Resume",
+        "pause": "Pause",
+        "skip": "Skip",
+        "queue": "Queue",
+        "lyrics": "Lyrics",
+        "totalSongs": "{count} songs"
     }
 }

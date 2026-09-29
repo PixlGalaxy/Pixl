@@ -50,7 +50,7 @@ export class StayInQueueCommand extends BaseCommand {
                 embeds: [
                     createEmbed(
                         "info",
-                        `🔊 **|** ${i18n.__mf("commands.music.stayInQueue.actualState", {
+                        `🔊 ${i18n.__mf("commands.music.stayInQueue.actualState", {
                             state: `\`${ctx.guild?.queue?.stayInVC === true ? "ENABLED" : "DISABLED"}\``
                         })}`
                     )
@@ -64,7 +64,7 @@ export class StayInQueueCommand extends BaseCommand {
             embeds: [
                 createEmbed(
                     "success",
-                    `🔊 **|** ${i18n.__mf("commands.music.stayInQueue.newState", {
+                    `🔊 ${i18n.__mf("commands.music.stayInQueue.newState", {
                         state: `\`${ctx.guild?.queue?.stayInVC === true ? "ENABLED" : "DISABLED"}\``
                     })}`,
                     true

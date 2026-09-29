@@ -6,6 +6,7 @@ import { BaseEvent } from "../structures/BaseEvent.js";
 import { ServerQueue } from "../structures/ServerQueue.js";
 import { QueueSong } from "../typings/index.js";
 import { Event } from "../utils/decorators/Event.js";
+import { toV2 } from "../utils/functions/componentsV2.js";
 import { createEmbed } from "../utils/functions/createEmbed.js";
 import { formatMS } from "../utils/functions/formatMS.js";
 
@@ -71,14 +72,14 @@ export class VoiceStateUpdateEvent extends BaseEvent {
                 );
                 (async () => {
                     await queue.textChannel
-                    .send({
+                    .send(toV2({
                         embeds: [
                             createEmbed(
                                 "error",
-                                `⏹️ **|** ${i18n.__("events.voiceStateUpdate.disconnectFromVCMessage")}`
+                                `⏹️ ${i18n.__("events.voiceStateUpdate.disconnectFromVCMessage")}`
                             )
                         ]
-                    })
+                    }))
                     .catch((error: unknown) => this.client.logger.error("VOICE_STATE_UPDATE_EVENT_ERR:", error))
                 })();
             }
@@ -90,18 +91,18 @@ export class VoiceStateUpdateEvent extends BaseEvent {
             if (!newVCMembers) return;
             queue.skipVoters = [];
             if (oldVC?.rtcRegion !== newVC?.rtcRegion) {
-                const msg = await queue.textChannel.send({
+                const msg = await queue.textChannel.send(toV2({
                     embeds: [createEmbed("info", i18n.__("events.voiceStateUpdate.reconfigureConnection"))]
-                });
+                }));
                 queue.connection?.configureNetworking();
 
                 try {
                     await entersState(queue.connection as unknown as NonNullable<typeof queue.connection>, VoiceConnectionStatus.Ready, 20_000);
-                    void msg.edit({
+                    void msg.edit(toV2({
                         embeds: [
                             createEmbed("success", i18n.__("events.voiceStateUpdate.connectionReconfigured"), true)
                         ]
-                    });
+                    }));
                 } catch {
                     queue.destroy();
                     this.client.logger.info(
@@ -109,18 +110,18 @@ export class VoiceStateUpdateEvent extends BaseEvent {
                         } Unable to re-configure networking on ${newState.guild.name
                         } voice channel, the queue was deleted.`
                     );
-                    void msg.edit({
+                    void msg.edit(toV2({
                         embeds: [
                             createEmbed("error", i18n.__("events.voiceStateUpdate.unableReconfigureConnection"), true)
                         ]
-                    });
+                    }));
                     return;
                 }
             }
             if (newVC?.type === ChannelType.GuildStageVoice && newState.suppress === true) {
-                const msg = await queue.textChannel.send({
+                const msg = await queue.textChannel.send(toV2({
                     embeds: [createEmbed("info", i18n.__("events.voiceStateUpdate.joiningAsSpeaker"))]
-                });
+                }));
                 const suppress = await newState.setSuppressed(false).catch((error: unknown) => ({ error }));
 
                 if ("error" in suppress) {
@@ -130,20 +131,20 @@ export class VoiceStateUpdateEvent extends BaseEvent {
                         } Unable to join as Speaker at ${newState.guild.name} stage channel, the queue was deleted.`
                     );
                     await queue.textChannel
-                        .send({
+                        .send(toV2({
                             embeds: [
                                 createEmbed("error", i18n.__("events.voiceStateUpdate.unableJoinStageMessage"), true)
                             ]
-                        })
+                        }))
                         .catch((error: unknown) => {
                             this.client.logger.error("VOICE_STATE_UPDATE_EVENT_ERR:", error);
                         });
                     return;
                 }
 
-                await msg.edit({
+                await msg.edit(toV2({
                     embeds: [createEmbed("success", i18n.__("events.voiceStateUpdate.joinStageMessage"), true)]
-                });
+                }));
             }
             if (newVCMembers.size === 0 && queue.timeout === null && !queue.idle) {
                 this.timeout(newVCMembers, queue, newState);
@@ -179,29 +180,29 @@ export class VoiceStateUpdateEvent extends BaseEvent {
         queue.lastVSUpdateMsg = null;
         (state.guild.queue as unknown as ServerQueue).timeout = setTimeout(() => {
             queue.destroy();
-            void queue.textChannel.send({
+            void queue.textChannel.send(toV2({
                 embeds: [
                     createEmbed(
                         "error",
-                        `⏹ **|** ${i18n.__mf("events.voiceStateUpdate.deleteQueue", {
+                        `⏹ ${i18n.__mf("events.voiceStateUpdate.deleteQueue", {
                             duration: `\`${duration}\``
                         })}`
                     ).setAuthor({ name: i18n.__("events.voiceStateUpdate.deleteQueueFooter") })
                 ]
-            });
+            }));
         }, timeout);
         (async () => {
             await queue.textChannel
-            .send({
+            .send(toV2({
                 embeds: [
                     createEmbed(
                         "warn",
-                        `⏸ **|** ${i18n.__mf("events.voiceStateUpdate.pauseQueue", {
+                        `⏸ ${i18n.__mf("events.voiceStateUpdate.pauseQueue", {
                             duration: `\`${duration}\``
                         })}`
                     ).setAuthor({ name: i18n.__("events.voiceStateUpdate.pauseQueueFooter") })
                 ]
-            })
+            }))
             .then(msg => (queue.lastVSUpdateMsg = msg.id))
         })();
     }
@@ -216,11 +217,11 @@ export class VoiceStateUpdateEvent extends BaseEvent {
 
         (async () => {
             await queue.textChannel
-            .send({
+            .send(toV2({
                 embeds: [
                     createEmbed(
                         "info",
-                        `▶ **|** ${i18n.__mf("events.voiceStateUpdate.resumeQueue", {
+                        `▶ ${i18n.__mf("events.voiceStateUpdate.resumeQueue", {
                             song: `[${song.title}](${song.url})`
                         })}`
                     )
@@ -229,7 +230,7 @@ export class VoiceStateUpdateEvent extends BaseEvent {
                             name: i18n.__("events.voiceStateUpdate.resumeQueueFooter")
                         })
                 ]
-            })
+            }))
             .then(msg => (queue.lastVSUpdateMsg = msg.id))
         })();
         state.guild.queue?.player.unpause();

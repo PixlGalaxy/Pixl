@@ -3,6 +3,7 @@ import { ChannelType, Message, User } from "discord.js";
 import i18n from "../config/index.js";
 import { BaseEvent } from "../structures/BaseEvent.js";
 import { Event } from "../utils/decorators/Event.js";
+import { toV2 } from "../utils/functions/componentsV2.js";
 import { createEmbed } from "../utils/functions/createEmbed.js";
 
 @Event<typeof MessageCreateEvent>("messageCreate")
@@ -22,17 +23,17 @@ export class MessageCreateEvent extends BaseEvent {
 
         if (this.getUserFromMention(message.content)?.id === this.client.user?.id) {
             await message
-                .reply({
+                .reply(toV2({
                     embeds: [
                         createEmbed(
                             "info",
-                            `👋 **|** ${i18n.__mf("events.createMessage", {
+                            `👋 ${i18n.__mf("events.createMessage", {
                                 author: message.author.toString(),
                                 prefix: `\`${this.client.config.mainPrefix}\``
                             })}`
                         )
                     ]
-                })
+                }))
                 .catch((error: unknown) => this.client.logger.error("PROMISE_ERR:", error));
         }
 

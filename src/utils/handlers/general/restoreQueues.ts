@@ -1,4 +1,3 @@
-import type { DiscordGatewayAdapterCreator } from "@discordjs/voice";
 import { joinVoiceChannel } from "@discordjs/voice";
 import { ChannelType } from "discord.js";
 import type { Rawon } from "../../../structures/Rawon.js";
@@ -34,17 +33,24 @@ export async function restoreQueues(client: Rawon): Promise<void> {
             const queue = new ServerQueue(textChannel);
             guild.queue = queue;
             queue.loopMode = entry.loopMode;
-            queue.shuffle = entry.shuffle;
+            // The saved order is already shuffled, so only restore the flag.
+            queue.setShuffle(entry.shuffle, false);
             queue.stayInVC = entry.stayInVC;
             queue.filters = entry.filters;
             queue.volume = entry.volume;
 
-            for (const song of [...entry.songs].sort((a, b) => a.index - b.index)) {
-                queue.songs.addSong(song.song, fetched?.get(song.requesterId) ?? fallback);
+            // Songs are re-added in their original order and then given back their play order,
+            // so turning shuffle off after a restart still restores the original order.
+            const playRank = new Map([...entry.songs].sort((a, b) => a.index - b.index).map((song, rank) => [song, rank]));
+            const byOriginal = [...entry.songs].sort((a, b) => (a.originalIndex ?? a.index) - (b.originalIndex ?? b.index));
+            for (const song of byOriginal) {
+                const key = queue.songs.addSong(song.song, fetched?.get(song.requesterId) ?? fallback);
+                const added = queue.songs.get(key);
+                if (added) added.index = playRank.get(song) ?? added.index;
             }
 
             queue.connection = joinVoiceChannel({
-                adapterCreator: guild.voiceAdapterCreator as DiscordGatewayAdapterCreator,
+                adapterCreator: guild.voiceAdapterCreator,
                 channelId: voiceChannel.id,
                 guildId: guild.id,
                 selfDeaf: true

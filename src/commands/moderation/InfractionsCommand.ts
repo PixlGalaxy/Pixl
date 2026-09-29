@@ -61,28 +61,11 @@ export class InfractionsCommand extends BaseCommand {
                     }`
             )
             .join("\n"));
-        const msg = await ctx.reply({
-            embeds: [
-                embed.setDescription(pages[0]).setFooter({
-                    text: i18n.__mf("reusable.pageFooter", {
-                        actual: 1,
-                        total: pages.length
-                    })
-                })
-            ]
-        });
-
-        await new ButtonPagination(msg, {
+        await ButtonPagination.send(ctx, {
             author: ctx.author.id,
-            edit: (i, emb, page) =>
-                emb.setDescription(page).setFooter({
-                    text: i18n.__mf("reusable.pageFooter", {
-                        actual: i + 1,
-                        total: pages.length
-                    })
-                }),
-            embed,
-            pages
-        }).start();
+            pages,
+            thumbnail: user.displayAvatarURL({ extension: "png", size: 256 }),
+            title: `📋 ${i18n.__mf("commands.moderation.infractions.embedAuthorText", { user: user.tag })}`
+        });
     }
 }

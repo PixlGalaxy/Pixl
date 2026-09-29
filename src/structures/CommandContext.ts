@@ -1,10 +1,13 @@
 import { Buffer } from "node:buffer";
 import type { BaseMessageOptions, ChatInputCommandInteraction, GuildMember, Interaction, InteractionEditReplyOptions, InteractionReplyOptions, InteractionResponse, MessageMentions, MessagePayload, MessageReplyOptions, ModalSubmitFields, StringSelectMenuInteraction, TextBasedChannel, User } from "discord.js";
-import { ActionRowBuilder, BaseInteraction, ButtonBuilder, ButtonInteraction, ButtonStyle, Collection, CommandInteraction, ContextMenuCommandInteraction, Message, MessageComponentInteraction, ModalSubmitInteraction } from "discord.js";
+import { ActionRowBuilder, BaseInteraction, ButtonBuilder, ButtonInteraction, ButtonStyle, Collection, CommandInteraction, ContextMenuCommandInteraction, Message, MessageComponentInteraction, MessageFlags, MessageFlagsBitField, MessagePayload as MessagePayloadClass, ModalSubmitInteraction, StringSelectMenuInteraction as StringSelectMenuInteractionClass } from "discord.js";
 import type { MessageInteractionAction } from "../typings/index.js";
+import { toV2 } from "../utils/functions/componentsV2.js";
 
 export class CommandContext {
     public additionalArgs = new Collection<string, any>();
+    // When true, interaction replies are only visible to the invoking user.
+    public ephemeral = false;
     public channel: TextBasedChannel | null;
     public guild;
 
@@ -37,22 +40,19 @@ export class CommandContext {
             | { askDeletion?: { reference: string } },
         autoedit?: boolean
     ): Promise<Message> {
-        if (this.isInteraction() && 
-                ((this.context as Interaction).isCommand() || (this.context as Interaction).isStringSelectMenu()) &&
-                (this.context as CommandInteraction).replied &&
-                autoedit !== true
-            ) throw new Error("Interaction is already replied.");
-
-        const context = this.context as CommandInteraction | Message | StringSelectMenuInteraction;
+        const interaction = this.context as CommandInteraction;
+        const action: MessageInteractionAction = this.isInteraction()
+            ? interaction.replied
+                ? autoedit === true
+                    ? "editReply"
+                    : "followUp"
+                : interaction.deferred
+                    ? "editReply"
+                    : "reply"
+            : "reply";
         const rep = await this.send(
             options,
-            this.isInteraction()
-                ? (context as Interaction).isCommand() || (context as Interaction).isStringSelectMenu()
-                    ? (context as CommandInteraction).replied || (context as CommandInteraction).deferred
-                        ? "editReply"
-                        : "reply"
-                    : "reply"
-                : "reply"
+            action
         ).catch((error: unknown) => ({ error }));
         if ("error" in rep) {
             throw new Error(`Unable to reply context, because: ${(rep.error as Error).message}`);
@@ -87,6 +87,12 @@ export class CommandContext {
             ];
         }
         if (this.isInteraction()) {
+            if (this.ephemeral && type !== "editReply" && typeof options === "object" && !(options instanceof MessagePayloadClass)) {
+                const flags = new MessageFlagsBitField((options as { flags?: number }).flags ?? 0).add(MessageFlags.Ephemeral);
+                (options as { flags?: number }).flags = flags.bitfield;
+            }
+            // eslint-disable-next-line no-param-reassign
+            options = toV2(options);
             const context = this.context as CommandInteraction;
             let msg: Message;
             if (type === "reply") {
@@ -114,6 +120,8 @@ export class CommandContext {
             options = { content: options };
         }
 
+        // eslint-disable-next-line no-param-reassign
+        options = toV2(options);
         ((options as MessageReplyOptions).allowedMentions ??= {}).repliedUser = false;
         return (this.context as Message).reply(options as MessageReplyOptions);
     }
@@ -139,7 +147,7 @@ export class CommandContext {
     }
 
     public isStringSelectMenu(): boolean {
-        return this.context instanceof MessageComponentInteraction;
+        return this.context instanceof StringSelectMenuInteractionClass;
     }
 
     public isModal(): boolean {

@@ -233,10 +233,15 @@
                 "description": "音楽を再生",
                 "noSongData": "そのURLは曲データを含んでいません。",
                 "slashQueryDescription": "検索キーワード",
-                "usage": "{prefix}play <キーワード | URL>"
+                "usage": "{prefix}play <キーワード | URL>",
+                "privateOrUnavailable": "That playlist/song is private, deleted or not available in this region.",
+                "spotifyUnavailable": "Spotify is not reachable right now. Configure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET or try again later.",
+                "unsupportedURL": "That link is not supported. Use a YouTube, Spotify or SoundCloud link, or search by name."
             },
             "queue": {
-                "description": "キューリストを表示"
+                "description": "キューリストを表示",
+                "selectPlaceholder": "Jump to a song...",
+                "title": "Queue of {guild}"
             },
             "remove": {
                 "description": "キューから曲を削除",
@@ -281,7 +286,9 @@
             "shuffle": {
                 "actualState": "現在のシャッフルモードは**`{state}`**です。",
                 "description": "シャッフルモードを設定",
-                "newState": "シャッフルモードは**`{state}`**にセットされました。"
+                "newState": "シャッフルモードは**`{state}`**にセットされました。",
+                "shuffledInfo": "{count} upcoming songs were shuffled.",
+                "restoredInfo": "{count} upcoming songs are back in their original order."
             },
             "skip": {
                 "description": "曲をスキップ",
@@ -353,7 +360,13 @@
     },
     "reusable": {
         "invalidUsage": "無効な使用方法です。**`{prefix} {name}`**を実行して情報を照会してください。",
-        "pageFooter": "ページ {actual}/{total}"
+        "pageFooter": "ページ {actual}/{total}",
+        "pagination": {
+            "notYours": "Only {author} can use these buttons.",
+            "jumpTitle": "Go to page",
+            "jumpLabel": "Page number (1 - {total})",
+            "invalidPage": "Enter a number between 1 and {total}."
+        }
     },
     "utils": {
         "cooldownMessage": "{author}、クールダウンタイムは残り**`{timeleft}`**です。お待ち下さい。",
@@ -364,7 +377,10 @@
             "leftVC": "非アクティブが続いたためVCから切断しました。",
             "queueEnded": "キューが終了しました。**`{usage}`**を使用して曲を再生してください。",
             "startPlaying": "**{song}**の再生が開始",
-            "stopPlaying": "**{song}**の再生が終了"
+            "stopPlaying": "**{song}**の再生が終了",
+            "noPlayableSource": "Couldn't find a playable source for {song}, skipping it.",
+            "queuePosition": "Position in queue: #{position}",
+            "addedToQueue": "Added to the queue"
         },
         "musicDecorator": {
             "noInVC": "それを行うにはVCに参加している必要があります。",
@@ -373,5 +389,24 @@
             "validVCJoinable": "**`接続`**できませんでした、適切な権限をもっていることを確認してください。",
             "validVCPermission": "**`再生`**できませんでした、適切な権限をもっていることを確認してください。"
         }
+    },
+    "player": {
+        "nowPlaying": "Now playing",
+        "paused": "Paused",
+        "endsAt": "Ends {time}",
+        "live": "Live",
+        "requestedBy": "Requested by {user}",
+        "on": "ON",
+        "off": "OFF",
+        "loop": "Loop",
+        "shuffle": "Shuffle",
+        "inQueue": "{count} up next",
+        "upNext": "Up next",
+        "resume": "Resume",
+        "pause": "Pause",
+        "skip": "Skip",
+        "queue": "Queue",
+        "lyrics": "Lyrics",
+        "totalSongs": "{count} songs"
     }
 }

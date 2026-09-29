@@ -61,7 +61,7 @@ export class PurgeCommand extends BaseCommand {
                 embeds: [
                     createEmbed(
                         "success",
-                        `🧹 **|** ${i18n.__mf("commands.moderation.purge.purgeSuccess", { amount: purge.size })}`
+                        `🧹 ${i18n.__mf("commands.moderation.purge.purgeSuccess", { amount: purge.size })}`
                     )
                 ]
             })

@@ -1,14 +1,9 @@
-import { AudioPlayerState, AudioResource } from "@discordjs/voice";
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, EmbedBuilder } from "discord.js";
 import i18n from "../../config/index.js";
 import { BaseCommand } from "../../structures/BaseCommand.js";
-import { CommandContext } from "../../structures/CommandContext.js";
-import { QueueSong } from "../../typings/index.js";
+import type { CommandContext } from "../../structures/CommandContext.js";
 import { Command } from "../../utils/decorators/Command.js";
 import { haveQueue } from "../../utils/decorators/MusicUtil.js";
-import { createEmbed } from "../../utils/functions/createEmbed.js";
-import { createProgressBar } from "../../utils/functions/createProgressBar.js";
-import { normalizeTime } from "../../utils/functions/normalizeTime.js";
+import { buildPlayerCard } from "../../utils/functions/playerCard.js";
 
 @Command<typeof NowPlayingCommand>({
     aliases: ["np"],
@@ -22,100 +17,12 @@ import { normalizeTime } from "../../utils/functions/normalizeTime.js";
 export class NowPlayingCommand extends BaseCommand {
     @haveQueue
     public async execute(ctx: CommandContext): Promise<void> {
-        function getEmbed(): EmbedBuilder {
-            const res = (
-                ctx.guild?.queue?.player.state as
-                | (AudioPlayerState & {
-                    resource: AudioResource | undefined;
-                })
-                | undefined
-            )?.resource;
-            const song = (res?.metadata as QueueSong | undefined)?.song;
+        const queue = ctx.guild?.queue;
+        if (!queue) return;
 
-            const embed = createEmbed("info", `${ctx.guild?.queue?.playing === true ? "▶" : "⏸"} **|** `).setThumbnail(
-                song?.thumbnail ?? "https://cdn.stegripe.org/images/icon.png"
-            );
-
-            const curr = Math.trunc((res?.playbackDuration ?? 0) / 1_000);
-            embed.data.description += song
-                ? `**[${song.title}](${song.url})**\n` +
-                `${normalizeTime(curr)} ${createProgressBar(curr, song.duration)} ${normalizeTime(song.duration)}`
-                : i18n.__("commands.music.nowplaying.emptyQueue");
-
-            return embed;
-        }
-
-        const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder()
-                .setCustomId("TOGGLE_STATE_BUTTON")
-                .setLabel("Pause/Resume")
-                .setStyle(ButtonStyle.Primary)
-                .setEmoji("⏯️"),
-            new ButtonBuilder()
-                .setCustomId("SKIP_BUTTON")
-                .setLabel("Skip")
-                .setStyle(ButtonStyle.Secondary)
-                .setEmoji("⏭"),
-            new ButtonBuilder()
-                .setCustomId("STOP_BUTTON")
-                .setLabel("Stop Player")
-                .setStyle(ButtonStyle.Danger)
-                .setEmoji("⏹"),
-            new ButtonBuilder()
-                .setCustomId("SHOW_QUEUE_BUTTON")
-                .setLabel("Show Queue")
-                .setStyle(ButtonStyle.Secondary)
-                .setEmoji("#️⃣")
-        );
-        const msg = await ctx.reply({ embeds: [getEmbed()], components: [buttons] });
-
-        const collector = msg.createMessageComponentCollector({
-            componentType: ComponentType.Button,
-            filter: i => i.isButton() && i.user.id === ctx.author.id,
-            idle: 30_000
-        });
-
-        collector
-            .on("collect", async i => {
-                const newCtx = new CommandContext(i);
-                let cmdName = "";
-
-                switch (i.customId) {
-                    case "TOGGLE_STATE_BUTTON": {
-                        cmdName = ctx.guild?.queue?.playing === true ? "pause" : "resume";
-                        break;
-                    }
-
-                    case "SKIP_BUTTON": {
-                        cmdName = "skip";
-                        break;
-                    }
-
-                    case "SHOW_QUEUE_BUTTON": {
-                        cmdName = "queue";
-                        break;
-                    }
-
-                    case "STOP_BUTTON": {
-                        cmdName = "stop";
-                        break;
-                    }
-
-                    default: break;
-                }
-                await this.client.commands.get(cmdName)?.execute(newCtx);
-
-                const embed = getEmbed();
-
-                await msg.edit({ embeds: [embed] });
-            })
-            .on("end", () => {
-                const embed = getEmbed().setFooter({ text: i18n.__("commands.music.nowplaying.disableButton") });
-
-                void msg.edit({
-                    embeds: [embed],
-                    components: []
-                });
-            });
+        // The panel buttons are handled globally (InteractionCreateEvent), so they keep working
+        // for as long as the message exists. Replace the old panel to avoid duplicated controls.
+        const msg = await ctx.reply(buildPlayerCard(queue));
+        if (!ctx.ephemeral) queue.lastMusicMsg = msg.id;
     }
 }

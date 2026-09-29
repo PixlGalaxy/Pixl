@@ -233,10 +233,15 @@
                 "description": "Зіграти музику",
                 "noSongData": "Цей URL не має даних про пісню.",
                 "slashQueryDescription": "Запит для пошуку",
-                "usage": "{prefix}play <запит | url>"
+                "usage": "{prefix}play <запит | url>",
+                "privateOrUnavailable": "That playlist/song is private, deleted or not available in this region.",
+                "spotifyUnavailable": "Spotify is not reachable right now. Configure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET or try again later.",
+                "unsupportedURL": "That link is not supported. Use a YouTube, Spotify or SoundCloud link, or search by name."
             },
             "queue": {
-                "description": "Показати чергу"
+                "description": "Показати чергу",
+                "selectPlaceholder": "Jump to a song...",
+                "title": "Queue of {guild}"
             },
             "remove": {
                 "description": "Вилучити пісню з черги",
@@ -281,7 +286,9 @@
             "shuffle": {
                 "actualState": "Поточний режим перемішування: **`{state}`**",
                 "description": "Встановити режим для функції перемішування",
-                "newState": "Режим перемішування тепер встановлено: **`{state}`**"
+                "newState": "Режим перемішування тепер встановлено: **`{state}`**",
+                "shuffledInfo": "{count} upcoming songs were shuffled.",
+                "restoredInfo": "{count} upcoming songs are back in their original order."
             },
             "skip": {
                 "description": "Пропустити пісню",
@@ -353,7 +360,13 @@
     },
     "reusable": {
         "invalidUsage": "Некоректне використання, будь ласка, скористайтесь **`{prefix} {name}`** для отримання інформації.",
-        "pageFooter": "Page {actual} of {total}"
+        "pageFooter": "Page {actual} of {total}",
+        "pagination": {
+            "notYours": "Only {author} can use these buttons.",
+            "jumpTitle": "Go to page",
+            "jumpLabel": "Page number (1 - {total})",
+            "invalidPage": "Enter a number between 1 and {total}."
+        }
     },
     "utils": {
         "cooldownMessage": "{author}, будь ласка, зачекайте **`{timeleft}`** щоб скористатись цією командою.",
@@ -364,7 +377,10 @@
             "leftVC": "Я покинув канал через неактивність.",
             "queueEnded": "Черга скінчилась, використовуйте **`{usage}`** щоб почати програвання.",
             "startPlaying": "Програвання почато: **{song}**",
-            "stopPlaying": "Програвання зупинено: **{song}**"
+            "stopPlaying": "Програвання зупинено: **{song}**",
+            "noPlayableSource": "Couldn't find a playable source for {song}, skipping it.",
+            "queuePosition": "Position in queue: #{position}",
+            "addedToQueue": "Added to the queue"
         },
         "musicDecorator": {
             "noInVC": "Вибачте, але Ви повинні бути в каналі для використання цієї команди.",
@@ -373,5 +389,24 @@
             "validVCJoinable": "Пробачте, але я не можу **`ПРИЄДНАТИСЬ`** до Вашого каналу, перевірте чи я маю на це право.",
             "validVCPermission": "Пробачте, але я не можу **`РОЗМОВЛЯТИ`** у Вашому каналі, перевірте чи я маю на це право."
         }
+    },
+    "player": {
+        "nowPlaying": "Now playing",
+        "paused": "Paused",
+        "endsAt": "Ends {time}",
+        "live": "Live",
+        "requestedBy": "Requested by {user}",
+        "on": "ON",
+        "off": "OFF",
+        "loop": "Loop",
+        "shuffle": "Shuffle",
+        "inQueue": "{count} up next",
+        "upNext": "Up next",
+        "resume": "Resume",
+        "pause": "Pause",
+        "skip": "Skip",
+        "queue": "Queue",
+        "lyrics": "Lyrics",
+        "totalSongs": "{count} songs"
     }
 }

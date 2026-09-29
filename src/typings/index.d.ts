@@ -1,6 +1,6 @@
 /* eslint-disable typescript/consistent-type-definitions */
 /* eslint-disable typescript/naming-convention */
-import type { ApplicationCommandOptionData, ApplicationCommandType, Client as OClient, ClientEvents, ClientPresenceStatus, Collection, Guild as OG, GuildMember, EmbedBuilder } from "discord.js";
+import type { ApplicationCommandOptionData, ApplicationCommandType, AutocompleteInteraction, Client as OClient, ClientEvents, ClientPresenceStatus, Collection, Guild as OG, GuildMember, StringSelectMenuInteraction } from "discord.js";
 import type { CommandContext } from "../structures/CommandContext.js";
 import type { Rawon } from "../structures/Rawon.js";
 import type { ServerQueue } from "../structures/ServerQueue.js";
@@ -13,6 +13,8 @@ export type QueryData = {
     isURL: boolean;
 }
 
+export type SearchTrackError = "notFound" | "privateOrUnavailable" | "spotifyUnavailable" | "unsupported";
+
 export type BasicYoutubeVideoInfo = {
     thumbnails?: { url: string; width: number; height: number }[];
     duration: number;
@@ -24,14 +26,30 @@ export type BasicYoutubeVideoInfo = {
 export type SearchTrackResult = {
     type?: "results" | "selection";
     items: Song[];
+    // Name of the playlist/album when the query resolved to a collection.
+    collectionName?: string;
+    error?: SearchTrackError;
 }
 
 export type PaginationPayload = {
-    edit(index: number, embed: EmbedBuilder, page: string): unknown;
-    embed: EmbedBuilder;
-    content?: string;
-    pages: string[];
+    // User allowed to flip pages.
     author: string;
+    pages: string[];
+    title?: string;
+    thumbnail?: string | null;
+    color?: number;
+    // Extra footer text shown next to the page counter.
+    footer?: string;
+    // Page shown first (0-based).
+    startPage?: number;
+    // Wrap each page in a code block.
+    codeBlock?: boolean;
+    // Optional select menu built for the current page.
+    select?: {
+        placeholder: string;
+        options(pageIndex: number): { label: string; value: string; description?: string; emoji?: string }[];
+        onSelect(interaction: StringSelectMenuInteraction, values: string[]): Promise<unknown> | unknown;
+    };
 }
 
 export type RawonLoggerOptions = {
@@ -61,6 +79,7 @@ export type Event = {
 
 export type CommandComponent = {
     execute(context: CommandContext): any;
+    autocomplete?(interaction: AutocompleteInteraction): Promise<void>;
     meta: {
         readonly category?: string;
         readonly path?: string;
@@ -100,17 +119,30 @@ declare module "discord.js" {
     }
 }
 
+export type SongSource = "other" | "soundcloud" | "spotify" | "youtube";
+
 export type Song = {
     thumbnail: string;
+    // Duration in seconds.
     duration: number;
     title: string;
+    // Public URL shown to users (e.g. the Spotify link for Spotify tracks).
     url: string;
     id: string;
+    artist?: string;
+    source?: SongSource;
+    // Direct playable URL. Spotify tracks get it lazily right before playing.
+    streamUrl?: string;
+    // Search hints used to find a playable source for Spotify tracks.
+    isrc?: string;
 }
 
 export type QueueSong = {
     requester: GuildMember;
+    // Play order. Rewritten when the queue is shuffled.
     index: number;
+    // Order in which the song was added, used to restore after shuffling.
+    originalIndex: number;
     song: Song;
     key: string;
 }
@@ -148,35 +180,48 @@ export type ArtistsEntity = {
     id: string;
 }
 
-export type SpotifyArtist = {
-    name: string;
-    tracks: SpotifyTrack[];
+export type SpotifyImage = {
+    url: string;
+    width?: number | null;
+    height?: number | null;
 }
-
-type SpotifyData<T> = {
-    name: string;
-    tracks: {
-        items: T[];
-        previous: string | null;
-        next: string | null;
-    };
-}
-
-export type SpotifyAlbum = SpotifyData<SpotifyTrack>;
-
-export type SpotifyPlaylist = SpotifyData<{ track: SpotifyTrack }>;
 
 export type SpotifyTrack = {
-    artists: ArtistsEntity[];
+    artists: { name: string; id?: string }[];
     duration_ms: number;
     external_ids?: {
-        isrc: string;
+        isrc?: string;
     };
-    external_urls: {
-        spotify: string;
+    external_urls?: {
+        spotify?: string;
     };
+    album?: {
+        name?: string;
+        images?: SpotifyImage[];
+    };
+    is_local?: boolean;
+    type?: string;
     name: string;
     id: string;
+}
+
+export type SpotifyPage<T> = {
+    items: T[];
+    next: string | null;
+}
+
+// Playlist entries used `track` historically and `item` after the 2026 Web API changes.
+export type SpotifyPlaylistEntry = {
+    track?: SpotifyTrack | null;
+    item?: SpotifyTrack | null;
+    is_local?: boolean;
+}
+
+export type SpotifyCollection = {
+    name: string;
+    images?: SpotifyImage[];
+    tracks?: SpotifyPage<SpotifyPlaylistEntry | SpotifyTrack>;
+    items?: SpotifyPage<SpotifyPlaylistEntry | SpotifyTrack>;
 }
 
 export type GuildData = {
@@ -209,8 +254,3 @@ export type MethodDecorator<Target, Result> = (
 export type ClassDecorator<Target extends Constructor, Result = unknown> = (target: Target) => Result;
 export type Promisable<Output> = Output | Promise<Output>;
 export type FunctionType<Args extends any[] = any[], Result = any> = (...args: Args) => Result;
-
-export type RegisterCmdOptions = {
-    onRegistered(guild: OG): Promisable<any>;
-    onError(guild: OG | null, error: Error): Promisable<any>;
-}

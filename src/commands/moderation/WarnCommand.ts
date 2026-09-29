@@ -5,6 +5,7 @@ import { CommandContext } from "../../structures/CommandContext.js";
 import { GuildData } from "../../typings/index.js";
 import { Command } from "../../utils/decorators/Command.js";
 import { memberReqPerms } from "../../utils/decorators/CommonUtil.js";
+import { toV2 } from "../../utils/functions/componentsV2.js";
 import { createEmbed } from "../../utils/functions/createEmbed.js";
 
 @Command({
@@ -69,7 +70,7 @@ export class WarnCommand extends BaseCommand {
             })
             .setTimestamp(time);
 
-        await dm?.send({ embeds: [embed] });
+        await dm?.send(toV2({ embeds: [embed] }));
         await this.client.data.save(() => {
             const prefGuildData = this.client.data.data?.[ctx.guild?.id ?? ''];
             const newData: Record<string, GuildData> = {

@@ -8,7 +8,9 @@ import type { Rawon } from "../../../structures/Rawon.js";
 import { ServerQueue } from "../../../structures/ServerQueue.js";
 import type { Song } from "../../../typings/index.js";
 import { chunk } from "../../functions/chunk.js";
-import { createEmbed } from "../../functions/createEmbed.js";
+import { toV2 } from "../../functions/componentsV2.js";
+import { colorOf, createEmbed } from "../../functions/createEmbed.js";
+import { normalizeTime } from "../../functions/normalizeTime.js";
 import { parseHTMLElements } from "../../functions/parseHTMLElements.js";
 import { ButtonPagination } from "../../structures/ButtonPagination.js";
 import { play } from "./play.js";
@@ -17,36 +19,54 @@ export async function handleVideos(
     client: Rawon,
     ctx: CommandContext,
     toQueue: Song[],
-    voiceChannel: StageChannel | VoiceChannel
+    voiceChannel: StageChannel | VoiceChannel,
+    collectionName?: string
 ): Promise<Message | undefined> {
     const wasIdle = ctx.guild?.queue?.idle;
 
     async function sendPagination(): Promise<void> {
-        for (const song of toQueue) {
-            ctx.guild?.queue?.songs.addSong(song, ctx.member as unknown as NonNullable<typeof ctx.member>);
+        const queue = ctx.guild?.queue;
+        const member = ctx.member as unknown as NonNullable<typeof ctx.member>;
+        const shuffleAfter = queue?.shuffle === true ? queue.currentIndex : undefined;
+        const keys = toQueue.map(song => queue?.songs.addSong(song, member, shuffleAfter));
+
+        const format = (song: Song): string => {
+            const title = escapeMarkdown(parseHTMLElements(song.title));
+            const artist = (song.artist?.length ?? 0) > 0 ? ` — ${escapeMarkdown(song.artist ?? "")}` : "";
+            const duration = song.duration > 0 ? ` \`${normalizeTime(song.duration)}\`` : "";
+            return `[${title}](${song.url})${artist}${duration}`;
+        };
+
+        if (toQueue.length === 1) {
+            const [song] = toQueue;
+            const added = queue?.songs.get(keys[0] ?? "");
+            const current = queue?.currentIndex ?? -1;
+            const position = queue?.songs.filter(x => x.index > current && x.index <= (added?.index ?? 0)).size ?? 1;
+            const embed = createEmbed(
+                "success",
+                `${format(song)}\n-# ${i18n.__mf("utils.generalHandler.queuePosition", { position: Math.max(1, position) })}`
+            )
+                .setAuthor({ name: `✅ ${i18n.__("utils.generalHandler.addedToQueue")}` })
+                .setThumbnail(song.thumbnail || null);
+            await ctx.reply({ embeds: [embed] }, true);
+            return;
         }
 
-        const opening = i18n.__mf("utils.generalHandler.handleVideoInitial", { length: toQueue.length });
+        const totalDuration = toQueue.reduce((acc, song) => acc + song.duration, 0);
         const pages = chunk(toQueue, 10).map((vals, i) => vals
-            .map((song, index) => `${i * 10 + (index + 1)}.) ${escapeMarkdown(parseHTMLElements(song.title))}`)
+            .map((song, index) => `\`${i * 10 + (index + 1)}.\` ${format(song)}`)
             .join("\n"));
-        const embed = createEmbed("info", opening);
-        const msg = await ctx.reply({ embeds: [embed] }, true);
 
-        return new ButtonPagination(msg, {
+        await ButtonPagination.send(ctx, {
             author: ctx.author.id,
-            edit: (i, emb, page) => {
-                emb.setDescription(`\`\`\`\n${page}\`\`\``)
-                    .setAuthor({
-                        name: opening
-                    })
-                    .setFooter({
-                        text: `• ${i18n.__mf("reusable.pageFooter", { actual: i + 1, total: pages.length })}`
-                    });
-            },
-            embed,
-            pages
-        }).start();
+            color: colorOf("success"),
+            footer: `⏱️ ${normalizeTime(totalDuration)}`,
+            pages,
+            thumbnail: toQueue[0]?.thumbnail,
+            title: `✅ ${i18n.__mf("utils.generalHandler.handleVideoInitial", { length: toQueue.length })}${
+                (collectionName?.length ?? 0) > 0 ? ` · ${escapeMarkdown(collectionName ?? "")}` : ""
+            }`
+        }, true);
     }
 
     if (ctx.guild?.queue) {
@@ -94,7 +114,7 @@ export async function handleVideos(
 
         client.logger.error("PLAY_CMD_ERR:", error);
         await (ctx.channel as TextChannel | null)
-            ?.send({
+            ?.send(toV2({
                 embeds: [
                     createEmbed(
                         "error",
@@ -102,7 +122,7 @@ export async function handleVideos(
                         true
                     )
                 ]
-            })
+            }))
             // eslint-disable-next-line typescript/naming-convention
             .catch((error_: unknown) => {
                 client.logger.error("PLAY_CMD_ERR:", error_);

@@ -5,13 +5,20 @@
 <a href="https://www.itzgalaxy.com/pixl"><img src="https://img.shields.io/static/v1?label=Invite%20Me&message=PIXL&plastic&color=5865F2&logo=discord"></a>
 
 ## Features
-- Interaction support.
+- Modern Discord UI built with Components V2 (containers, sections, thumbnails).
+- Live "now playing" panel with playback controls (pause, skip, stop, shuffle, loop, volume, queue, lyrics).
+- Paginated lists with first/previous/next/last buttons, a "go to page" modal and a jump-to-song menu.
+- Slash command autocomplete for `/play` with YouTube suggestions.
+- Current song shown as the voice channel status (needs the *Set Voice Channel Status* permission).
+- YouTube, SoundCloud and Spotify (tracks, albums, playlists, artists, `intl-xx` and `spotify.link` links).
+  Spotify playlists keep their original order and are queued instantly; each song is matched on YouTube right before it plays.
+- Real shuffle (Fisher-Yates) that shows the shuffled order in `/queue` and restores the original order when disabled.
 - Configurable, and easy to use.
 - Basic music and moderation commands.
 - A production-ready project, set up the bot without coding.
 
 ## General Setup
-1. Download and install [Node.js](https://nodejs.org) version `16.6.0` or higher
+1. Download and install [Node.js](https://nodejs.org) version `22.12.0` or higher
 2. Open the `.env_example` file and rename it to `.env`
 3. Install required and optional dependencies. You still can use `npm` too.
 ```sh

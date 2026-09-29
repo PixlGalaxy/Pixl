@@ -231,12 +231,17 @@
             "play": {
                 "alreadyPlaying": "The music player is already playing to **`{voiceChannel}`** voice channel.",
                 "description": "Play some music",
-                "noSongData": "That URL doesn't have any song data.",
+                "noSongData": "I couldn't find any songs for that search or link.",
                 "slashQueryDescription": "Query to search",
-                "usage": "{prefix}play <query | url>"
+                "usage": "{prefix}play <query | url>",
+                "privateOrUnavailable": "That playlist/song is private, deleted or not available in this region.",
+                "spotifyUnavailable": "Spotify is not reachable right now. Configure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET or try again later.",
+                "unsupportedURL": "That link is not supported. Use a YouTube, Spotify or SoundCloud link, or search by name."
             },
             "queue": {
-                "description": "Show the queue list"
+                "description": "Show the queue list",
+                "selectPlaceholder": "Jump to a song...",
+                "title": "Queue of {guild}"
             },
             "remove": {
                 "description": "Remove song(s) from the queue",
@@ -281,7 +286,9 @@
             "shuffle": {
                 "actualState": "Current shuffle mode is **`{state}`**",
                 "description": "Set mode for shuffle feature",
-                "newState": "Shuffle mode is now set to **`{state}`**"
+                "newState": "Shuffle mode is now set to **`{state}`**",
+                "shuffledInfo": "{count} upcoming songs were shuffled.",
+                "restoredInfo": "{count} upcoming songs are back in their original order."
             },
             "skip": {
                 "description": "Skip the music",
@@ -353,7 +360,13 @@
     },
     "reusable": {
         "invalidUsage": "Invalid usage, please use **`{prefix} {name}`** for more information.",
-        "pageFooter": "Page {actual} of {total}"
+        "pageFooter": "Page {actual} of {total}",
+        "pagination": {
+            "notYours": "Only {author} can use these buttons.",
+            "jumpTitle": "Go to page",
+            "jumpLabel": "Page number (1 - {total})",
+            "invalidPage": "Enter a number between 1 and {total}."
+        }
     },
     "utils": {
         "cooldownMessage": "{author}, please wait **`{timeleft}`** of cooldown time.",
@@ -364,7 +377,10 @@
             "leftVC": "Left from the voice channel because I've been inactive for too long.",
             "queueEnded": "Queue has ended, use **`{usage}`** to play more music.",
             "startPlaying": "Started playing **{song}**",
-            "stopPlaying": "Stopped playing **{song}**"
+            "stopPlaying": "Stopped playing **{song}**",
+            "noPlayableSource": "Couldn't find a playable source for {song}, skipping it.",
+            "queuePosition": "Position in queue: #{position}",
+            "addedToQueue": "Added to the queue"
         },
         "musicDecorator": {
             "noInVC": "Sorry, but you need to be in a voice channel to do that.",
@@ -373,5 +389,24 @@
             "validVCJoinable": "Sorry, but I can't **`CONNECT`** to your voice channel, make sure I have the proper permissions.",
             "validVCPermission": "Sorry, but I can't **`SPEAK`** in this voice channel; make sure I have the proper permissions."
         }
+    },
+    "player": {
+        "nowPlaying": "Now playing",
+        "paused": "Paused",
+        "endsAt": "Ends {time}",
+        "live": "Live",
+        "requestedBy": "Requested by {user}",
+        "on": "ON",
+        "off": "OFF",
+        "loop": "Loop",
+        "shuffle": "Shuffle",
+        "inQueue": "{count} up next",
+        "upNext": "Up next",
+        "resume": "Resume",
+        "pause": "Pause",
+        "skip": "Skip",
+        "queue": "Queue",
+        "lyrics": "Lyrics",
+        "totalSongs": "{count} songs"
     }
 }

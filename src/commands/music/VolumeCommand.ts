@@ -3,7 +3,8 @@ import i18n from "../../config/index.js";
 import { BaseCommand } from "../../structures/BaseCommand.js";
 import { CommandContext } from "../../structures/CommandContext.js";
 import { Command } from "../../utils/decorators/Command.js";
-import { inVC, sameVC, validVC } from "../../utils/decorators/MusicUtil.js";
+import { haveQueue, inVC, sameVC, validVC } from "../../utils/decorators/MusicUtil.js";
+import { toV2 } from "../../utils/functions/componentsV2.js";
 import { createEmbed } from "../../utils/functions/createEmbed.js";
 import { createProgressBar } from "../../utils/functions/createProgressBar.js";
 
@@ -25,6 +26,7 @@ import { createProgressBar } from "../../utils/functions/createProgressBar.js";
 })
 export class VolumeCommand extends BaseCommand {
     @inVC
+    @haveQueue
     @validVC
     @sameVC
     public async execute(ctx: CommandContext): Promise<Message | undefined> {
@@ -33,18 +35,18 @@ export class VolumeCommand extends BaseCommand {
 
         if (Number.isNaN(volume)) {
             const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
-                new ButtonBuilder().setCustomId("10").setLabel("10%").setStyle(ButtonStyle.Primary),
-                new ButtonBuilder().setCustomId("25").setLabel("25%").setStyle(ButtonStyle.Primary),
-                new ButtonBuilder().setCustomId("50").setLabel("50%").setStyle(ButtonStyle.Primary),
-                new ButtonBuilder().setCustomId("75").setLabel("75%").setStyle(ButtonStyle.Primary),
-                new ButtonBuilder().setCustomId("100").setLabel("100%").setStyle(ButtonStyle.Primary)
+                new ButtonBuilder().setCustomId("rw:vol:10").setLabel("10%").setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId("rw:vol:25").setLabel("25%").setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId("rw:vol:50").setLabel("50%").setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId("rw:vol:75").setLabel("75%").setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId("rw:vol:100").setLabel("100%").setStyle(ButtonStyle.Primary)
             );
 
             const msg = await ctx.reply({
                 embeds: [
                     createEmbed(
                         "info",
-                        `🔊 **|** ${i18n.__mf("commands.music.volume.currentVolume", {
+                        `🔊 ${i18n.__mf("commands.music.volume.currentVolume", {
                             volume: `\`${current}\``
                         })}\n${current}% ${createProgressBar(current, 100)} 100%`
                     ).setFooter({ text: i18n.__("commands.music.volume.changeVolume") })
@@ -60,35 +62,37 @@ export class VolumeCommand extends BaseCommand {
 
             collector
                 .on("collect", async i => {
-                    const newContext = new CommandContext(i, [i.customId]);
-                    const newVolume = Number(i.customId);
+                    const value = i.customId.replace("rw:vol:", "");
+                    const newContext = new CommandContext(i, [value]);
+                    newContext.ephemeral = true;
+                    const newVolume = Number(value);
                     await this.execute(newContext);
 
-                    void msg.edit({
+                    void msg.edit(toV2({
                         embeds: [
                             createEmbed(
                                 "info",
-                                `🔊 **|** ${i18n.__mf("commands.music.volume.currentVolume", {
+                                `🔊 ${i18n.__mf("commands.music.volume.currentVolume", {
                                     volume: `\`${newVolume}\``
                                 })}\n${newVolume}% ${createProgressBar(newVolume, 100)} 100%`
                             ).setFooter({ text: i18n.__("commands.music.volume.changeVolume") })
                         ],
                         components: [buttons]
-                    });
+                    }));
                 })
                 .on("end", () => {
                     const cur = ctx.guild?.queue?.volume ?? 0;
-                    void msg.edit({
+                    void msg.edit(toV2({
                         embeds: [
                             createEmbed(
                                 "info",
-                                `🔊 **|** ${i18n.__mf("commands.music.volume.currentVolume", {
+                                `🔊 ${i18n.__mf("commands.music.volume.currentVolume", {
                                     volume: `\`${cur}\``
                                 })}\n${cur}% ${createProgressBar(cur, 100)} 100%`
                             ).setFooter({ text: i18n.__("commands.music.volume.changeVolume") })
                         ],
                         components: []
-                    });
+                    }));
                 });
             return;
         }
@@ -125,7 +129,7 @@ export class VolumeCommand extends BaseCommand {
             embeds: [
                 createEmbed(
                     "success",
-                    `🔊 **|** ${i18n.__mf("commands.music.volume.newVolume", {
+                    `🔊 ${i18n.__mf("commands.music.volume.newVolume", {
                         volume
                     })}`
                 )

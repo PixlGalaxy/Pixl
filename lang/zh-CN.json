@@ -233,10 +233,15 @@
                 "description": "播放一些音乐",
                 "noSongData": "该 URL 没有任何歌曲数据。",
                 "slashQueryDescription": "查询搜索",
-                "usage": "{prefix}play <查询 | url>"
+                "usage": "{prefix}play <查询 | url>",
+                "privateOrUnavailable": "That playlist/song is private, deleted or not available in this region.",
+                "spotifyUnavailable": "Spotify is not reachable right now. Configure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET or try again later.",
+                "unsupportedURL": "That link is not supported. Use a YouTube, Spotify or SoundCloud link, or search by name."
             },
             "queue": {
-                "description": "显示队列列表"
+                "description": "显示队列列表",
+                "selectPlaceholder": "Jump to a song...",
+                "title": "Queue of {guild}"
             },
             "remove": {
                 "description": "从队列中移除歌曲",
@@ -281,7 +286,9 @@
             "shuffle": {
                 "actualState": "当前随机播放模式是 **`{state}`**",
                 "description": "设置随机播放模式的功能",
-                "newState": "随机播放模式已设置为**`{state}`**"
+                "newState": "随机播放模式已设置为**`{state}`**",
+                "shuffledInfo": "{count} upcoming songs were shuffled.",
+                "restoredInfo": "{count} upcoming songs are back in their original order."
             },
             "skip": {
                 "description": "略过音乐",
@@ -353,7 +360,13 @@
     },
     "reusable": {
         "invalidUsage": "无效的用法，请用 **`{prefix} {name}`**了解更多资讯。",
-        "pageFooter": "{actual}/{total} 页"
+        "pageFooter": "{actual}/{total} 页",
+        "pagination": {
+            "notYours": "Only {author} can use these buttons.",
+            "jumpTitle": "Go to page",
+            "jumpLabel": "Page number (1 - {total})",
+            "invalidPage": "Enter a number between 1 and {total}."
+        }
     },
     "utils": {
         "cooldownMessage": "{author}，请稍等 **`{timeleft}`**的冷却时间。",
@@ -364,7 +377,10 @@
             "leftVC": "离开了语音频道是因为我待用太久了。",
             "queueEnded": "队列已经结束，使用**`{usage}`**播放更多音乐。",
             "startPlaying": "开始播放**{song}**",
-            "stopPlaying": "停止播放**{song}**"
+            "stopPlaying": "停止播放**{song}**",
+            "noPlayableSource": "Couldn't find a playable source for {song}, skipping it.",
+            "queuePosition": "Position in queue: #{position}",
+            "addedToQueue": "Added to the queue"
         },
         "musicDecorator": {
             "noInVC": "抱歉，您需要在语音频道中才能执行此操作。",
@@ -373,5 +389,24 @@
             "validVCJoinable": "对不起，我不能**`连接`**到你的语音频道，请确保我有正确的权限。",
             "validVCPermission": "对不起，我不能在这个语音频道**`说话`**;请确保我有正确的权限。"
         }
+    },
+    "player": {
+        "nowPlaying": "Now playing",
+        "paused": "Paused",
+        "endsAt": "Ends {time}",
+        "live": "Live",
+        "requestedBy": "Requested by {user}",
+        "on": "ON",
+        "off": "OFF",
+        "loop": "Loop",
+        "shuffle": "Shuffle",
+        "inQueue": "{count} up next",
+        "upNext": "Up next",
+        "resume": "Resume",
+        "pause": "Pause",
+        "skip": "Skip",
+        "queue": "Queue",
+        "lyrics": "Lyrics",
+        "totalSongs": "{count} songs"
     }
 }

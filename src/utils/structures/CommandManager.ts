@@ -2,12 +2,13 @@
 import { promises as fs } from "node:fs";
 import nodePath from "node:path";
 import { setTimeout } from "node:timers";
-import type { ApplicationCommandData, Guild, Message, Snowflake, TextChannel } from "discord.js";
-import { ApplicationCommandType, Collection } from "discord.js";
+import type { ApplicationCommandData, Message, Snowflake, TextChannel } from "discord.js";
+import { ApplicationCommandType, ApplicationIntegrationType, Collection, InteractionContextType } from "discord.js";
 import i18n from "../../config/index.js";
 import { CommandContext } from "../../structures/CommandContext.js";
 import type { Rawon } from "../../structures/Rawon.js";
-import type { CategoryMeta, CommandComponent, RegisterCmdOptions } from "../../typings/index.js";
+import type { CategoryMeta, CommandComponent } from "../../typings/index.js";
+import { toV2 } from "../functions/componentsV2.js";
 import { createEmbed } from "../functions/createEmbed.js";
 import { pathStringToURLString } from "../functions/pathStringToURLString.js";
 
@@ -24,6 +25,7 @@ export class CommandManager extends Collection<string, CommandComponent> {
     public async load(): Promise<void> {
         try {
             const categories = await fs.readdir(nodePath.resolve(this.path));
+            const appCommands: ApplicationCommandData[] = [];
             this.client.logger.info(`Found ${categories.length} categories, registering...`);
 
             for (const category of categories) {
@@ -42,7 +44,6 @@ export class CommandManager extends Collection<string, CommandComponent> {
                     let disabledCount = 0;
 
                     this.client.logger.info(`Found ${files.length} of commands in ${category}, loading...`);
-                    const allCmd = await (this.client.application as unknown as NonNullable<typeof this.client.application>).commands.fetch();
 
                     for (const file of files) {
                         try {
@@ -60,61 +61,11 @@ export class CommandManager extends Collection<string, CommandComponent> {
                             }
                             this.set(command.meta.name, command);
 
-                            const hasAppCmd = (name: string, type: ApplicationCommandType): boolean =>
-                                allCmd.some(cmd => cmd.name === name && cmd.type === type);
-
-                            if (
-                                (command.meta.contextChat?.length ?? 0) > 0 &&
-                                !hasAppCmd(command.meta.contextChat ?? "", ApplicationCommandType.Message)
-                            ) {
-                                await this.registerCmd(
-                                    {
-                                        name: command.meta.contextChat ?? "",
-                                        type: ApplicationCommandType.Message
-                                    },
-                                    {
-                                        onError: (gld, err) =>
-                                            this.client.logger.error(
-                                                `Unable to register ${command.meta.name
-                                                } to message context for ${gld?.id ?? "???"}, reason: ${err.message
-                                                }`
-                                            ),
-                                        onRegistered: gld =>
-                                            this.client.logger.info(
-                                                `Registered ${command.meta.name} to message context for ${gld.id}`
-                                            )
-                                    }
-                                );
-                                if (!this.client.config.isDev)
-                                    this.client.logger.info(
-                                        `Registered ${command.meta.name} to message context for global.`
-                                    );
+                            if ((command.meta.contextChat?.length ?? 0) > 0) {
+                                appCommands.push({ name: command.meta.contextChat ?? "", type: ApplicationCommandType.Message });
                             }
-                            if (
-                                (command.meta.contextUser?.length ?? 0) > 0 &&
-                                !hasAppCmd(command.meta.contextUser ?? "", ApplicationCommandType.User)
-                            ) {
-                                await this.registerCmd(
-                                    {
-                                        name: command.meta.contextUser ?? "",
-                                        type: ApplicationCommandType.User
-                                    },
-                                    {
-                                        onError: (gld, err) =>
-                                            this.client.logger.error(
-                                                `Unable to register ${command.meta.name} to user context for ${gld?.id ?? "???"
-                                                }, reason: ${err.message}`
-                                            ),
-                                        onRegistered: gld =>
-                                            this.client.logger.info(
-                                                `Registered ${command.meta.name} to user context for ${gld.id}`
-                                            )
-                                    }
-                                );
-                                if (!this.client.config.isDev)
-                                    this.client.logger.info(
-                                        `Registered ${command.meta.name} to user context for global.`
-                                    );
+                            if ((command.meta.contextUser?.length ?? 0) > 0) {
+                                appCommands.push({ name: command.meta.contextUser ?? "", type: ApplicationCommandType.User });
                             }
                             if (command.meta.slash) {
                                 if ((command.meta.slash.name?.length ?? 0) === 0) {
@@ -129,26 +80,8 @@ export class CommandManager extends Collection<string, CommandComponent> {
                                 }
                             }
 
-                            if (
-                                !hasAppCmd(command.meta.name, ApplicationCommandType.ChatInput) &&
-                                command.meta.slash &&
-                                this.client.config.enableSlashCommand
-                            ) {
-                                await this.registerCmd(command.meta.slash as ApplicationCommandData, {
-                                    onError: (gld, err) =>
-                                        this.client.logger.error(
-                                            `Unable to register ${command.meta.name} to slash command for ${gld?.id ?? "???"
-                                            }, reason: ${err.message}`
-                                        ),
-                                    onRegistered: gld =>
-                                        this.client.logger.info(
-                                            `Registered ${command.meta.name} to slash command for ${gld.id}`
-                                        )
-                                });
-                                if (!this.client.config.isDev)
-                                    this.client.logger.info(
-                                        `Registered ${command.meta.name} to slash command for global.`
-                                    );
+                            if (command.meta.slash && this.client.config.enableSlashCommand && command.meta.disable !== true) {
+                                appCommands.push(command.meta.slash as ApplicationCommandData);
                             }
                             this.client.logger.info(
                                 `Command ${command.meta.name} from ${category} category is now loaded.`
@@ -183,6 +116,7 @@ export class CommandManager extends Collection<string, CommandComponent> {
                     this.client.logger.info(`Done registering ${category} category.`)
                 }
             }
+            await this.registerAll(appCommands);
         } catch (error) {
             this.client.logger.error("CMD_LOADER_ERR:", error)
         } finally {
@@ -219,18 +153,18 @@ export class CommandManager extends Collection<string, CommandComponent> {
                 const timeLeft = (expirationTime - now) / 1_000;
                 (async () => {
                     await (message.channel as TextChannel)
-                    .send({
+                    .send(toV2({
                         embeds: [
                             createEmbed(
                                 "warn",
-                                `⚠️ **|** ${i18n.__mf("utils.cooldownMessage", {
+                                `⚠️ ${i18n.__mf("utils.cooldownMessage", {
                                     author: message.author.toString(),
                                     timeleft: timeLeft.toFixed(1)
                                 })}`,
                                 true
                             )
                         ]
-                    })
+                    }))
                     .then(msg => {
                         // eslint-disable-next-line promise/no-nesting
                         setTimeout(() => void msg.delete().catch((error: unknown) => this.client.logger.error("PROMISE_ERR:", error)), 3_500);
@@ -265,23 +199,40 @@ export class CommandManager extends Collection<string, CommandComponent> {
         }
     }
 
-    private async registerCmd(data: ApplicationCommandData, options?: RegisterCmdOptions): Promise<void> {
-        if (options && this.client.config.isDev) {
+    /**
+     * Registers every application command in a single bulk overwrite. This keeps Discord in sync
+     * with the code (new options such as autocomplete, removed commands) without hitting the
+     * daily command-creation limit. Commands are only offered inside servers.
+     */
+    private async registerAll(commands: ApplicationCommandData[]): Promise<void> {
+        const data = commands.map(command => ({
+            ...command,
+            contexts: [InteractionContextType.Guild],
+            integrationTypes: [ApplicationIntegrationType.GuildInstall]
+        })) as ApplicationCommandData[];
+
+        if (this.client.config.isDev) {
             for (const id of this.client.config.mainGuild) {
-                let guild: Guild | null = null;
-
-                try {
-                    guild = await this.client.guilds.fetch(id).catch(() => null);
-                    if (!guild) throw new Error("Invalid Guild.");
-
-                    await guild.commands.create(data);
-                    void options.onRegistered(guild);
-                } catch (error) {
-                    void options.onError(guild, error as Error);
+                const guild = await this.client.guilds.fetch(id).catch(() => null);
+                if (!guild) {
+                    this.client.logger.error(`Unable to register commands for ${id}, reason: Invalid Guild.`);
+                    continue;
                 }
+                await guild.commands
+                    .set(data)
+                    .then(() => this.client.logger.info(`Registered ${data.length} application commands for ${guild.id}`))
+                    .catch((error: unknown) =>
+                        this.client.logger.error(`Unable to register commands for ${guild.id}, reason: ${(error as Error).message}`)
+                    );
             }
-        } else {
-            await this.client.application?.commands.create(data);
+            return;
         }
+
+        await this.client.application?.commands
+            .set(data)
+            .then(() => this.client.logger.info(`Registered ${data.length} application commands globally.`))
+            .catch((error: unknown) =>
+                this.client.logger.error(`Unable to register application commands, reason: ${(error as Error).message}`)
+            );
     }
 }

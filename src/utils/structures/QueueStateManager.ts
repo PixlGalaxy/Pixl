@@ -9,6 +9,7 @@ import { OperationManager } from "./OperationManager.js";
 
 export type PersistedSong = {
     index: number;
+    originalIndex?: number;
     requesterId: string;
     song: Song;
 };
@@ -131,6 +132,7 @@ export class QueueStateManager {
                     .sortByIndex()
                     .map(entry => ({
                         index: entry.index,
+                        originalIndex: entry.originalIndex,
                         requesterId: entry.requester.id,
                         song: entry.song
                     })),

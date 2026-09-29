@@ -69,7 +69,7 @@ export async function getStream(client: Rawon, url: string): Promise<Readable> {
         stdout.once("close", kill);
 
         proc.once("spawn", () => {
-            resolve(stdout as unknown as Readable);
+            resolve(stdout);
         });
     });
 }
@@ -78,7 +78,7 @@ export async function getInfo(url: string): Promise<BasicYoutubeVideoInfo> {
     if (streamStrategy === "play-dl") {
         const rawPlayDlVideoInfo = await video_basic_info?.(url) as unknown as Unpromisify<ReturnType<NonNullable<typeof video_basic_info>>>;
         return {
-            duration: rawPlayDlVideoInfo.video_details.durationInSec * 1_000,
+            duration: rawPlayDlVideoInfo.video_details.durationInSec,
             id: rawPlayDlVideoInfo.video_details.id ?? "",
             thumbnails: rawPlayDlVideoInfo.video_details.thumbnails,
             title: rawPlayDlVideoInfo.video_details.title ?? "",

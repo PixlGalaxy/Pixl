@@ -118,7 +118,12 @@ export class HelpCommand extends BaseCommand {
                         description: "Nothing to select here",
                         value: "Nothing to select here"
                     });
-                await msg.edit({ components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(disabledMenu)] });
+                // Components V2: keep the rest of the message and only swap the select menu row.
+                await msg.edit({
+                    components: msg.components.map(component => component.type === ComponentType.ActionRow
+                        ? new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(disabledMenu)
+                        : component)
+                });
             }
         }
 

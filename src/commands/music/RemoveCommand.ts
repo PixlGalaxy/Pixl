@@ -7,7 +7,7 @@ import { QueueSong } from "../../typings/index.js";
 import { Command } from "../../utils/decorators/Command.js";
 import { haveQueue, inVC, sameVC } from "../../utils/decorators/MusicUtil.js";
 import { chunk } from "../../utils/functions/chunk.js";
-import { createEmbed } from "../../utils/functions/createEmbed.js";
+import { colorOf, createEmbed } from "../../utils/functions/createEmbed.js";
 import { parseHTMLElements } from "../../utils/functions/parseHTMLElements.js";
 import { ButtonPagination } from "../../utils/structures/ButtonPagination.js";
 import { SongManager } from "../../utils/structures/SongManager.js";
@@ -80,31 +80,12 @@ export class RemoveCommand extends BaseCommand {
             )
             .join("\n"));
 
-        const embed = createEmbed("info", `\`\`\`\n${pages[0]}\`\`\``)
-            .setAuthor({
-                name: opening
-            })
-            .setFooter({
-                text: `• ${i18n.__mf("reusable.pageFooter", {
-                    actual: 1,
-                    total: pages.length
-                })}`
-            });
-        const msg = await ctx.reply({ embeds: [embed] }).catch(() => void 0);
-
-        if (!msg) return;
-        void new ButtonPagination(msg, {
+        await ButtonPagination.send(ctx, {
             author: ctx.author.id,
-            edit: (i, emb, page) => {
-                emb.setDescription(`\`\`\`\n${page}\`\`\``).setFooter({
-                    text: `• ${i18n.__mf("reusable.pageFooter", {
-                        actual: i + 1,
-                        total: pages.length
-                    })}`
-                });
-            },
-            embed,
-            pages
-        }).start();
+            codeBlock: true,
+            color: colorOf("success"),
+            pages,
+            title: `🗑️ ${opening}`
+        }).catch(() => null);
     }
 }
