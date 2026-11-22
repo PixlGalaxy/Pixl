@@ -292,6 +292,14 @@ impl Sources {
                 let p = self.inner.yt.playlist(&id, music, limit).await?;
                 Ok(Resolved { tracks: p.tracks, playlist_name: p.title })
             }
+            Input::YoutubeMusicAlbum(id) => {
+                let p = self.inner.yt.music_album(&id, limit).await?;
+                Ok(Resolved { tracks: p.tracks, playlist_name: p.title })
+            }
+            Input::YoutubeMusicArtist(id) => {
+                let p = self.inner.yt.music_artist(&id, limit).await?;
+                Ok(Resolved { tracks: p.tracks, playlist_name: p.title })
+            }
             Input::SpotifyTrack(id) => Ok(single(self.spotify()?.track(&id).await?)),
             Input::SpotifyAlbum(id) => {
                 let c = self.spotify()?.album(&id, limit).await?;

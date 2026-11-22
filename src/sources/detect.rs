@@ -6,6 +6,10 @@ use reqwest::Url;
 pub enum Input {
     YoutubeVideo { id: String, music: bool },
     YoutubePlaylist { id: String, music: bool },
+    /// YouTube Music album page (`browse/MPREb_...`).
+    YoutubeMusicAlbum(String),
+    /// YouTube Music artist page (`channel/UC...`): its top songs.
+    YoutubeMusicArtist(String),
     SpotifyTrack(String),
     SpotifyAlbum(String),
     SpotifyPlaylist(String),
@@ -63,6 +67,10 @@ pub fn is_video_id(s: &str) -> bool {
     s.len() == 11 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+fn is_channel_id(s: &str) -> bool {
+    s.len() == 24 && s.starts_with("UC") && is_playlist_id(s)
+}
+
 fn is_playlist_id(s: &str) -> bool {
     s.len() >= 2 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -92,6 +100,10 @@ fn youtube(url: &Url, host: &str) -> Option<Input> {
             ["browse", b] if b.starts_with("VL") && b.len() > 2 => {
                 Some(Input::YoutubePlaylist { id: b[2..].to_owned(), music })
             }
+            ["browse", b] if music && b.starts_with("MPREb_") && is_playlist_id(b) => {
+                Some(Input::YoutubeMusicAlbum(b.to_string()))
+            }
+            ["channel" | "browse", c] if music && is_channel_id(c) => Some(Input::YoutubeMusicArtist(c.to_string())),
             _ => None,
         },
     }
@@ -185,6 +197,26 @@ mod tests {
             video("dQw4w9WgXcQ", false)
         );
         assert_eq!(detect("https://www.youtube.com/playlist?list=RDCLAK5uy_abc"), playlist("RDCLAK5uy_abc", false));
+    }
+
+    #[test]
+    fn youtube_music_albums_and_artists() {
+        assert_eq!(
+            detect("https://music.youtube.com/browse/MPREb_NMmY1n1NJFS"),
+            Input::YoutubeMusicAlbum("MPREb_NMmY1n1NJFS".into())
+        );
+        assert_eq!(
+            detect("music.youtube.com/browse/MPREb_NMmY1n1NJFS?feature=share"),
+            Input::YoutubeMusicAlbum("MPREb_NMmY1n1NJFS".into())
+        );
+        let artist = Input::YoutubeMusicArtist("UCk91oFc2hY2CdHirU93baLg".into());
+        assert_eq!(detect("https://music.youtube.com/channel/UCk91oFc2hY2CdHirU93baLg"), artist);
+        assert_eq!(detect("https://music.youtube.com/channel/UCk91oFc2hY2CdHirU93baLg?si=x"), artist);
+        assert_eq!(detect("https://music.youtube.com/browse/UCk91oFc2hY2CdHirU93baLg"), artist);
+        // Regular YouTube channels and malformed ids are not artist pages.
+        assert!(matches!(detect("https://www.youtube.com/channel/UCk91oFc2hY2CdHirU93baLg"), Input::Url(_)));
+        assert!(matches!(detect("https://music.youtube.com/channel/UCshort"), Input::Url(_)));
+        assert!(matches!(detect("https://www.youtube.com/browse/MPREb_NMmY1n1NJFS"), Input::Url(_)));
     }
 
     #[test]

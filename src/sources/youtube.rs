@@ -222,6 +222,40 @@ impl YouTube {
         Ok(parse_music_watch(&v, id))
     }
 
+    /// YouTube Music album (`MPREb_...`): its audio playlist (`OLAK5uy_...`) in track order,
+    /// named after the album. Falls back to the tracks listed on the album page.
+    pub async fn music_album(&self, browse_id: &str, limit: usize) -> SourceResult<Playlist> {
+        let v = self.call(Client::Remix, "browse", json!({ "browseId": browse_id })).await?;
+        let page = parse_album_page(&v).ok_or_else(|| SourceError::NotFound("Album not found".into()))?;
+        let from_playlist = match &page.playlist_id {
+            Some(pl) => self.playlist(pl, true, limit).await.ok().filter(|p| !p.tracks.is_empty()),
+            None => None,
+        };
+        let mut tracks = from_playlist.map(|p| p.tracks).unwrap_or(page.tracks);
+        if tracks.is_empty() {
+            return Err(SourceError::NotFound("That album has no playable tracks".into()));
+        }
+        tracks.truncate(limit);
+        Ok(Playlist { title: page.title, tracks })
+    }
+
+    /// YouTube Music artist page: the "Songs" shelf, through its "see all" playlist when it has
+    /// one (capped by `limit`), otherwise the songs shown on the page.
+    pub async fn music_artist(&self, channel_id: &str, limit: usize) -> SourceResult<Playlist> {
+        let v = self.call(Client::Remix, "browse", json!({ "browseId": channel_id })).await?;
+        let page = parse_artist_page(&v).ok_or_else(|| SourceError::NotFound("Artist not found".into()))?;
+        let from_playlist = match &page.songs_playlist {
+            Some(pl) => self.playlist(pl, true, limit).await.ok().filter(|p| !p.tracks.is_empty()),
+            None => None,
+        };
+        let mut tracks = from_playlist.map(|p| p.tracks).unwrap_or(page.songs);
+        if tracks.is_empty() {
+            return Err(SourceError::NotFound("No songs found for that artist".into()));
+        }
+        tracks.truncate(limit);
+        Ok(Playlist { title: page.name.map(|n| format!("{n} - Top songs")), tracks })
+    }
+
     /// YouTube Music search restricted to songs. Also used with an ISRC as the query.
     pub async fn search_songs(&self, query: &str, limit: usize) -> SourceResult<Vec<TrackInfo>> {
         let v = self.call(Client::Remix, "search", json!({ "query": query, "params": REMIX_SEARCH_SONGS })).await?;
@@ -344,6 +378,95 @@ pub(crate) fn parse_video_details(v: &Value, music: bool) -> Option<TrackInfo> {
     let thumb = best_thumb(&v["microformat"]["playerMicroformatRenderer"]["thumbnail"]["thumbnails"])
         .or_else(|| best_thumb(&d["thumbnail"]["thumbnails"]));
     Some(web_track(id, title, d["author"].as_str().map(str::to_owned), duration, thumb, music))
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AlbumPage {
+    pub title: Option<String>,
+    /// The album's audio playlist (`OLAK5uy_...`).
+    pub playlist_id: Option<String>,
+    pub tracks: Vec<TrackInfo>,
+}
+
+fn list_param(url: &str) -> Option<String> {
+    let (_, q) = url.split_once('?')?;
+    q.split('&').find_map(|kv| kv.strip_prefix("list=")).filter(|l| !l.is_empty()).map(str::to_owned)
+}
+
+fn shelf_tracks(shelf: Option<&Value>) -> Vec<TrackInfo> {
+    let mut out: Vec<TrackInfo> = shelf
+        .and_then(|s| s["contents"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|it| parse_music_item(&it["musicResponsiveListItemRenderer"]))
+        .collect();
+    dedup(&mut out);
+    out
+}
+
+/// WEB_REMIX `browse` of an album (`MPREb_...`).
+pub(crate) fn parse_album_page(v: &Value) -> Option<AlbumPage> {
+    let micro = &v["microformat"]["microformatDataRenderer"];
+    let title = micro["title"]
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| find_first(v, "musicResponsiveHeaderRenderer").and_then(|h| text_of(&h["title"])));
+    let shelf = find_first(v, "musicShelfRenderer");
+    let playlist_id = micro["urlCanonical"].as_str().and_then(list_param).or_else(|| {
+        // The play button of each track points into the album playlist.
+        let mut eps = Vec::new();
+        find_all(shelf?, "watchEndpoint", &mut eps);
+        eps.iter().find_map(|e| e["playlistId"].as_str().filter(|p| p.starts_with("OLAK")).map(str::to_owned))
+    });
+    let art = best_thumb(&micro["thumbnail"]["thumbnails"]);
+    let mut tracks = shelf_tracks(shelf);
+    for t in &mut tracks {
+        if let Some(m) = &mut t.music {
+            m.album = title.clone();
+        }
+        if art.is_some() && t.thumbnail.as_deref().is_none_or(|u| u.contains("i.ytimg.com")) {
+            t.thumbnail = art.clone();
+        }
+    }
+    if title.is_none() && playlist_id.is_none() && tracks.is_empty() {
+        return None;
+    }
+    Some(AlbumPage { title, playlist_id, tracks })
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ArtistPage {
+    pub name: Option<String>,
+    /// "See all" playlist of the songs shelf (without the `VL` prefix).
+    pub songs_playlist: Option<String>,
+    pub songs: Vec<TrackInfo>,
+}
+
+/// WEB_REMIX `browse` of an artist channel (`UC...`).
+pub(crate) fn parse_artist_page(v: &Value) -> Option<ArtistPage> {
+    let name = find_first(v, "musicImmersiveHeaderRenderer")
+        .or_else(|| find_first(v, "musicVisualHeaderRenderer"))
+        .and_then(|h| text_of(&h["title"]))
+        .or_else(|| v["microformat"]["microformatDataRenderer"]["title"].as_str().map(str::to_owned));
+    // The first list shelf of an artist page is "Top songs".
+    let shelf = find_first(v, "musicShelfRenderer");
+    let songs_playlist = shelf
+        .and_then(|s| {
+            s["title"]["runs"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find_map(|r| r["navigationEndpoint"]["browseEndpoint"]["browseId"].as_str())
+                .or_else(|| s["bottomEndpoint"]["browseEndpoint"]["browseId"].as_str())
+        })
+        .and_then(|b| b.strip_prefix("VL"))
+        .filter(|b| !b.is_empty())
+        .map(str::to_owned);
+    let songs = shelf_tracks(shelf);
+    if name.is_none() && shelf.is_none() {
+        return None;
+    }
+    Some(ArtistPage { name, songs_playlist, songs })
 }
 
 fn playlist_title(v: &Value) -> Option<String> {
@@ -813,6 +936,75 @@ mod tests {
         assert_eq!(m.album.as_deref(), Some("Un Verano Sin Ti"));
         assert!(r[0].is_music_song());
         assert_eq!(r[0].duration_ms, Some(244_000));
+    }
+
+    #[test]
+    fn parses_album_page() {
+        let sep = || json!({"text": " \u{2022} "});
+        let v = json!({
+            "microformat": { "microformatDataRenderer": {
+                "urlCanonical": "https://music.youtube.com/playlist?list=OLAK5uy_lPKZ-lFNR8-6kDNPm3zxJc6ipsS7ibrc0",
+                "title": "Un Verano Sin Ti",
+                "thumbnail": { "thumbnails": [ { "url": "https://yt3.googleusercontent.com/art=w544-h544", "width": 544, "height": 544 } ] } } },
+            "contents": { "twoColumnBrowseResultsRenderer": { "secondaryContents": { "sectionListRenderer": { "contents": [
+                { "musicShelfRenderer": { "contents": [
+                    music_item("p38WgakuYDo", "Moscow Mule", vec![artist_run("Bad Bunny"), sep(), json!({"text": "1.2B plays"})]),
+                    music_item("juRFjpB5Ppg", "Tití Me Preguntó", vec![artist_run("Bad Bunny")]),
+                ] } } ] } } } }
+        });
+        let a = parse_album_page(&v).unwrap();
+        assert_eq!(a.title.as_deref(), Some("Un Verano Sin Ti"));
+        assert_eq!(a.playlist_id.as_deref(), Some("OLAK5uy_lPKZ-lFNR8-6kDNPm3zxJc6ipsS7ibrc0"));
+        assert_eq!(a.tracks.len(), 2);
+        assert_eq!(a.tracks[0].title, "Moscow Mule");
+        assert_eq!(a.tracks[1].music.as_ref().unwrap().album.as_deref(), Some("Un Verano Sin Ti"));
+        assert!(parse_album_page(&json!({})).is_none());
+        assert_eq!(list_param("https://x/playlist?feature=a&list=OLAKx&b=1").as_deref(), Some("OLAKx"));
+    }
+
+    #[test]
+    fn parses_artist_page() {
+        let v = json!({
+            "header": { "musicImmersiveHeaderRenderer": { "title": { "runs": [ { "text": "Luis Fonsi" } ] } } },
+            "contents": { "singleColumnBrowseResultsRenderer": { "tabs": [ { "tabRenderer": { "content": { "sectionListRenderer": { "contents": [
+                { "musicShelfRenderer": {
+                    "title": { "runs": [ { "text": "Top songs", "navigationEndpoint": { "browseEndpoint": {
+                        "browseId": "VLOLAK5uy_n4iin5ia_C2K0yASnWyC6vgayHV7HwcX8" } } } ] },
+                    "contents": [ music_item("FXovf5dsRTw", "Despacito", vec![artist_run("Luis Fonsi"), json!({"text": " & "}), artist_run("Daddy Yankee")]) ] } },
+                { "musicCarouselShelfRenderer": { "contents": [] } }
+            ] } } } } ] } }
+        });
+        let a = parse_artist_page(&v).unwrap();
+        assert_eq!(a.name.as_deref(), Some("Luis Fonsi"));
+        assert_eq!(a.songs_playlist.as_deref(), Some("OLAK5uy_n4iin5ia_C2K0yASnWyC6vgayHV7HwcX8"));
+        assert_eq!(a.songs.len(), 1);
+        assert_eq!(a.songs[0].artists, vec!["Luis Fonsi", "Daddy Yankee"]);
+        // Without a title link, the "see all" button is used.
+        let mut v2 = v.clone();
+        let shelf = &mut v2["contents"]["singleColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"]
+            ["sectionListRenderer"]["contents"][0]["musicShelfRenderer"];
+        shelf["title"] = json!({ "runs": [ { "text": "Top songs" } ] });
+        shelf["bottomEndpoint"] = json!({ "browseEndpoint": { "browseId": "VLOLAKbottom" } });
+        assert_eq!(parse_artist_page(&v2).unwrap().songs_playlist.as_deref(), Some("OLAKbottom"));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn innertube_music_album_and_artist() {
+        let p = yt().music_album("MPREb_NMmY1n1NJFS", 100).await.unwrap();
+        println!("album {:?}: {} tracks, first {:?}", p.title, p.tracks.len(), p.tracks.first().map(|t| &t.title));
+        assert_eq!(p.title.as_deref(), Some("Un Verano Sin Ti"));
+        assert!(p.tracks.len() >= 20, "{}", p.tracks.len());
+        assert_eq!(p.tracks[0].title, "Moscow Mule");
+        let p = yt().music_album("MPREb_NMmY1n1NJFS", 5).await.unwrap();
+        assert_eq!(p.tracks.len(), 5);
+
+        let p = yt().music_artist("UCk91oFc2hY2CdHirU93baLg", 30).await.unwrap();
+        println!("artist {:?}: {} tracks: {:?}", p.title, p.tracks.len(), p.tracks.iter().take(5).map(|t| &t.title).collect::<Vec<_>>());
+        assert_eq!(p.title.as_deref(), Some("Luis Fonsi - Top songs"));
+        assert!(p.tracks.len() > 5, "{}", p.tracks.len());
+        assert!(p.tracks.len() <= 30);
+        assert!(p.tracks.iter().any(|t| t.title.contains("Despacito")));
     }
 
     #[test]
