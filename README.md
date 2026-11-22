@@ -40,4 +40,10 @@ The panel lives in [web/](web/) (React, Vite, Tailwind).
 
 ## License
 
-TBD
+Lynx is licensed under the [GNU Affero General Public License v3.0](LICENSE) with the [Commons Clause](https://commonsclause.com/) condition. In short:
+
+- You can use, study, modify and run Lynx for free, including hosting it for your own communities.
+- If you modify Lynx and run it for others (even only as a hosted bot or website), you must publish your changes under the same license. It cannot be made proprietary.
+- You may not sell it: no charging for Lynx itself, for hosting it, or for any product or service whose value comes from it.
+
+The [LICENSE](LICENSE) file is the binding text; this summary is not legal advice.
