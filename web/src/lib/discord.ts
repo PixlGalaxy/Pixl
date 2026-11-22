@@ -61,7 +61,19 @@ async function authorizeCode(client: DiscordSDK, id: string): Promise<string> {
 export async function connect(onStep: (s: LoginStep) => void): Promise<Connection> {
   const config = await step('config', onStep, () => api.publicConfig())
   const client = new DiscordSDK(config.clientId)
-  await step('ready', onStep, () => client.ready())
+  // Discord never answers the handshake of a reloaded iframe: fail with a clear message instead of
+  // spinning forever (the user has to close and reopen the Activity).
+  await step('ready', onStep, () =>
+    Promise.race([
+      client.ready(),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('Discord did not answer. Close the Activity and open it again.')),
+          10_000,
+        ),
+      ),
+    ]),
+  )
   void watchLayout(client)
 
   const code = await step('authorize', onStep, () => authorizeCode(client, config.clientId))

@@ -236,13 +236,13 @@ fn header(voice_channel_id: u64, node_name: Option<&str>, i18n: &I18n) -> String
 fn toggle_button(paused: bool, vc: u64, tag: &str, i18n: &I18n) -> Button {
     if paused {
         Button::new(
-            ButtonStyle::Secondary,
+            ButtonStyle::Primary,
             i18n.t("bot.button.resume", &[]),
             CustomId::np(NpAction::Resume, vc, tag),
         )
     } else {
         Button::new(
-            ButtonStyle::Secondary,
+            ButtonStyle::Primary,
             i18n.t("bot.button.pause", &[]),
             CustomId::np(NpAction::Pause, vc, tag),
         )
@@ -300,12 +300,12 @@ pub fn now_playing(v: &NowPlaying, i18n: &I18n) -> Message {
     let mut second = Vec::with_capacity(4);
     if v.ai_enabled {
         second.push(Button::new(
-            ButtonStyle::Secondary,
+            ButtonStyle::Success,
             i18n.t("bot.button.like", &[]),
             CustomId::np(NpAction::Like, vc, tag),
         ));
         second.push(Button::new(
-            ButtonStyle::Secondary,
+            ButtonStyle::Danger,
             i18n.t("bot.button.dislike", &[]),
             CustomId::np(NpAction::Dislike, vc, tag),
         ));

@@ -25,6 +25,9 @@ export default defineConfig(async ({ mode }) => {
       : {
           // Dev only: accept the public host NPM forwards (the Activity runs through Discord's proxy).
           allowedHosts: true as const,
+          // No HMR socket / auto reload inside Discord: a reloaded Activity iframe never gets the SDK
+          // handshake again and hangs on "Connecting to Discord".
+          hmr: false,
           // Same shape as nginx in the image: /backend/* goes to the Rust server without the prefix.
           proxy: {
             '/backend': {
