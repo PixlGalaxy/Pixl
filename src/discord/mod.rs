@@ -5,6 +5,7 @@
 //! event handlers use.
 
 pub mod commands;
+pub mod emojis;
 pub mod ids;
 pub mod interactions;
 pub mod jam;
@@ -160,7 +161,7 @@ impl Handler {
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn ready(&self, _ctx: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
         let Some(lynx) = self.lynx() else { return };
         let shards = ready.shard.map(|s| s.total).unwrap_or(1);
         let guilds: Vec<u64> = ready.guilds.iter().map(|g| g.id.get()).collect();
@@ -175,7 +176,10 @@ impl EventHandler for Handler {
         );
         if self.index == 0 && !self.registered.swap(true, Ordering::AcqRel) {
             let lynx = lynx.clone();
+            let http = ctx.http.clone();
             tokio::spawn(async move { commands::register_main(&lynx).await });
+            // Button icons: application emojis owned by the main app (usable in every guild).
+            tokio::spawn(async move { emojis::sync_main(&http).await });
         }
     }
 

@@ -8,6 +8,11 @@ pub mod cards;
 
 use serde_json::{json, Value};
 
+pub use super::emojis::Icon;
+
+/// Looks up the id of an application emoji by name (`emojis::emoji_id` outside tests).
+pub type EmojiIds<'a> = &'a dyn Fn(&str) -> Option<u64>;
+
 pub const FLAG_EPHEMERAL: u64 = 1 << 6;
 pub const FLAG_COMPONENTS_V2: u64 = 1 << 15;
 
@@ -44,6 +49,8 @@ pub struct Button {
     /// `custom_id` for normal buttons, URL for link buttons.
     pub target: String,
     pub disabled: bool,
+    /// Shown as an application emoji next to the label once its id is known.
+    pub icon: Option<Icon>,
 }
 
 impl Button {
@@ -53,6 +60,7 @@ impl Button {
             label: label.into(),
             target: custom_id.into(),
             disabled: false,
+            icon: None,
         }
     }
 
@@ -62,6 +70,7 @@ impl Button {
             label: label.into(),
             target: url.into(),
             disabled: false,
+            icon: Some(Icon::Link),
         }
     }
 
@@ -70,8 +79,20 @@ impl Button {
         self
     }
 
-    fn to_json(&self) -> Value {
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    fn to_json(&self, emoji_ids: EmojiIds) -> Value {
         let mut v = json!({ "type": 2, "style": self.style as u8, "label": truncate(&self.label, 80) });
+        let emoji = self
+            .icon
+            .and_then(|i| i.emoji_name(self.style))
+            .and_then(|name| emoji_ids(name).map(|id| (name, id)));
+        if let Some((name, id)) = emoji {
+            v["emoji"] = json!({ "id": id.to_string(), "name": name });
+        }
         if self.style == ButtonStyle::Link {
             v["url"] = json!(self.target);
         } else {
@@ -142,10 +163,11 @@ impl Component {
         }
     }
 
-    fn to_json(&self) -> Value {
+    fn to_json(&self, emoji_ids: EmojiIds) -> Value {
         match self {
             Self::Container { accent, children } => {
-                let mut v = json!({ "type": 17, "components": children.iter().map(Self::to_json).collect::<Vec<_>>() });
+                let children: Vec<Value> = children.iter().map(|c| c.to_json(emoji_ids)).collect();
+                let mut v = json!({ "type": 17, "components": children });
                 if let Some(c) = accent {
                     v["accent_color"] = json!(c);
                 }
@@ -156,7 +178,7 @@ impl Component {
                 "components": texts.iter().map(|t| json!({ "type": 10, "content": t })).collect::<Vec<_>>(),
                 "accessory": match accessory {
                     Accessory::Thumbnail { url } => json!({ "type": 11, "media": { "url": url } }),
-                    Accessory::Button(b) => b.to_json(),
+                    Accessory::Button(b) => b.to_json(emoji_ids),
                 },
             }),
             Self::Text(t) => json!({ "type": 10, "content": t }),
@@ -164,7 +186,7 @@ impl Component {
                 json!({ "type": 14, "divider": divider, "spacing": if *large { 2 } else { 1 } })
             }
             Self::Row(buttons) => {
-                json!({ "type": 1, "components": buttons.iter().take(5).map(Button::to_json).collect::<Vec<_>>() })
+                json!({ "type": 1, "components": buttons.iter().take(5).map(|b| b.to_json(emoji_ids)).collect::<Vec<_>>() })
             }
         }
     }
@@ -209,11 +231,17 @@ impl Message {
 
     /// Body for `POST /channels/{id}/messages`, message edits and followups.
     /// Mentions never ping anyone (requester lines use `<@id>`).
+    /// Buttons get their icons from the application emojis synced at startup.
     pub fn to_json(&self) -> Value {
+        self.to_json_with(&super::emojis::emoji_id)
+    }
+
+    /// `to_json` with an explicit emoji id lookup.
+    pub fn to_json_with(&self, emoji_ids: EmojiIds) -> Value {
         debug_assert!(self.text_len() <= MAX_TEXT_TOTAL, "message text over the Discord limit");
         json!({
             "flags": self.flags(),
-            "components": self.components.iter().map(Component::to_json).collect::<Vec<_>>(),
+            "components": self.components.iter().map(|c| c.to_json(emoji_ids)).collect::<Vec<_>>(),
             "allowed_mentions": { "parse": [] },
         })
     }
@@ -370,6 +398,40 @@ mod tests {
         );
         assert_eq!(Message::new(vec![]).ephemeral(true).flags(), 32768 | 64);
         assert_eq!(msg.to_callback(callback::UPDATE_MESSAGE)["type"], 7);
+    }
+
+    #[test]
+    fn buttons_carry_emojis_only_with_known_ids() {
+        let msg = Message::new(vec![Component::Row(vec![
+            Button::new(ButtonStyle::Secondary, "Skip", "np:skip").icon(Icon::Skip),
+            Button::new(ButtonStyle::Primary, "Open panel", "np:panel").icon(Icon::Panel),
+            Button::new(ButtonStyle::Secondary, "Plain", "x"),
+            Button::link("Site", "https://x"),
+        ])]);
+        let ids = |name: &str| match name {
+            "lynx_skip_emerald" => Some(11),
+            "lynx_panel_white" => Some(22),
+            "lynx_link_white" => Some(33),
+            _ => None,
+        };
+        let row = &msg.to_json_with(&ids)["components"][0]["components"];
+        assert_eq!(
+            row[0],
+            json!({ "type": 2, "style": 2, "label": "Skip", "custom_id": "np:skip",
+                    "emoji": { "id": "11", "name": "lynx_skip_emerald" } })
+        );
+        assert_eq!(row[1]["emoji"], json!({ "id": "22", "name": "lynx_panel_white" }));
+        assert!(row[2].get("emoji").is_none(), "no icon, no emoji");
+        assert_eq!(row[3]["emoji"]["name"], "lynx_link_white");
+
+        // Without ids (sync not done or failed) the buttons are text-only, exactly as before.
+        let none = msg.to_json_with(&|_| None);
+        let row = &none["components"][0]["components"];
+        assert_eq!(
+            row[0],
+            json!({ "type": 2, "style": 2, "label": "Skip", "custom_id": "np:skip" })
+        );
+        assert!(row.as_array().unwrap().iter().all(|b| b.get("emoji").is_none()));
     }
 
     #[test]
