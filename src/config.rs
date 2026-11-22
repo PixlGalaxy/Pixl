@@ -23,6 +23,9 @@ pub struct Config {
     pub lastfm_api_key: Option<String>,
     pub musicbrainz_user_agent: Option<String>,
 
+    /// AI features (/ai radio, Like/Dislike, listening history). Ollama is optional on top of this:
+    /// without it the radio uses only the recommendation algorithm.
+    pub ai_enabled: bool,
     pub ollama_url: Option<String>,
     pub ollama_model: Option<String>,
     pub ollama_keep_alive: String,
@@ -60,6 +63,7 @@ impl Config {
             lastfm_api_key: optional("LASTFM_API_KEY"),
             musicbrainz_user_agent: optional("MUSICBRAINZ_USER_AGENT"),
 
+            ai_enabled: flag("AI_ENABLED", false)?,
             ollama_url: optional("OLLAMA_URL").map(|u| u.trim_end_matches('/').to_owned()),
             ollama_model: optional("OLLAMA_MODEL"),
             ollama_keep_alive: optional("OLLAMA_KEEP_ALIVE").unwrap_or_else(|| "30m".into()),
@@ -111,6 +115,15 @@ fn list(key: &str) -> Vec<String> {
     optional(key)
         .map(|v| v.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect())
         .unwrap_or_default()
+}
+
+fn flag(key: &str, default: bool) -> Result<bool> {
+    match optional(key).map(|v| v.to_ascii_lowercase()) {
+        None => Ok(default),
+        Some(v) if matches!(v.as_str(), "true" | "1" | "yes" | "on") => Ok(true),
+        Some(v) if matches!(v.as_str(), "false" | "0" | "no" | "off") => Ok(false),
+        Some(v) => bail!("invalid {key}={v}: expected true or false"),
+    }
 }
 
 fn parse_or<T: FromStr>(key: &str, default: T) -> Result<T>
