@@ -281,6 +281,24 @@ impl BotRegistry {
             .collect()
     }
 
+    /// Humans in the channel who can hear the music: deafened users (self or server deafen) are left
+    /// out, so they neither vote nor count toward the votes needed to skip.
+    pub fn listeners_in(&self, guild_id: u64, channel_id: u64) -> HashSet<u64> {
+        let humans = self.humans_in(guild_id, channel_id);
+        let Some(guild) = self.main().cache.guild(GuildId::new(guild_id)) else {
+            return humans;
+        };
+        humans
+            .into_iter()
+            .filter(|u| {
+                guild
+                    .voice_states
+                    .get(&serenity::all::UserId::new(*u))
+                    .is_none_or(|vs| !vs.self_deaf && !vs.deaf)
+            })
+            .collect()
+    }
+
     pub fn guild_owner(&self, guild_id: u64) -> Option<u64> {
         self.main()
             .cache

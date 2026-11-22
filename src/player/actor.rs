@@ -1035,7 +1035,8 @@ impl Player {
             return SkipOutcome::NothingPlaying;
         };
         if !force && rule.enabled {
-            match self.votes.vote(user, &self.humans, rule) {
+            let listeners = self.listeners();
+            match self.votes.vote(user, &listeners, rule) {
                 VoteResult::Passed => {}
                 VoteResult::Counted { current, required } => {
                     self.publish();
@@ -1062,10 +1063,15 @@ impl Player {
         }
     }
 
+    /// People in the channel who can hear the music (deafened users don't vote or count for votes).
+    fn listeners(&self) -> std::collections::HashSet<u64> {
+        self.deps.bots.listeners_in(self.guild_id, self.voice_channel_id)
+    }
+
     async fn on_humans_changed(&mut self) {
         // People leaving can make the existing votes enough.
         let rule = self.settings.vote_skip;
-        if rule.enabled && self.playing.is_some() && self.votes.passes(&self.humans, &rule) {
+        if rule.enabled && self.playing.is_some() && self.votes.passes(&self.listeners(), &rule) {
             self.next_track(true).await;
         }
         let timeout = Duration::from_secs(self.deps.config.empty_channel_timeout_secs.max(1));
@@ -1221,10 +1227,8 @@ impl Player {
             volume: self.volume,
             vote_skip_enabled: rule.enabled,
             skip_votes: (rule.enabled && current.is_some()).then(|| {
-                (
-                    self.votes.current(&self.humans),
-                    required_votes(&rule, self.humans.len()),
-                )
+                let listeners = self.listeners();
+                (self.votes.current(&listeners), required_votes(&rule, listeners.len()))
             }),
             ai: self.radio.as_ref().map(Radio::snapshot),
         }
