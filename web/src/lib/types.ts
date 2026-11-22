@@ -145,7 +145,7 @@ export type ErrorCode =
   | 'unavailable'
 
 export type ServerMessage =
-  | { type: 'state'; state: PlayerState | null }
+  | { type: 'state'; state: PlayerState | null; serverNow?: number }
   | { type: 'position'; positionMs: number; positionAt: number; serverNow?: number }
   | { type: 'ai'; ai: AiState | null }
   | { type: 'settings'; settings: GuildSettings }

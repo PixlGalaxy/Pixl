@@ -8,7 +8,8 @@
     "dev:mock": "vite --mode mock",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test src/lib/*.test.ts"
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.5.0",

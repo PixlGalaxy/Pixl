@@ -24,7 +24,7 @@ import { TrackReasonLine } from '../components/TrackBits'
 import { Artwork, Avatar, Button, Card, Chip, ConfirmButton, IconButton, Notice, Slider, Tag } from '../components/ui'
 import { api } from '../lib/api'
 import { cx, fmtTime } from '../lib/format'
-import { useNow, usePosition } from '../lib/live'
+import { localAnchor, useNow, usePosition } from '../lib/live'
 import { useLynx } from '../lib/lynx'
 import type { Feedback, LoopMode, PlayerState, Track } from '../lib/types'
 
@@ -88,7 +88,7 @@ function SeekBar({ state }: { state: PlayerState }) {
         onCommit={(ms) => {
           setDrag(null)
           if (!channelId) return
-          setAnchor({ positionMs: ms, localAt: Date.now() })
+          setAnchor(localAnchor(ms))
           void run(() => api.seek(channelId, ms))
         }}
       />

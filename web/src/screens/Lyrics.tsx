@@ -1,14 +1,18 @@
 import { MicVocal } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card, Empty, PageSpinner, TileArtwork } from '../components/ui'
 import { api } from '../lib/api'
 import { cx } from '../lib/format'
-import { usePosition } from '../lib/live'
+import { localAnchor, usePosition } from '../lib/live'
+import { activeLine } from '../lib/lyrics'
 import { useLynx } from '../lib/lynx'
 import type { LyricLine, Lyrics } from '../lib/types'
 
 type Load = { uid: string; lyrics: Lyrics | null } | { uid: string; error: true }
+
+/** Auto-scroll pauses this long after the user scrolls the lyrics by hand, then re-centers. */
+const MANUAL_SCROLL_PAUSE_MS = 4000
 
 function SyncedLyrics({ lines }: { lines: LyricLine[] }) {
   const { t } = useTranslation()
@@ -16,24 +20,48 @@ function SyncedLyrics({ lines }: { lines: LyricLine[] }) {
   const position = usePosition(state, anchor)
   const box = useRef<HTMLDivElement>(null)
   const manualUntil = useRef(0)
+  const resume = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
-  let current = -1
-  for (let i = 0; i < lines.length; i++) {
-    if ((lines[i]?.timeMs ?? Infinity) <= position) current = i
-    else break
-  }
+  // The single source of truth for both the highlight and the auto-scroll.
+  const current = activeLine(lines, position)
+  const currentRef = useRef(current)
+  currentRef.current = current
 
-  useEffect(() => {
+  const center = useCallback((index: number, smooth: boolean) => {
     const el = box.current
-    if (!el || current < 0 || Date.now() < manualUntil.current) return
-    const line = el.querySelector<HTMLElement>(`[data-line="${current}"]`)
+    if (!el || index < 0) return
+    const line = el.querySelector<HTMLElement>(`[data-line="${index}"]`)
     if (!line) return
     const top = line.offsetTop - el.clientHeight / 2 + line.clientHeight / 2
-    el.scrollTo({ top, behavior: 'smooth' })
-  }, [current])
+    el.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' })
+  }, [])
+
+  useEffect(() => {
+    if (performance.now() < manualUntil.current) return
+    center(current, true)
+  }, [current, center])
+
+  // Back from hidden / picture-in-picture: jump straight to the right line.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      manualUntil.current = 0
+      center(currentRef.current, false)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      clearTimeout(resume.current)
+    }
+  }, [center])
 
   const pauseAuto = () => {
-    manualUntil.current = Date.now() + 4000
+    manualUntil.current = performance.now() + MANUAL_SCROLL_PAUSE_MS
+    clearTimeout(resume.current)
+    resume.current = setTimeout(() => {
+      manualUntil.current = 0
+      center(currentRef.current, true)
+    }, MANUAL_SCROLL_PAUSE_MS)
   }
   const canSeek = permissions.canControl && !!channelId
 
@@ -42,28 +70,31 @@ function SyncedLyrics({ lines }: { lines: LyricLine[] }) {
       ref={box}
       onWheel={pauseAuto}
       onTouchMove={pauseAuto}
+      onKeyDown={(e) => ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key) && pauseAuto()}
       className="relative max-h-[calc(100vh-15rem)] min-h-64 overflow-y-auto px-4 py-6"
     >
-      <ol className="space-y-3">
+      <ol className="space-y-1">
         {lines.map((l, i) => (
           <li key={`${l.timeMs}-${i}`} data-line={i}>
             <button
               type="button"
               disabled={!canSeek}
+              aria-current={i === current ? 'true' : undefined}
               title={canSeek ? t('lyrics.jump') : undefined}
               onClick={() => {
                 if (!channelId) return
                 manualUntil.current = 0
-                setAnchor({ positionMs: l.timeMs, localAt: Date.now() })
+                clearTimeout(resume.current)
+                setAnchor(localAnchor(l.timeMs))
                 void run(() => api.seek(channelId, l.timeMs))
               }}
               className={cx(
-                'block w-full text-left text-lg leading-snug font-semibold tracking-tight transition-colors disabled:cursor-default',
+                '-mx-2 block w-[calc(100%+1rem)] rounded-lg px-2 py-1 text-left text-lg leading-snug font-semibold tracking-tight transition-colors disabled:cursor-default',
                 i === current ? 'text-fg' : i < current ? 'text-muted/60' : 'text-muted',
-                canSeek && 'hover:text-accent-500',
+                canSeek && 'hover:bg-surface-2',
               )}
             >
-              {l.line || <span className="text-muted/50">···</span>}
+              {l.line || <span className={i === current ? undefined : 'text-muted/50'}>···</span>}
             </button>
           </li>
         ))}
