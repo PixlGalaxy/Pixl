@@ -4,6 +4,28 @@ import { useTranslation } from 'react-i18next'
 import { LynxMark } from '../components/Logo'
 import { Button, Spinner } from '../components/ui'
 import { LOGIN_STEPS, type LoginStep } from '../lib/discord'
+import { useCompactLayout } from '../lib/layout'
+
+/**
+ * Gate for the picture-in-picture window and grid tile (same decision as PipView): no scrolling,
+ * fits 240x135 to 400x225. Lynx mark plus one line (current step with a spinner, or the error
+ * title); the details stay in the focused view.
+ */
+function CompactGate({ text, state }: { text: string; state: 'busy' | 'error' | 'info' }) {
+  return (
+    <main
+      title={text}
+      className="fixed inset-0 flex items-center justify-center gap-[clamp(6px,3vw,12px)] overflow-hidden bg-bg px-[clamp(8px,5vw,16px)] select-none"
+    >
+      <LynxMark className="size-[clamp(22px,18vh,36px)] shrink-0 text-fg" />
+      <div className="flex min-w-0 items-center gap-1.5 text-[clamp(11px,6.5vh,13px)] font-medium">
+        {state === 'busy' && <Spinner size={13} className="shrink-0 text-accent-500" />}
+        {state === 'error' && <CircleAlert size={13} className="shrink-0 text-red-500" />}
+        <span className="truncate">{text}</span>
+      </div>
+    </main>
+  )
+}
 
 function GateLayout({ children }: { children: ReactNode }) {
   return (
@@ -22,6 +44,14 @@ function GateLayout({ children }: { children: ReactNode }) {
 export function ConnectingScreen({ step, error }: { step: LoginStep | null; error?: string }) {
   const { t } = useTranslation()
   const current = step ? LOGIN_STEPS.indexOf(step) : -1
+  const compact = useCompactLayout()
+  if (compact) {
+    return error ? (
+      <CompactGate state="error" text={t('login.failedTitle')} />
+    ) : (
+      <CompactGate state="busy" text={step ? `${t('login.title')} · ${t(`login.steps.${step}`)}` : t('login.title')} />
+    )
+  }
   return (
     <GateLayout>
       <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
@@ -68,6 +98,8 @@ export function ConnectingScreen({ step, error }: { step: LoginStep | null; erro
 }
 
 function Message({ title, body, icon }: { title: string; body: string; icon: ReactNode }) {
+  const compact = useCompactLayout()
+  if (compact) return <CompactGate state="info" text={title} />
   return (
     <GateLayout>
       <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
@@ -95,6 +127,8 @@ export function NoGuildScreen() {
 
 export function SessionExpiredScreen() {
   const { t } = useTranslation()
+  const compact = useCompactLayout()
+  if (compact) return <CompactGate state="error" text={t('gate.expiredTitle')} />
   return (
     <GateLayout>
       <section className="space-y-3 rounded-2xl border border-line bg-surface p-4 shadow-sm">
