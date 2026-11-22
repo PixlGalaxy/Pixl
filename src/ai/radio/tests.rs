@@ -40,6 +40,7 @@ fn history_off() -> UserPrefsPatch {
     UserPrefsPatch {
         locale: None,
         history_enabled: Some(false),
+        ..Default::default()
     }
 }
 

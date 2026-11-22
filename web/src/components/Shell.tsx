@@ -1,20 +1,20 @@
-import { Headphones, Languages, Moon, Sun } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Headphones, Moon, Sun } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api } from '../lib/api'
+import { applyTheme, isDark } from '../lib/appearance'
 import { cx } from '../lib/format'
-import i18n, { LANGUAGES, matchLanguage, setDocumentLanguage } from '../lib/i18n'
 import { useLynx } from '../lib/lynx'
 import { HelpScreen } from '../screens/Help'
 import { LyricsScreen } from '../screens/Lyrics'
 import { PlayerScreen } from '../screens/Player'
-import { PrivacyScreen } from '../screens/Privacy'
 import { QueueScreen, UpNextPanel } from '../screens/Queue'
 import { RadioScreen } from '../screens/Radio'
 import { SettingsScreen } from '../screens/Settings'
+import { AccountButton, AccountPanel, saveAppearance, useAppearance } from './Account'
 import { LynxMark } from './Logo'
+import { NoVoiceCard } from './NoVoice'
 
-export type TabId = 'player' | 'queue' | 'lyrics' | 'radio' | 'settings' | 'privacy' | 'help'
+export type TabId = 'player' | 'queue' | 'lyrics' | 'radio' | 'settings' | 'help'
 
 const TABS: Array<{ id: TabId }> = [
   { id: 'player' },
@@ -22,7 +22,6 @@ const TABS: Array<{ id: TabId }> = [
   { id: 'lyrics' },
   { id: 'radio' },
   { id: 'settings' },
-  { id: 'privacy' },
   { id: 'help' },
 ]
 
@@ -40,51 +39,20 @@ export function readTab(): TabId {
   return 'player'
 }
 
-function LanguageSelect() {
-  const { t } = useTranslation()
-  const { run } = useLynx()
-  const current = matchLanguage(i18n.language) ?? 'en'
-  return (
-    <label className="relative inline-flex items-center" title={t('topbar.language')}>
-      <Languages size={15} className="pointer-events-none absolute left-2.5 text-muted" />
-      <select
-        aria-label={t('topbar.language')}
-        value={current}
-        onChange={async (e) => {
-          const code = e.target.value
-          await i18n.changeLanguage(code)
-          setDocumentLanguage(code)
-          await run(() => api.updatePrefs({ locale: code }))
-        }}
-        className="h-8 appearance-none rounded-lg border border-line bg-surface pr-2.5 pl-8 text-xs font-medium shadow-xs focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 focus:outline-none"
-      >
-        {LANGUAGES.map((l) => (
-          <option key={l.code} value={l.code}>
-            {l.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  )
-}
-
+/** Quick light/dark switch; the full choice (light / dark / system, accent) is in the account view. */
 function ThemeToggle() {
   const { t } = useTranslation()
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
+  useAppearance()
+  const dark = isDark()
   return (
     <button
       type="button"
       aria-label={dark ? t('topbar.lightTheme') : t('topbar.darkTheme')}
       title={dark ? t('topbar.lightTheme') : t('topbar.darkTheme')}
       onClick={() => {
-        const next = !dark
-        document.documentElement.classList.toggle('dark', next)
-        try {
-          localStorage.setItem('lynx:theme', next ? 'dark' : 'light')
-        } catch {
-          // storage blocked
-        }
-        setDark(next)
+        const next = dark ? 'light' : 'dark'
+        applyTheme(next)
+        void saveAppearance({ theme: next })
       }}
       className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg"
     >
@@ -105,7 +73,7 @@ export function saveTab(id: TabId) {
 /** Full panel. The tab lives in the parent so it survives the compact (PiP) view replacing the shell. */
 export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }) {
   const { t } = useTranslation()
-  const { state, permissions, aiEnabled, guildName, launchChannelName } = useLynx()
+  const { state, permissions, aiEnabled, guildName, channelId, channelName: followed } = useLynx()
 
   const tabs = TABS.filter(
     (x) => (x.id !== 'radio' || aiEnabled) && (x.id !== 'settings' || permissions.isManager),
@@ -117,6 +85,8 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
     saveTab(id)
   }
 
+  const [accountOpen, setAccountOpen] = useState(false)
+  const closeAccount = useCallback(() => setAccountOpen(false), [])
   const navRef = useRef<HTMLElement>(null)
   useEffect(() => {
     window.scrollTo({ top: 0 })
@@ -129,9 +99,11 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
     }
   }, [active])
 
-  const channelName = state?.channelName || launchChannelName
+  const channelName = followed ?? state?.channelName ?? null
+  // Not in a voice channel: no player anywhere, only Settings and Help stay useful.
+  const noVoice = !channelId && (active === 'player' || active === 'queue' || active === 'lyrics' || active === 'radio')
   // On wide screens the queue lives in a right column next to every tab except the queue itself.
-  const showSide = active !== 'queue'
+  const showSide = active !== 'queue' && !!channelId
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -149,8 +121,8 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
             </>
           )}
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            <LanguageSelect />
             <ThemeToggle />
+            <AccountButton onClick={() => setAccountOpen(true)} />
           </div>
         </div>
         <nav
@@ -166,11 +138,11 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
               aria-current={active === id ? 'page' : undefined}
               className={cx(
                 'relative inline-flex shrink-0 items-center justify-center px-3 text-sm font-medium whitespace-nowrap transition-colors',
-                active === id ? 'text-sky-600 dark:text-sky-400' : 'text-muted hover:text-fg',
+                active === id ? 'text-accent-600 dark:text-accent-400' : 'text-muted hover:text-fg',
               )}
             >
               {t(`tabs.${id}`)}
-              {active === id && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-sky-500" />}
+              {active === id && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
             </button>
           ))}
         </nav>
@@ -178,12 +150,12 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
 
       <div className="mx-auto flex w-full max-w-6xl flex-1 gap-5 px-3 py-4 sm:px-4 sm:py-6">
         <main className="min-w-0 flex-1">
-          {active === 'player' && <PlayerScreen onOpenQueue={() => setTab('queue')} />}
-          {active === 'queue' && <QueueScreen />}
-          {active === 'lyrics' && <LyricsScreen />}
-          {active === 'radio' && <RadioScreen />}
+          {noVoice && <NoVoiceCard />}
+          {!noVoice && active === 'player' && <PlayerScreen onOpenQueue={() => setTab('queue')} />}
+          {!noVoice && active === 'queue' && <QueueScreen />}
+          {!noVoice && active === 'lyrics' && <LyricsScreen />}
+          {!noVoice && active === 'radio' && <RadioScreen />}
           {active === 'settings' && <SettingsScreen />}
-          {active === 'privacy' && <PrivacyScreen />}
           {active === 'help' && <HelpScreen />}
         </main>
         {showSide && (
@@ -194,6 +166,7 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
           </aside>
         )}
       </div>
+      {accountOpen && <AccountPanel onClose={closeAccount} />}
     </div>
   )
 }

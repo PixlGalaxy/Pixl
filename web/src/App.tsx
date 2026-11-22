@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PipView } from './components/PipView'
 import { readTab, Shell, type TabId } from './components/Shell'
-import { api, setUnauthorizedHandler } from './lib/api'
-import { connect, isInsideDiscord, LoginError, type Connection, type LoginStep } from './lib/discord'
+import { api, setReauthHandler, setUnauthorizedHandler } from './lib/api'
+import { applySaved } from './lib/appearance'
+import { connect, isInsideDiscord, LoginError, reauthenticate, type Connection, type LoginStep } from './lib/discord'
 import { errorMessage } from './lib/format'
 import i18n, { DEFAULT_LANGUAGE, matchLanguage, setDocumentLanguage } from './lib/i18n'
 import { useCompactLayout } from './lib/layout'
@@ -16,10 +17,13 @@ type Phase =
   | { kind: 'ready'; conn: Connection }
   | { kind: 'expired' }
 
-async function applyInitialLanguage(conn: Connection) {
+/** Language, theme and accent saved for the user (they follow the user across devices). */
+async function applyInitialPrefs(conn: Connection) {
   let saved: string | null = null
   try {
-    saved = (await api.prefs()).locale
+    const prefs = await api.prefs()
+    saved = prefs.locale
+    applySaved(prefs.theme, prefs.accent)
   } catch (error) {
     console.warn('[lynx] prefs', error)
   }
@@ -45,10 +49,12 @@ export default function App() {
     // StrictMode runs effects twice in dev; the OAuth code is single-use, so authorize only once.
     if (!inside || started.current) return
     started.current = true
+    // A refused session first signs in again silently; the expired screen is the last resort.
+    setReauthHandler(reauthenticate)
     setUnauthorizedHandler(() => setPhase({ kind: 'expired' }))
     connect((step) => setPhase({ kind: 'connecting', step }))
       .then(async (conn) => {
-        await applyInitialLanguage(conn)
+        await applyInitialPrefs(conn)
         setPhase({ kind: 'ready', conn })
       })
       .catch((error) => {

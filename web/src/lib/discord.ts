@@ -2,7 +2,7 @@ import { DiscordSDK } from '@discord/embedded-app-sdk'
 import { api, setSession } from './api'
 import { errorMessage } from './format'
 import { layoutFromSdk, setSdkLayout } from './layout'
-import type { AuthResult, PublicConfig } from './types'
+import type { AuthResult, ChannelRef, PublicConfig } from './types'
 
 /** Discord always loads the Activity with `frame_id` (plus instance_id, guild_id, channel_id). */
 export function isInsideDiscord(): boolean {
@@ -21,6 +21,7 @@ export class LoginError extends Error {
 }
 
 let sdk: DiscordSDK | null = null
+let clientId: string | null = null
 
 /** Runs one login step and labels its error, so the screen says where it failed. */
 async function step<T>(name: LoginStep, onStep: (s: LoginStep) => void, fn: () => Promise<T>): Promise<T> {
@@ -33,7 +34,28 @@ async function step<T>(name: LoginStep, onStep: (s: LoginStep) => void, fn: () =
   }
 }
 
-export type Connection = { config: PublicConfig; auth: AuthResult; channelId: string | null; guildId: string | null }
+/**
+ * `channel` is the voice channel the panel follows (the user's current one), not the channel the
+ * Activity was launched in; `launchChannelId` is that one, kept for display and re-authentication.
+ */
+export type Connection = {
+  config: PublicConfig
+  auth: AuthResult
+  channel: ChannelRef | null
+  launchChannelId: string | null
+  guildId: string | null
+}
+
+async function authorizeCode(client: DiscordSDK, id: string): Promise<string> {
+  const { code } = await client.commands.authorize({
+    client_id: id,
+    response_type: 'code',
+    state: '',
+    prompt: 'none',
+    scope: ['identify'],
+  })
+  return code
+}
 
 /** SDK handshake + OAuth2 login + Lynx session. Call once (the OAuth code is single-use). */
 export async function connect(onStep: (s: LoginStep) => void): Promise<Connection> {
@@ -42,21 +64,39 @@ export async function connect(onStep: (s: LoginStep) => void): Promise<Connectio
   await step('ready', onStep, () => client.ready())
   void watchLayout(client)
 
-  const { code } = await step('authorize', onStep, () =>
-    client.commands.authorize({
-      client_id: config.clientId,
-      response_type: 'code',
-      state: '',
-      prompt: 'none',
-      scope: ['identify'],
-    }),
-  )
+  const code = await step('authorize', onStep, () => authorizeCode(client, config.clientId))
 
   const auth = await step('signin', onStep, () => api.auth(code, client.guildId, client.channelId))
   await step('authenticate', onStep, () => client.commands.authenticate({ access_token: auth.accessToken }))
   setSession(auth.session)
   sdk = client
-  return { config, auth, channelId: client.channelId, guildId: client.guildId }
+  clientId = config.clientId
+  return {
+    config,
+    auth,
+    channel: auth.channel ?? null,
+    launchChannelId: client.channelId,
+    guildId: client.guildId,
+  }
+}
+
+/**
+ * Silent sign-in after the server refused the session (restart with an old build, expiry): a fresh
+ * OAuth code with prompt none, a new Lynx session. No UI; false when Discord or the backend refuses.
+ */
+export async function reauthenticate(): Promise<boolean> {
+  if (!sdk || !clientId) return false
+  const client = sdk
+  const code = await authorizeCode(client, clientId)
+  const auth = await api.auth(code, client.guildId, client.channelId)
+  setSession(auth.session)
+  try {
+    await client.commands.authenticate({ access_token: auth.accessToken })
+  } catch (error) {
+    console.warn('[lynx] authenticate after silent sign-in failed', error)
+  }
+  console.info('[lynx] session renewed')
+  return true
 }
 
 /**

@@ -6,6 +6,7 @@
 mod ai;
 mod auth;
 mod error;
+mod follow;
 mod me;
 mod media;
 mod player;
@@ -111,10 +112,11 @@ impl ApiState {
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(crate::sources::USER_AGENT)
             .build()?;
+        let store = app.store.clone();
         Ok(Self(Arc::new(Inner {
             app,
             discord,
-            sessions: Sessions::new(opts.session_ttl, MAX_SESSIONS),
+            sessions: Sessions::new(store, opts.session_ttl, MAX_SESSIONS),
             auth_limit: RateLimiter::new(10, Duration::from_secs(60), 20_000),
             search_limit: RateLimiter::new(30, Duration::from_secs(60), 20_000),
             add_limit: RateLimiter::new(15, Duration::from_secs(60), 20_000),
@@ -175,6 +177,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/me/prefs", get(me::get_prefs).put(me::put_prefs))
         .route("/api/me/taste", get(me::taste))
         .route("/api/me/data", delete(me::delete_data))
+        .route("/api/me/channel", get(follow::me_channel))
         .route("/ws", get(ws::upgrade))
         .route("/cdn/{*path}", get(media::cdn))
         .route("/img", get(media::img))

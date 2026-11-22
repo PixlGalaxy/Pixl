@@ -323,6 +323,7 @@ async fn history_off_owner_is_rejected() {
             &UserPrefsPatch {
                 locale: None,
                 history_enabled: Some(false),
+                ..Default::default()
             },
         )
         .await

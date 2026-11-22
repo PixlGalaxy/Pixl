@@ -1,4 +1,4 @@
-//! Periodic housekeeping: cache sweep, PRAGMA optimize and WAL checkpoints.
+//! Periodic housekeeping: cache and panel session sweep, PRAGMA optimize and WAL checkpoints.
 
 use std::time::Duration;
 
@@ -22,9 +22,9 @@ pub struct CheckpointStats {
 }
 
 impl Store {
-    /// Remove expired cache entries and artist tags older than `cache_ttl`.
+    /// Remove expired cache entries, expired panel sessions and artist tags older than `cache_ttl`.
     pub async fn sweep(&self, cache_ttl: Duration) -> Result<u64> {
-        Ok(self.cache_sweep().await? + self.sweep_artist_tags(cache_ttl).await?)
+        Ok(self.cache_sweep().await? + self.sweep_panel_sessions().await? + self.sweep_artist_tags(cache_ttl).await?)
     }
 
     /// Let SQLite refresh statistics for indexes that need it.

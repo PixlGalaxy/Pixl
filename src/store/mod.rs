@@ -11,6 +11,7 @@ mod history;
 mod maintenance;
 mod meta;
 mod nodes;
+mod panel_sessions;
 mod prefs;
 mod sessions;
 mod settings;
@@ -31,6 +32,8 @@ pub use history::*;
 pub use maintenance::*;
 #[allow(unused_imports)]
 pub use nodes::*;
+#[allow(unused_imports)]
+pub use panel_sessions::*;
 #[allow(unused_imports)]
 pub use prefs::*;
 #[allow(unused_imports)]

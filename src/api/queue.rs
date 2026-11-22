@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::{
     auth::Member,
-    error::{snowflake, ApiError, ApiResult, Body},
+    error::{ApiError, ApiResult, Body},
     player::{gone, ChannelBody},
     ApiState, GuildEvent,
 };
@@ -73,7 +73,7 @@ pub struct Added {
 }
 
 pub async fn add(State(st): State<ApiState>, m: Member, Body(b): Body<AddBody>) -> ApiResult<Json<Added>> {
-    let channel = snowflake(&b.channel_id)?;
+    let channel = st.own_channel(&m, &b.channel_id)?;
     let query = b.query.trim();
     if query.is_empty() || query.len() > MAX_QUERY {
         return Err(ApiError::invalid("query must be 1-500 characters"));
@@ -120,7 +120,7 @@ pub struct MoveBody {
 }
 
 pub async fn move_track(State(st): State<ApiState>, m: Member, Body(b): Body<MoveBody>) -> ApiResult<StatusCode> {
-    let channel = snowflake(&b.channel_id)?;
+    let channel = st.own_channel(&m, &b.channel_id)?;
     let uid = parse_uid(&b.uid)?;
     let a = st.allowed(&m, channel, |_| Action::Control).await?;
     if a.player.move_uid(uid, b.to_index).await.map_err(gone)? {
@@ -138,7 +138,7 @@ pub struct UidBody {
 }
 
 pub async fn remove(State(st): State<ApiState>, m: Member, Body(b): Body<UidBody>) -> ApiResult<StatusCode> {
-    let channel = snowflake(&b.channel_id)?;
+    let channel = st.own_channel(&m, &b.channel_id)?;
     let uid = parse_uid(&b.uid)?;
     let user = m.user_id();
     let a = st
@@ -156,7 +156,7 @@ pub async fn remove(State(st): State<ApiState>, m: Member, Body(b): Body<UidBody
 }
 
 pub async fn clear(State(st): State<ApiState>, m: Member, Body(b): Body<ChannelBody>) -> ApiResult<StatusCode> {
-    let channel = snowflake(&b.channel_id)?;
+    let channel = st.own_channel(&m, &b.channel_id)?;
     let a = st.allowed(&m, channel, |_| Action::Control).await?;
     a.player.clear().await.map_err(gone)?;
     Ok(StatusCode::NO_CONTENT)
@@ -174,7 +174,7 @@ pub async fn feedback(State(st): State<ApiState>, m: Member, Body(b): Body<Feedb
     if !st.app.config.ai_enabled {
         return Err(ApiError::not_found("AI features are turned off on this bot"));
     }
-    let channel = snowflake(&b.channel_id)?;
+    let channel = st.own_channel(&m, &b.channel_id)?;
     let uid = parse_uid(&b.uid)?;
     let user = m.user_id();
     // Votes only feed the radio, which needs history.

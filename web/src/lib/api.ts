@@ -1,5 +1,6 @@
 import type {
   AuthResult,
+  ChannelRef,
   Feedback,
   GuildChannels,
   GuildSettings,
@@ -27,6 +28,8 @@ export class ApiError extends Error {
 
 let session: string | null = null
 let onUnauthorized: (() => void) | null = null
+let reauth: (() => Promise<boolean>) | null = null
+let reauthRunning: Promise<boolean> | null = null
 
 export function setSession(value: string | null) {
   session = value
@@ -34,9 +37,37 @@ export function setSession(value: string | null) {
 export function getSession() {
   return session
 }
-/** Called once when any request comes back 401 (expired or revoked session). */
+/** Called when a request comes back 401 and signing in again silently did not work. */
 export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn
+}
+/** Silent sign-in (Discord authorize with prompt none + `/api/auth`); resolves true on success. */
+export function setReauthHandler(fn: (() => Promise<boolean>) | null) {
+  reauth = fn
+}
+
+/**
+ * The session was refused: sign in again once (concurrent callers share the attempt). False when
+ * that failed too, after telling the app (session expired screen).
+ */
+export async function renewSession(): Promise<boolean> {
+  if (!reauth) {
+    onUnauthorized?.()
+    return false
+  }
+  if (!reauthRunning) {
+    reauthRunning = reauth()
+      .catch((error) => {
+        console.warn('[lynx] silent sign-in failed', error)
+        return false
+      })
+      .finally(() => {
+        setTimeout(() => (reauthRunning = null), 0)
+      })
+  }
+  const ok = await reauthRunning
+  if (!ok) onUnauthorized?.()
+  return ok
 }
 
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
@@ -47,8 +78,8 @@ type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
  */
 export const BACKEND = '/backend'
 
-/** Relative `/backend/api/...` request. */
-export async function request<T>(path: string, method: Method = 'GET', body?: unknown): Promise<T> {
+/** Relative `/backend/api/...` request. A 401 signs in again silently and retries once. */
+export async function request<T>(path: string, method: Method = 'GET', body?: unknown, retried = false): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (session) headers.Authorization = `Bearer ${session}`
@@ -64,7 +95,9 @@ export async function request<T>(path: string, method: Method = 'GET', body?: un
     throw new ApiError('network', error instanceof Error ? error.message : String(error), 0)
   }
 
-  if (res.status === 401 && session) onUnauthorized?.()
+  if (res.status === 401 && session && path !== '/auth' && !retried) {
+    if (await renewSession()) return request<T>(path, method, body, true)
+  }
   if (res.status === 204) return undefined as T
 
   const text = await res.text()
@@ -138,5 +171,7 @@ export const api = {
   prefs: () => request<UserPrefs>('/me/prefs'),
   updatePrefs: (patch: Partial<UserPrefs>) => request<UserPrefs | void>('/me/prefs', 'PUT', patch),
   taste: () => request<Taste>('/me/taste'),
+  /** Voice channel the panel follows (polling fallback of the socket's `channel` message). */
+  meChannel: () => request<{ channel: ChannelRef | null }>('/me/channel'),
   deleteData: () => request<void>('/me/data', 'DELETE'),
 }

@@ -68,7 +68,7 @@ pub struct ApiGuild {
     pub icon_url: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ApiChannel {
     pub id: String,
     pub name: String,
@@ -81,7 +81,10 @@ pub struct LoginResponse {
     session: String,
     user: ApiUser,
     guild: Option<ApiGuild>,
+    /// Voice channel the panel follows: the user's current one (null when not in voice).
     channel: Option<ApiChannel>,
+    /// Channel the Activity was opened from (any kind), for display only.
+    launch_channel: Option<ApiChannel>,
     permissions: Permissions,
     locale: Option<String>,
 }
@@ -133,8 +136,8 @@ pub async fn login(
     let user = st.discord.current_user(&token).await.map_err(upstream)?;
 
     // Never trust the guild from the client: check membership through the bot.
-    let (guild, channel) = match guild_id {
-        None => (None, None),
+    let (guild, launch, followed) = match guild_id {
+        None => (None, None, None),
         Some(g) => {
             if st.discord.member(g, user.id).await.map_err(upstream)?.is_none() {
                 return Err(ApiError::no_permission());
@@ -145,8 +148,8 @@ pub async fn login(
                 name: summary.as_ref().map(|s| s.name.clone()).unwrap_or_default(),
                 icon_url: summary.and_then(|s| s.icon_url).map(|u| media::rewrite(&u)),
             };
-            let channel = channel_id.and_then(|c| st.discord.channel_name(g, c).map(|name| (c, name)));
-            (Some((g, guild)), channel)
+            let launch = channel_id.filter(|c| st.discord.channel_name(g, *c).is_some());
+            (Some((g, guild)), launch, st.followed_channel(g, user.id))
         }
     };
 
@@ -157,13 +160,14 @@ pub async fn login(
         global_name: user.global_name.clone(),
         avatar_url: user.avatar_url.clone(),
         guild_id: guild.as_ref().map(|g| g.0),
-        channel_id: channel.as_ref().map(|c| c.0),
-        expires: std::time::Instant::now(),
+        launch_channel_id: launch,
+        created_at: 0,
+        expires_at: 0,
     };
     let permissions = match guild.as_ref() {
         Some((g, _)) => {
             st.members.remove(&(*g, user.id));
-            st.permissions(*g, user.id, session.channel_id).await?
+            st.permissions(*g, user.id, followed).await?
         }
         None => Permissions {
             is_manager: false,
@@ -172,7 +176,7 @@ pub async fn login(
             can_add: false,
         },
     };
-    let token_out = st.sessions.create(session);
+    let token_out = st.sessions.create(session).await;
     info!(user = user.id, guild = ?guild.as_ref().map(|g| g.0), "panel sign-in");
     Ok(Json(LoginResponse {
         access_token: token,
@@ -183,11 +187,9 @@ pub async fn login(
             global_name: user.global_name,
             avatar_url: user.avatar_url.map(|u| media::rewrite(&u)),
         },
+        channel: guild.as_ref().and_then(|(g, _)| st.channel_ref(*g, followed)),
+        launch_channel: guild.as_ref().and_then(|(g, _)| st.channel_ref(*g, launch)),
         guild: guild.map(|g| g.1),
-        channel: channel.map(|(id, name)| ApiChannel {
-            id: id.to_string(),
-            name,
-        }),
         permissions,
         locale: prefs.locale.or(user.locale),
     }))
@@ -308,8 +310,10 @@ impl FromRequestParts<ApiState> for Auth {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, st: &ApiState) -> Result<Self, Self::Rejection> {
-        bearer(parts)
-            .and_then(|t| st.sessions.get(t))
+        let token = bearer(parts).ok_or_else(ApiError::unauthorized)?;
+        st.sessions
+            .get(token)
+            .await
             .map(Auth)
             .ok_or_else(ApiError::unauthorized)
     }

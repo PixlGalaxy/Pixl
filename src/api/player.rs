@@ -1,4 +1,5 @@
-//! `GET /api/player` and the player actions. Each action runs the same `can(...)` rule as the slash
+//! `GET /api/player` and the player actions. The channel must be the user's current voice channel
+//! (see `follow`); then each action runs the same `can(...)` rule as the slash
 //! commands, against the player of the channel in the body.
 
 use std::collections::{HashMap, HashSet};
@@ -8,7 +9,7 @@ use serde::Deserialize;
 
 use super::{
     auth::Member,
-    error::{snowflake, ApiError, ApiResult, Body, Params},
+    error::{ApiError, ApiResult, Body, Params},
     media::{rewrite, rewrite_opt},
     ApiState,
 };
@@ -153,7 +154,7 @@ pub async fn state(
     m: Member,
     Params(q): Params<ChannelQuery>,
 ) -> ApiResult<Json<Option<ApiPlayerState>>> {
-    let channel = snowflake(&q.channel_id)?;
+    let channel = st.own_channel(&m, &q.channel_id)?;
     let Some(p) = st.app.players.get(m.guild_id, channel) else {
         return Ok(Json(None));
     };
@@ -162,7 +163,7 @@ pub async fn state(
 }
 
 async fn control(st: &ApiState, m: &Member, channel_id: &str) -> ApiResult<PlayerHandle> {
-    let channel = snowflake(channel_id)?;
+    let channel = st.own_channel(m, channel_id)?;
     Ok(st.allowed(m, channel, |_| Action::Control).await?.player)
 }
 
@@ -177,7 +178,7 @@ pub async fn resume(State(st): State<ApiState>, m: Member, Body(b): Body<Channel
 }
 
 pub async fn skip(State(st): State<ApiState>, m: Member, Body(b): Body<ChannelBody>) -> ApiResult<StatusCode> {
-    let channel = snowflake(&b.channel_id)?;
+    let channel = st.own_channel(&m, &b.channel_id)?;
     let a = st.allowed(&m, channel, |_| Action::Skip).await?;
     let force = a.decision == Decision::Allow;
     match a

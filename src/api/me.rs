@@ -1,4 +1,5 @@
-//! The signed-in user's own data: panel preferences, taste summary and the privacy wipe.
+//! The signed-in user's own data: panel preferences (locale, history, appearance), taste summary and the
+//! privacy wipe.
 
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Serialize;
@@ -23,6 +24,38 @@ pub async fn get_prefs(State(st): State<ApiState>, Auth(s): Auth) -> ApiResult<J
     Ok(Json(prefs))
 }
 
+/// Panel themes.
+pub const THEMES: [&str; 3] = ["light", "dark", "system"];
+
+/// Accent palettes the panel offers (web/src/lib/appearance.ts keeps the same list; `sky` is the
+/// default). One per Tailwind color family, the same set as WebinCloud's skins.
+pub const ACCENTS: [&str; 24] = [
+    "sky",
+    "indigo",
+    "ocean",
+    "sunset",
+    "forest",
+    "grape",
+    "crimson",
+    "solar",
+    "mint",
+    "blossom",
+    "ares",
+    "poseidon",
+    "zeus",
+    "jade",
+    "verdigris",
+    "nebula",
+    "sakura",
+    "slate",
+    "mono",
+    "graphite",
+    "ash",
+    "terracotta",
+    "olive",
+    "maroon",
+];
+
 fn valid_locale(l: &str) -> bool {
     (2..=10).contains(&l.len()) && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
@@ -35,6 +68,16 @@ pub async fn put_prefs(
     if let Some(Some(l)) = &patch.locale {
         if !valid_locale(l) {
             return Err(ApiError::invalid("invalid locale"));
+        }
+    }
+    if let Some(Some(t)) = &patch.theme {
+        if !THEMES.contains(&t.as_str()) {
+            return Err(ApiError::invalid("theme must be light, dark or system"));
+        }
+    }
+    if let Some(Some(a)) = &patch.accent {
+        if !ACCENTS.contains(&a.as_str()) {
+            return Err(ApiError::invalid("unknown accent"));
         }
     }
     let prefs = st

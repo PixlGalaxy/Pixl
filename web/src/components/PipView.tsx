@@ -19,7 +19,7 @@ function RadioLine({ state }: { state: PlayerState | null }) {
   const job = state?.ai?.job
   if (!job || !AI_STEPS.includes(job.phase)) return null
   return (
-    <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-sky-600 dark:text-sky-400" aria-live="polite">
+    <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-accent-600 dark:text-accent-400" aria-live="polite">
       <Spinner size={11} className="shrink-0" />
       <span className="truncate">{t('pip.radio', { phase: t(`ai.phase.${job.phase}`) })}</span>
     </div>
@@ -69,7 +69,7 @@ function Progress({ state }: { state: PlayerState }) {
             aria-valuenow={Math.round(position)}
             className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-line"
           >
-            <div className="h-full rounded-full bg-sky-500" style={{ width: `${pct}%` }} />
+            <div className="h-full rounded-full bg-accent-500" style={{ width: `${pct}%` }} />
           </div>
           <span className="shrink-0">{fmtTime(duration)}</span>
         </>
@@ -82,7 +82,7 @@ function Progress({ state }: { state: PlayerState }) {
   )
 }
 
-const iconBtn = `inline-flex ${BTN} items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-sky-500 disabled:pointer-events-none disabled:opacity-40`
+const iconBtn = `inline-flex ${BTN} items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent-500 disabled:pointer-events-none disabled:opacity-40`
 
 function Controls({ state }: { state: PlayerState }) {
   const { t } = useTranslation()
@@ -129,7 +129,7 @@ function Controls({ state }: { state: PlayerState }) {
             setState((s) => (s ? { ...s, status: next, pausedReason: next === 'paused' ? 'user' : null } : s))
             void run(() => (playing ? api.pause(channelId) : api.resume(channelId)))
           }}
-          className={`inline-flex ${BTN} items-center justify-center rounded-full bg-sky-600 text-white shadow-sm shadow-sky-600/25 transition-colors hover:bg-sky-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 disabled:pointer-events-none disabled:opacity-50`}
+          className={`inline-flex ${BTN} items-center justify-center rounded-full bg-accent-600 text-white shadow-sm shadow-accent-600/25 transition-colors hover:bg-accent-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500 disabled:pointer-events-none disabled:opacity-50`}
         >
           {playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" className="translate-x-px" />}
         </button>
@@ -178,6 +178,7 @@ function NowPlaying({ state }: { state: PlayerState }) {
 
 function NothingPlaying({ state }: { state: PlayerState | null }) {
   const { t } = useTranslation()
+  const { channelId } = useLynx()
   const radio = <RadioLine state={state} />
   const job = state?.ai?.job
   const radioRunning = !!job && AI_STEPS.includes(job.phase)
@@ -185,8 +186,14 @@ function NothingPlaying({ state }: { state: PlayerState | null }) {
     <div className="flex flex-1 items-center justify-center gap-3">
       <LynxMark className="size-[clamp(28px,22vh,44px)] text-muted" />
       <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold">{t('player.nothingTitle')}</div>
-        {radioRunning ? radio : <div className="truncate text-[11px] text-muted">{t('pip.nothingHint')}</div>}
+        <div className="truncate text-[13px] font-semibold">
+          {channelId ? t('player.nothingTitle') : t('noVoice.title')}
+        </div>
+        {radioRunning ? (
+          radio
+        ) : (
+          <div className="truncate text-[11px] text-muted">{channelId ? t('pip.nothingHint') : t('noVoice.pip')}</div>
+        )}
       </div>
     </div>
   )

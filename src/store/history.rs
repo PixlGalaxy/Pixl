@@ -257,7 +257,7 @@ mod tests {
     #[tokio::test]
     async fn respects_history_opt_out() {
         let store = Store::open_in_memory().await.unwrap();
-        store.update_user_prefs(1, &UserPrefsPatch { locale: None, history_enabled: Some(false) }).await.unwrap();
+        store.update_user_prefs(1, &UserPrefsPatch { history_enabled: Some(false), ..Default::default() }).await.unwrap();
         assert!(store.record_play(1, &track("a")).await.unwrap().is_none());
         assert_eq!(store.history_len(1).await.unwrap(), 0);
         assert!(store.track_id("a").await.unwrap().is_none());
@@ -287,7 +287,7 @@ mod tests {
         store.replace_neighbors(1, &[(2, 0.9)]).await.unwrap();
         store.replace_neighbors(2, &[(1, 0.9)]).await.unwrap();
         store
-            .update_user_prefs(1, &UserPrefsPatch { locale: Some(Some("es".into())), history_enabled: None })
+            .update_user_prefs(1, &UserPrefsPatch { locale: Some(Some("es".into())), history_enabled: None, ..Default::default() })
             .await
             .unwrap();
 

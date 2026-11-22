@@ -38,7 +38,7 @@ function Row({ track, index, sortable, canRemove }: { track: Track; index: numbe
       style={style}
       className={cx(
         'group relative flex items-center gap-3 border-t border-line bg-surface px-3 py-2.5 transition-colors hover:bg-surface-2/60',
-        isDragging && 'z-10 bg-sky-500/5 outline-2 -outline-offset-4 outline-sky-500/50 outline-dashed [&>*]:opacity-30',
+        isDragging && 'z-10 bg-accent-500/5 outline-2 -outline-offset-4 outline-accent-500/50 outline-dashed [&>*]:opacity-30',
       )}
     >
       {sortable ? (

@@ -19,8 +19,14 @@ export type AuthResult = {
   session: string
   user: User
   guild: GuildInfo | null
-  /** Voice channel the Activity was launched in (null outside a server voice channel). */
-  channel?: ChannelRef | null
+  /**
+   * Voice channel the panel follows: the one the user is connected to right now, wherever the
+   * Activity was opened from. Null when the user is not in a voice channel (nothing is shown).
+   * The socket's `channel` message and `GET /api/me/channel` keep it current.
+   */
+  channel: ChannelRef | null
+  /** Channel the Activity was opened from (any kind), for display only. */
+  launchChannel?: ChannelRef | null
   permissions: Permissions
   locale: string | null
 }
@@ -112,7 +118,14 @@ export type GuildChannels = { text: GuildChannel[]; voice: GuildChannel[] }
 
 export type Member = { id: string; name: string; avatarUrl: string | null }
 
-export type UserPrefs = { locale: string | null; historyEnabled: boolean }
+export type UserPrefs = {
+  locale: string | null
+  historyEnabled: boolean
+  /** Panel theme; null = default (dark). */
+  theme: 'light' | 'dark' | 'system' | null
+  /** Accent palette id (see lib/appearance.ts); null = default (sky). */
+  accent: string | null
+}
 export type Taste = {
   topGenres: Array<{ genre: string; weight: number }>
   topTracks: Array<{ title: string; artists: string[]; plays: number; url: string }>
@@ -132,8 +145,10 @@ export type ErrorCode =
   | 'unavailable'
 
 export type ServerMessage =
-  | { type: 'state'; state: PlayerState | null }
+  | { type: 'state'; state: PlayerState | null; serverNow?: number }
   | { type: 'position'; positionMs: number; positionAt: number; serverNow?: number }
   | { type: 'ai'; ai: AiState | null }
   | { type: 'settings'; settings: GuildSettings }
   | { type: 'permissions'; permissions: Permissions }
+  /** The followed voice channel changed (the user joined, left or moved); `state` follows. */
+  | { type: 'channel'; channel: ChannelRef | null }

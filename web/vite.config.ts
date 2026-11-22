@@ -24,7 +24,7 @@ export default defineConfig(async ({ mode }) => {
       ? {}
       : {
           // Dev only: accept the public host NPM forwards (the Activity runs through Discord's proxy).
-          allowedHosts: true,
+          allowedHosts: true as const,
           // Same shape as nginx in the image: /backend/* goes to the Rust server without the prefix.
           proxy: {
             '/backend': {

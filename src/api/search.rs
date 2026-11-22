@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     auth::Member,
-    error::{snowflake, ApiError, ApiResult, Params},
+    error::{ApiError, ApiResult, Params},
     media::rewrite_opt,
     player::ChannelQuery,
     ApiState,
@@ -81,7 +81,7 @@ pub async fn lyrics(
     m: Member,
     Params(q): Params<ChannelQuery>,
 ) -> ApiResult<Json<Option<Lyrics>>> {
-    let channel = snowflake(&q.channel_id)?;
+    let channel = st.own_channel(&m, &q.channel_id)?;
     let Some(p) = st.app.players.get(m.guild_id, channel) else {
         return Ok(Json(None));
     };

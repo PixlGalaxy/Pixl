@@ -87,7 +87,7 @@ export function RadioScreen() {
                   key={key}
                   type="button"
                   onClick={() => setPrompt(t(`ai.examples.${key}`))}
-                  className="rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-muted transition-colors hover:border-sky-500/40 hover:text-fg"
+                  className="rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-muted transition-colors hover:border-accent-500/40 hover:text-fg"
                 >
                   {t(`ai.examples.${key}`)}
                 </button>

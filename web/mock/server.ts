@@ -9,6 +9,10 @@
 //   ?outside=1       show the "open from Discord" screen
 //   ?lang=es         Discord locale reported at sign-in
 //   ?pip=1 / ?grid=1 start in picture-in-picture / grid layout (mock SDK; keys `p` / `g` toggle)
+//   ?voice=101|none  voice channel the user starts in (default 100, where the player is)
+//   ?channel_id=100  launch channel (default 200, a text channel: the panel follows your voice channel)
+// Keys in the browser (mock SDK): `v` moves you 100 -> 101 -> no voice -> 100 (socket `channel`
+// message + new state), `x` expires every session (the panel signs in again silently).
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, ViteDevServer } from 'vite'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -22,6 +26,7 @@ import type {
   Track,
   TrackReason,
 } from '../src/lib/types'
+import { ACCENTS } from '../src/lib/appearance'
 
 type Flags = {
   ai: boolean
@@ -30,6 +35,7 @@ type Flags = {
   emptyChannel: boolean
   lyrics: 'synced' | 'plain' | 'none'
   vote: boolean
+  voice: string | null
 }
 
 function parseFlags(search: string): Flags {
@@ -43,11 +49,25 @@ function parseFlags(search: string): Flags {
     emptyChannel: p.get('empty_channel') === '1',
     lyrics: lyrics === 'plain' || lyrics === 'none' ? lyrics : 'synced',
     vote: p.get('vote') === '1',
+    voice: p.get('voice') === 'none' ? null : (p.get('voice') ?? '100'),
   }
 }
-const encodeFlags = (search: string) => Buffer.from(search || '?').toString('base64url')
+// Sessions are `mock.<epoch>.<flags>`; `x` bumps the epoch so every older session gets 401.
+let sessionEpoch = 1
+let voiceInitialized = false
+const encodeFlags = (search: string) => `mock.${sessionEpoch}.${Buffer.from(search || '?').toString('base64url')}`
+function sessionValid(session: string | null | undefined) {
+  return !!session && session.startsWith(`mock.${sessionEpoch}.`)
+}
 const decodeFlags = (session: string | null | undefined) =>
-  parseFlags(session?.startsWith('mock.') ? Buffer.from(session.slice(5), 'base64url').toString() : '')
+  parseFlags(
+    session?.startsWith('mock.') ? Buffer.from(session.split('.')[2] ?? '', 'base64url').toString() : '',
+  )
+
+// Voice channels of the mock guild; the player lives in PLAYER_CHANNEL.
+const PLAYER_CHANNEL = '100'
+const CHANNEL_NAMES: Record<string, string> = { '100': 'Lounge', '101': 'Gaming', '102': 'Study Room', '200': 'general' }
+const channelRef = (id: string | null) => (id ? { id, name: CHANNEL_NAMES[id] ?? id } : null)
 
 // ---------------------------------------------------------------------------------------------
 // Data
@@ -165,8 +185,15 @@ const s = {
     voiceChannels: [],
   } as GuildSettings,
   djs: [USERS[2]!] as Member[],
-  prefs: { locale: null as string | null, historyEnabled: true },
+  prefs: {
+    locale: null as string | null,
+    historyEnabled: true,
+    theme: null as 'light' | 'dark' | 'system' | null,
+    accent: null as string | null,
+  },
   aiTimer: null as ReturnType<typeof setTimeout> | null,
+  /** Voice channel the mock user is in (the panel follows it). */
+  voice: '100' as string | null,
 }
 for (let i = 1; i <= 12; i++) s.upcoming.push(makeTrack(CATALOG[i]!, USERS[i % USERS.length]!))
 for (let i = 13; i < 18; i++) s.history.unshift(makeTrack(CATALOG[i]!, USERS[(i + 2) % USERS.length]!))
@@ -187,12 +214,12 @@ function permissionsFor(f: Flags): Permissions {
 }
 
 function snapshot(f: Flags): PlayerState | null {
-  if (f.empty || !s.current) return null
+  if (f.empty || !s.current || s.voice !== PLAYER_CHANNEL) return null
   const emptyChannel = f.emptyChannel
   return {
     guildId: '1',
-    channelId: '100',
-    channelName: 'Lounge',
+    channelId: PLAYER_CHANNEL,
+    channelName: CHANNEL_NAMES[PLAYER_CHANNEL]!,
     bot: { id: '900', name: 'Lynx', isMain: true },
     status: emptyChannel ? 'paused' : s.status,
     pausedReason: emptyChannel ? 'empty_channel' : s.status === 'paused' ? 'user' : null,
@@ -282,6 +309,14 @@ function send(ws: WebSocket, msg: unknown) {
 function broadcast() {
   for (const [ws, f] of sockets) send(ws, { type: 'state', state: snapshot(f) })
 }
+/** The user moved: every socket gets `channel`, then the state of that channel, then permissions. */
+function broadcastChannel() {
+  for (const [ws, f] of sockets) {
+    send(ws, { type: 'channel', channel: channelRef(s.voice) })
+    send(ws, { type: 'state', state: snapshot(f) })
+    send(ws, { type: 'permissions', permissions: permissionsFor(f) })
+  }
+}
 function broadcastAi() {
   for (const [ws, f] of sockets) send(ws, { type: 'ai', ai: f.ai ? s.ai : null })
 }
@@ -342,18 +377,42 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       },
     }
   }
+  // Mock-only controls, driven by the keys in mock/discord-sdk.ts.
+  if (method === 'POST' && path === '/mock/voice') {
+    const order = ['100', '101', null]
+    s.voice = order[(order.indexOf(s.voice) + 1) % order.length] ?? null
+    broadcastChannel()
+    return { voice: s.voice }
+  }
+  if (method === 'POST' && path === '/mock/expire') {
+    sessionEpoch += 1
+    for (const ws of sockets.keys()) ws.close()
+    return { epoch: sessionEpoch }
+  }
   if (path === '/auth') {
+    if (!voiceInitialized) {
+      s.voice = f.voice
+      voiceInitialized = true
+    }
+    const launch = (body.channelId as string | null) ?? null
     return {
       accessToken: 'mock-access-token',
-      session: `mock.${encodeFlags(new URL(req.headers.referer ?? 'http://x/').search)}`,
+      session: encodeFlags(new URL(req.headers.referer ?? 'http://x/').search),
       user: { id: ME.id, username: 'pixl', globalName: ME.name, avatarUrl: null },
       guild: { id: '1', name: 'Galaxy Hangout', iconUrl: null },
-      channel: { id: '100', name: 'Lounge' },
+      channel: channelRef(s.voice),
+      launchChannel: channelRef(launch),
       permissions: permissionsFor(f),
       locale: new URL(req.headers.referer ?? 'http://x/').searchParams.get('lang') ?? 'en-US',
     }
   }
-  if (!session) throw new HttpError(401, 'unauthorized')
+  if (!sessionValid(session)) throw new HttpError(401, 'unauthorized')
+
+  // Like the real API: player, queue, radio and lyrics routes only take the user's voice channel.
+  if (/^\/(player|queue|tracks|ai|lyrics)/.test(path)) {
+    const channel = String(body.channelId ?? url.searchParams.get('channelId') ?? '')
+    if (!s.voice || channel !== s.voice) throw new HttpError(403, 'not_in_channel')
+  }
 
   switch (`${method} ${path}`) {
     case 'GET /player':
@@ -518,9 +577,16 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       const q = (url.searchParams.get('q') ?? '').toLowerCase()
       return { members: USERS.filter((u) => u.id !== ME.id && u.name.toLowerCase().includes(q)) }
     }
+    case 'GET /me/channel':
+      return { channel: channelRef(s.voice) }
     case 'GET /me/prefs':
       return s.prefs
     case 'PUT /me/prefs':
+      // Same checks as the API (src/api/me.rs).
+      if (body.theme != null && !['light', 'dark', 'system'].includes(String(body.theme))) {
+        throw new HttpError(400, 'invalid')
+      }
+      if (body.accent != null && !ACCENTS.some((a) => a.id === body.accent)) throw new HttpError(400, 'invalid')
       s.prefs = { ...s.prefs, ...(body as Partial<typeof s.prefs>) }
       return s.prefs
     case 'GET /me/taste':
@@ -580,7 +646,7 @@ export function mockApi(): Plugin {
           url.searchParams.set('frame_id', 'mock-frame')
           url.searchParams.set('instance_id', 'mock-instance')
           url.searchParams.set('guild_id', '1')
-          url.searchParams.set('channel_id', '100')
+          url.searchParams.set('channel_id', url.searchParams.get('channel_id') ?? '200')
           res.statusCode = 302
           res.setHeader('Location', `/${url.search}`)
           res.end()
@@ -617,10 +683,18 @@ export function mockApi(): Plugin {
       server.httpServer?.on('upgrade', (req, socket, head) => {
         const url = new URL(req.url ?? '/', 'http://localhost')
         if (url.pathname !== '/backend/ws') return
+        const session = url.searchParams.get('session')
+        if (!sessionValid(session)) {
+          socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+          socket.destroy()
+          return
+        }
         wss.handleUpgrade(req, socket, head, (ws) => {
-          const flags = decodeFlags(url.searchParams.get('session'))
+          const flags = decodeFlags(session)
           sockets.set(ws, flags)
+          send(ws, { type: 'channel', channel: channelRef(s.voice) })
           send(ws, { type: 'state', state: snapshot(flags) })
+          send(ws, { type: 'permissions', permissions: permissionsFor(flags) })
           ws.on('close', () => sockets.delete(ws))
         })
       })

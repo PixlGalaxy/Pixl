@@ -17,7 +17,7 @@ use serenity::{
     model::Permissions,
 };
 use songbird::Songbird;
-use tokio::sync::Notify;
+use tokio::sync::{broadcast, Notify};
 
 /// Permissions requested by invite links: View Channel, Send Messages, Connect, Speak, plus Create
 /// Invite for the main bot ("Invite to jam").
@@ -129,6 +129,8 @@ pub struct BotRegistry {
     bots: Vec<Arc<BotInfo>>,
     presence: DashMap<u64, GuildBots>,
     synced: Notify,
+    /// A human joined, left or moved between voice channels: (guild, user). The panel follows it.
+    voice_moves: broadcast::Sender<(u64, u64)>,
 }
 
 impl BotRegistry {
@@ -138,6 +140,7 @@ impl BotRegistry {
             bots,
             presence: DashMap::new(),
             synced: Notify::new(),
+            voice_moves: broadcast::channel(1024).0,
         }
     }
 
@@ -231,6 +234,17 @@ impl BotRegistry {
             tracing::warn!("not every bot finished loading its guilds in time; continuing");
             self.force_synced();
         }
+    }
+
+    // ---- human voice moves ------------------------------------------------
+
+    /// A human's voice channel changed (joined, left or moved). Fired by the main bot only.
+    pub fn voice_moved(&self, guild_id: u64, user_id: u64) {
+        let _ = self.voice_moves.send((guild_id, user_id));
+    }
+
+    pub fn subscribe_voice_moves(&self) -> broadcast::Receiver<(u64, u64)> {
+        self.voice_moves.subscribe()
     }
 
     // ---- guild data from the main bot's cache ----------------------------------------------

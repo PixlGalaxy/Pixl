@@ -7,10 +7,10 @@ type Variant = 'primary' | 'secondary' | 'warning' | 'ghost' | 'danger'
 type Size = 'xs' | 'sm' | 'md'
 
 const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-sky-600 text-white shadow-sm shadow-sky-600/25 hover:bg-sky-500 focus-visible:outline-sky-500',
-  secondary: 'border border-line bg-surface text-fg shadow-xs hover:bg-surface-2 focus-visible:outline-sky-500',
+  primary: 'bg-accent-600 text-white shadow-sm shadow-accent-600/25 hover:bg-accent-500 focus-visible:outline-accent-500',
+  secondary: 'border border-line bg-surface text-fg shadow-xs hover:bg-surface-2 focus-visible:outline-accent-500',
   warning: 'bg-amber-500 text-white shadow-sm shadow-amber-500/25 hover:bg-amber-400 focus-visible:outline-amber-500',
-  ghost: 'text-muted hover:bg-surface-2 hover:text-fg focus-visible:outline-sky-500',
+  ghost: 'text-muted hover:bg-surface-2 hover:text-fg focus-visible:outline-accent-500',
   danger:
     'border border-red-500/30 bg-red-500/10 text-red-600 hover:bg-red-500/20 dark:text-red-400 focus-visible:outline-red-500',
 }
@@ -64,8 +64,8 @@ export function IconButton({
       title={label}
       aria-pressed={active}
       className={cx(
-        'inline-flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-sky-500 disabled:pointer-events-none disabled:opacity-40',
-        active ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400' : 'text-muted hover:bg-surface-2 hover:text-fg',
+        'inline-flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-accent-500 disabled:pointer-events-none disabled:opacity-40',
+        active ? 'bg-accent-500/10 text-accent-600 dark:text-accent-400' : 'text-muted hover:bg-surface-2 hover:text-fg',
         className,
       )}
       {...props}
@@ -95,7 +95,7 @@ export function Toggle({
       title={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 disabled:opacity-50 ${checked ? 'bg-sky-600' : 'bg-line'}`}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500 disabled:opacity-50 ${checked ? 'bg-accent-600' : 'bg-line'}`}
     >
       <span
         className={`size-4 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-[18px]' : 'translate-x-0.5'}`}
@@ -104,10 +104,33 @@ export function Toggle({
   )
 }
 
+/** The `size-9 rounded-xl` accent tile that marks a card header. */
+export function IconTile({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent-500/10 text-accent-500">{children}</div>
+  )
+}
+
+/** Artwork in place of a card's icon tile (same size and corners); the tile with `fallback` when it has none. */
+export function TileArtwork({ url, fallback }: { url: string | null | undefined; fallback: ReactNode }) {
+  const [broken, setBroken] = useState<string | null>(null)
+  const src = mediaUrl(url)
+  if (!src || broken === src) return <IconTile>{fallback}</IconTile>
+  return (
+    <img
+      src={src}
+      alt=""
+      onError={() => setBroken(src)}
+      className="size-9 shrink-0 rounded-xl border border-line bg-surface-2 object-cover"
+    />
+  )
+}
+
 export function Card({
   title,
   description,
   icon,
+  media,
   actions,
   children,
   bodyClassName = 'space-y-5 p-4',
@@ -115,6 +138,8 @@ export function Card({
   title: ReactNode
   description?: ReactNode
   icon?: ReactNode
+  /** Replaces the icon tile (e.g. `TileArtwork`). */
+  media?: ReactNode
   actions?: ReactNode
   children: ReactNode
   bodyClassName?: string
@@ -122,11 +147,7 @@ export function Card({
   return (
     <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-4">
-        {icon && (
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/10 text-sky-500">
-            {icon}
-          </div>
-        )}
+        {media ?? (icon && <IconTile>{icon}</IconTile>)}
         <div className="min-w-0 flex-1">
           <h2 className="font-semibold">{title}</h2>
           {description && <p className="text-xs text-muted">{description}</p>}
@@ -159,7 +180,7 @@ export function SettingRow({
 }
 
 export const inputCls =
-  'h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm shadow-xs placeholder:text-muted/70 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40'
+  'h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm shadow-xs placeholder:text-muted/70 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40'
 export const labelCls = 'mb-1 block text-xs font-medium text-muted'
 
 /** Destructive action that turns into "question + Confirm + Cancel" (no window.confirm in the iframe). */
@@ -245,7 +266,7 @@ export function Chip({ children, className = '', title }: { children: ReactNode;
 
 type Tone = 'sky' | 'emerald' | 'amber' | 'red' | 'neutral'
 const TAG_TONES: Record<Tone, string> = {
-  sky: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  sky: 'border-accent-500/30 bg-accent-500/10 text-accent-600 dark:text-accent-400',
   emerald: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
   amber: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
   red: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400',
@@ -265,7 +286,7 @@ export function Tag({ tone = 'neutral', children }: { tone?: Tone; children: Rea
 /** Tinted notice box. */
 export function Notice({ tone, icon, children }: { tone: Exclude<Tone, 'neutral'>; icon?: ReactNode; children: ReactNode }) {
   const tones: Record<typeof tone, string> = {
-    sky: 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+    sky: 'border-accent-500/30 bg-accent-500/10 text-accent-700 dark:text-accent-300',
     emerald: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
     amber: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
     red: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300',

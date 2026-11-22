@@ -1,9 +1,12 @@
-//! `GET /ws?session=&channelId=`: live player state for one voice channel.
+//! `GET /ws?session=`: live player state of the voice channel the user is in.
 //!
-//! On connect the full `state` goes out (null when nothing plays; the socket then waits for a player
-//! to appear). Player events become `state` / `position` messages, guild settings changes become
-//! `settings`, and permission changes `permissions`. Writes go through a small bounded queue; a
-//! client that can't keep up, stops pinging, or whose session expired is disconnected.
+//! On connect `channel` (the followed voice channel, null when the user is not in voice) and the full
+//! `state` go out (null when nothing plays; the socket then waits for a player to appear). When the
+//! user joins, leaves or moves between voice channels a new `channel` message is pushed and the socket
+//! switches to that channel's player (its `state` follows). Player events become `state` / `position`
+//! messages, guild settings changes become `settings`, and permission changes `permissions`. Writes go
+//! through a small bounded queue; a client that can't keep up, stops pinging, or whose session expired
+//! is disconnected.
 
 use std::time::{Duration, Instant};
 
@@ -20,7 +23,7 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
 
 use super::{
-    error::{snowflake, ApiError, Params},
+    error::{ApiError, Params},
     settings::settings_message,
     ApiState, GuildEvent,
 };
@@ -37,11 +40,10 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_IN_MESSAGE: usize = 4 * 1024;
 const MAX_WRITE_BUFFER: usize = 8 * 1024 * 1024;
 
+/// A `channelId` sent by older panels is ignored: the server follows the user's voice channel.
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct WsQuery {
     session: String,
-    channel_id: String,
 }
 
 pub async fn upgrade(
@@ -50,15 +52,11 @@ pub async fn upgrade(
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
     // Authenticate before looking at the upgrade, so a bad session never gets a socket.
-    let Some(session) = st.sessions.get(&q.session) else {
+    let Some(session) = st.sessions.get(&q.session).await else {
         return ApiError::unauthorized().into_response();
     };
     let Some(guild) = session.guild_id else {
         return ApiError::invalid("Open the panel from a server").into_response();
-    };
-    let channel = match snowflake(&q.channel_id) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
     };
     match st.member_status(guild, session.user_id).await {
         Ok(s) if s.member => {}
@@ -73,17 +71,23 @@ pub async fn upgrade(
     ws.max_message_size(MAX_IN_MESSAGE)
         .max_frame_size(MAX_IN_MESSAGE)
         .max_write_buffer_size(MAX_WRITE_BUFFER)
-        .on_upgrade(move |socket| run(st, token, session.user_id, guild, channel, socket))
+        .on_upgrade(move |socket| run(st, token, session.user_id, guild, socket))
 }
 
+type Attached = Option<(PlayerHandle, broadcast::Receiver<PlayerEvent>)>;
+
 /// Next event of the attached player, or never.
-async fn next_event(
-    player: &mut Option<(PlayerHandle, broadcast::Receiver<PlayerEvent>)>,
-) -> Result<PlayerEvent, broadcast::error::RecvError> {
+async fn next_event(player: &mut Attached) -> Result<PlayerEvent, broadcast::error::RecvError> {
     match player {
         Some((_, rx)) => rx.recv().await,
         None => std::future::pending().await,
     }
+}
+
+fn attach(st: &ApiState, guild: u64, channel: Option<u64>) -> Attached {
+    let p = st.app.players.get(guild, channel?)?;
+    let rx = p.subscribe();
+    Some((p, rx))
 }
 
 struct Conn {
@@ -91,7 +95,8 @@ struct Conn {
     out: mpsc::Sender<String>,
     user: u64,
     guild: u64,
-    channel: u64,
+    /// Followed voice channel: the user's current one.
+    channel: Option<u64>,
     permissions: Option<Permissions>,
 }
 
@@ -112,6 +117,25 @@ impl Conn {
         self.push(json!({ "type": "state", "state": state, "serverNow": epoch_ms() }))
     }
 
+    fn channel_message(&self) -> bool {
+        let channel = self.st.channel_ref(self.guild, self.channel);
+        self.push(json!({ "type": "channel", "channel": channel }))
+    }
+
+    /// Re-resolve the followed channel. When it changed: tell the client, attach to that channel's
+    /// player and send its state and permissions (always all three, in that order). False when the socket should close.
+    async fn follow(&mut self, player: &mut Attached, last_generation: &mut Option<u64>) -> bool {
+        let now = self.st.followed_channel(self.guild, self.user);
+        if now == self.channel {
+            return true;
+        }
+        self.channel = now;
+        *player = attach(&self.st, self.guild, now);
+        *last_generation = None;
+        self.permissions = None; // always resend them: channel, state, permissions
+        self.channel_message() && self.state(player.as_ref().map(|p| &p.0)).await && self.permissions().await
+    }
+
     /// Recompute permissions; send them when they changed. False when the socket should close.
     async fn permissions(&mut self) -> bool {
         match self.st.member_status(self.guild, self.user).await {
@@ -119,7 +143,7 @@ impl Conn {
             Ok(_) => {}
             Err(_) => return true, // Discord hiccup: keep the last known permissions
         }
-        let Ok(p) = self.st.permissions(self.guild, self.user, Some(self.channel)).await else {
+        let Ok(p) = self.st.permissions(self.guild, self.user, self.channel).await else {
             return true;
         };
         if self.permissions == Some(p) {
@@ -130,7 +154,7 @@ impl Conn {
     }
 }
 
-async fn run(st: ApiState, token: String, user: u64, guild: u64, channel: u64, socket: WebSocket) {
+async fn run(st: ApiState, token: String, user: u64, guild: u64, socket: WebSocket) {
     let (mut sink, mut stream) = socket.split();
     let (out, mut out_rx) = mpsc::channel::<String>(OUT_QUEUE);
     let writer = tokio::spawn(async move {
@@ -143,6 +167,9 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, channel: u64, s
         let _ = tokio::time::timeout(WRITE_TIMEOUT, sink.close()).await;
     });
 
+    // Subscribe before resolving, so a move in between is not missed.
+    let mut voice_moves = st.app.bots.subscribe_voice_moves();
+    let channel = st.followed_channel(guild, user);
     let mut conn = Conn {
         st: st.clone(),
         out,
@@ -152,16 +179,14 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, channel: u64, s
         permissions: None,
     };
     let mut guild_events = st.events.subscribe();
-    let mut player = st.app.players.get(guild, channel).map(|p| {
-        let rx = p.subscribe();
-        (p, rx)
-    });
+    let mut player = attach(&st, guild, channel);
     let mut last_generation = None;
     let mut last_seen = Instant::now();
     let mut tick = tokio::time::interval(CHECK_EVERY);
     tick.tick().await;
 
-    let mut open = conn.state(player.as_ref().map(|p| &p.0)).await && conn.permissions().await;
+    let mut open =
+        conn.channel_message() && conn.state(player.as_ref().map(|p| &p.0)).await && conn.permissions().await;
     while open {
         tokio::select! {
             msg = stream.next() => match msg {
@@ -170,7 +195,7 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, channel: u64, s
             },
             ev = next_event(&mut player) => {
                 open = match ev {
-                    Ok(PlayerEvent::State(snap)) if snap.channel_id == channel => {
+                    Ok(PlayerEvent::State(snap)) if Some(snap.channel_id) == conn.channel => {
                         conn.state(player.as_ref().map(|p| &p.0)).await
                     }
                     Ok(PlayerEvent::Position { position_ms, position_at }) => conn.push(json!({
@@ -188,10 +213,22 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, channel: u64, s
                     }
                 };
             },
-            p = st.app.players.wait_player(guild, channel, last_generation), if player.is_none() => {
+            // A disabled branch still builds its future (never polled), hence the 0 placeholder.
+            p = st.app.players.wait_player(guild, conn.channel.unwrap_or(0), last_generation),
+                if player.is_none() && conn.channel.is_some() => {
                 let rx = p.subscribe();
                 player = Some((p, rx));
                 open = conn.state(player.as_ref().map(|p| &p.0)).await;
+            },
+            ev = voice_moves.recv() => {
+                open = match ev {
+                    Ok((g, u)) if g == guild && u == user => conn.follow(&mut player, &mut last_generation).await,
+                    Ok(_) => true,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        conn.follow(&mut player, &mut last_generation).await
+                    }
+                    Err(broadcast::error::RecvError::Closed) => false,
+                };
             },
             ev = guild_events.recv() => {
                 open = match ev {
@@ -207,8 +244,10 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, channel: u64, s
                 };
             },
             _ = tick.tick() => {
-                open = st.sessions.get(&token).is_some()
+                // Also re-resolves the channel, in case a voice update was missed.
+                open = st.sessions.get(&token).await.is_some()
                     && last_seen.elapsed() < IDLE_TIMEOUT
+                    && conn.follow(&mut player, &mut last_generation).await
                     && conn.permissions().await;
             },
             _ = st.app.shutdown.cancelled() => open = false,

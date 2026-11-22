@@ -1,5 +1,8 @@
-//! Panel sessions (random 32-byte tokens, in memory, bounded, with expiry), plus the small bounded
-//! caches and fixed-window rate limiters the API uses.
+//! Panel sessions (random 32-byte tokens with expiry), plus the small bounded caches and fixed-window
+//! rate limiters the API uses.
+//!
+//! Sessions live in SQLite so a restart or an update keeps everyone signed in. Only the SHA-256 of a
+//! token is stored; a bounded in-memory map (keyed by the same hash) fronts the table.
 
 use std::{
     hash::Hash,
@@ -8,9 +11,13 @@ use std::{
 };
 
 use dashmap::DashMap;
+use sha2::{Digest, Sha256};
+use tracing::warn;
+
+use crate::store::{now_secs, PanelSessionRow, Store};
 
 /// One signed-in panel user. The guild was verified at sign-in (membership through the bot).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
     pub user_id: u64,
     pub username: String,
@@ -18,9 +25,12 @@ pub struct Session {
     /// Raw Discord CDN URL.
     pub avatar_url: Option<String>,
     pub guild_id: Option<u64>,
-    /// Voice channel the Activity was launched in (verified to belong to the guild).
-    pub channel_id: Option<u64>,
-    pub expires: Instant,
+    /// Channel the Activity was opened from (any kind, verified to belong to the guild). Informational
+    /// only: the panel always follows the user's current voice channel.
+    pub launch_channel_id: Option<u64>,
+    pub created_at: i64,
+    /// Epoch seconds.
+    pub expires_at: i64,
 }
 
 impl Session {
@@ -29,56 +39,115 @@ impl Session {
     }
 
     pub fn expired(&self) -> bool {
-        Instant::now() >= self.expires
+        now_secs() >= self.expires_at
+    }
+
+    fn to_row(&self, token_hash: String) -> PanelSessionRow {
+        PanelSessionRow {
+            token_hash,
+            user_id: self.user_id,
+            username: self.username.clone(),
+            global_name: self.global_name.clone(),
+            avatar_url: self.avatar_url.clone(),
+            guild_id: self.guild_id,
+            launch_channel_id: self.launch_channel_id,
+            created_at: self.created_at,
+            expires_at: self.expires_at,
+        }
+    }
+
+    fn from_row(r: PanelSessionRow) -> Self {
+        Self {
+            user_id: r.user_id,
+            username: r.username,
+            global_name: r.global_name,
+            avatar_url: r.avatar_url,
+            guild_id: r.guild_id,
+            launch_channel_id: r.launch_channel_id,
+            created_at: r.created_at,
+            expires_at: r.expires_at,
+        }
     }
 }
 
 pub struct Sessions {
+    /// Token hash -> session.
     map: DashMap<String, Arc<Session>>,
+    store: Store,
     ttl: Duration,
     max: usize,
 }
 
 impl Sessions {
-    pub fn new(ttl: Duration, max: usize) -> Self {
+    pub fn new(store: Store, ttl: Duration, max: usize) -> Self {
         Self {
             map: DashMap::new(),
+            store,
             ttl,
             max: max.max(1),
         }
     }
 
-    /// Store a session and return its token.
-    pub fn create(&self, mut session: Session) -> String {
+    /// Store a session (memory and SQLite) and return its token.
+    pub async fn create(&self, mut session: Session) -> String {
+        let now = now_secs();
+        session.created_at = now;
+        session.expires_at = now + self.ttl.as_secs() as i64;
+        let token = new_token();
+        let hash = hash_token(&token);
+        if let Err(e) = self.store.put_panel_session(&session.to_row(hash.clone())).await {
+            warn!(error = %e, "could not persist a panel session; it lasts until the next restart");
+        }
+        self.remember(hash, Arc::new(session));
+        token
+    }
+
+    /// The live session of a token: memory first, then SQLite (after a restart or an eviction).
+    pub async fn get(&self, token: &str) -> Option<Arc<Session>> {
+        if token.len() != 64 {
+            return None;
+        }
+        let hash = hash_token(token);
+        let cached = self.map.get(&hash).map(|s| s.clone());
+        if let Some(s) = cached {
+            if s.expired() {
+                self.map.remove(&hash);
+                let _ = self.store.delete_panel_session(&hash).await;
+                return None;
+            }
+            return Some(s);
+        }
+        let row = match self.store.panel_session(&hash).await {
+            Ok(r) => r?,
+            Err(e) => {
+                warn!(error = %e, "could not read a panel session");
+                return None;
+            }
+        };
+        let s = Arc::new(Session::from_row(row));
+        if s.expired() {
+            return None;
+        }
+        self.remember(hash, s.clone());
+        Some(s)
+    }
+
+    fn remember(&self, hash: String, session: Arc<Session>) {
         if self.map.len() >= self.max {
             self.sweep();
             if self.map.len() >= self.max {
-                // Still full of live sessions: drop the ones closest to expiry.
-                let mut all: Vec<(String, Instant)> = self.map.iter().map(|e| (e.key().clone(), e.expires)).collect();
+                // Still full of live sessions: forget the ones closest to expiry (they stay in SQLite).
+                let mut all: Vec<(String, i64)> = self.map.iter().map(|e| (e.key().clone(), e.expires_at)).collect();
                 all.sort_by_key(|(_, at)| *at);
                 for (k, _) in all.into_iter().take(self.max / 10 + 1) {
                     self.map.remove(&k);
                 }
             }
         }
-        session.expires = Instant::now() + self.ttl;
-        let token = new_token();
-        self.map.insert(token.clone(), Arc::new(session));
-        token
+        self.map.insert(hash, session);
     }
 
-    pub fn get(&self, token: &str) -> Option<Arc<Session>> {
-        if token.len() != 64 {
-            return None;
-        }
-        let s = self.map.get(token)?.clone();
-        if s.expired() {
-            self.map.remove(token);
-            return None;
-        }
-        Some(s)
-    }
-
+    /// Drop expired sessions from memory (SQLite rows go in the store maintenance sweep).
     pub fn sweep(&self) -> usize {
         let before = self.map.len();
         self.map.retain(|_, s| !s.expired());
@@ -91,15 +160,24 @@ impl Sessions {
     }
 }
 
+/// SHA-256 of a token, hex encoded: the only form a token is stored in.
+pub fn hash_token(token: &str) -> String {
+    hex(&Sha256::digest(token.as_bytes()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
 /// 32 random bytes from the OS, hex encoded.
 fn new_token() -> String {
     let mut buf = [0u8; 32];
     getrandom::fill(&mut buf).expect("OS random source");
-    let mut out = String::with_capacity(64);
-    for b in buf {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out
+    hex(&buf)
 }
 
 /// Bounded map whose entries expire. When full it drops expired entries, then everything.
@@ -195,27 +273,38 @@ mod tests {
             global_name: None,
             avatar_url: None,
             guild_id: Some(2),
-            channel_id: None,
-            expires: Instant::now(),
+            launch_channel_id: None,
+            created_at: 0,
+            expires_at: 0,
         }
     }
 
-    #[test]
-    fn sessions_expire_and_stay_bounded() {
-        let s = Sessions::new(Duration::from_secs(60), 3);
-        let t = s.create(session());
+    #[tokio::test]
+    async fn sessions_expire_and_stay_bounded() {
+        let store = Store::open_in_memory().await.unwrap();
+        let s = Sessions::new(store.clone(), Duration::from_secs(60), 3);
+        let t = s.create(session()).await;
         assert_eq!(t.len(), 64);
-        assert!(s.get(&t).is_some());
-        assert!(s.get("nope").is_none());
+        assert!(s.get(&t).await.is_some());
+        assert!(s.get("nope").await.is_none());
         for _ in 0..10 {
-            s.create(session());
+            s.create(session()).await;
         }
         assert!(s.len() <= 3);
+        assert!(s.get(&t).await.is_some(), "evicted from memory, still in SQLite");
 
-        let expired = Sessions::new(Duration::ZERO, 10);
-        let t = expired.create(session());
-        assert!(expired.get(&t).is_none());
+        let expired = Sessions::new(store, Duration::ZERO, 10);
+        let t = expired.create(session()).await;
+        assert!(expired.get(&t).await.is_none());
         assert_eq!(expired.len(), 0, "an expired session is dropped on access");
+    }
+
+    #[test]
+    fn token_hash_is_sha256_hex() {
+        assert_eq!(
+            hash_token("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]

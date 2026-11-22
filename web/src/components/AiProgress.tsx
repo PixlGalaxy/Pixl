@@ -54,7 +54,7 @@ export function AiProgress({ embedded }: { embedded?: boolean }) {
                   {done ? (
                     <Check size={14} className="text-emerald-500" />
                   ) : active ? (
-                    <Spinner size={14} className="text-sky-500" />
+                    <Spinner size={14} className="text-accent-500" />
                   ) : (
                     <Circle size={6} className="fill-current text-line" />
                   )}

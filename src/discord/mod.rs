@@ -268,6 +268,7 @@ impl EventHandler for Handler {
         if old.is_some() && old_channel == new_channel {
             return; // mute / deafen / stream change
         }
+        lynx.bots.voice_moved(g, user);
         let targets = if old.is_none() {
             lynx.players.in_guild(g)
         } else {

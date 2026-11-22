@@ -269,13 +269,36 @@ pub fn escape(s: &str) -> String {
     out
 }
 
-/// `[title](<url>)` with escaping; plain escaped title when the URL is not http(s).
+/// Make text safe inside a masked link label `[label](url)` without backslashes: Discord shows
+/// backslash escapes literally there. Brackets become parentheses (parentheses are fine inside a
+/// label), markdown characters become look-alikes, and `@` gets a zero-width space so `@everyone`
+/// never reads as a mention.
+pub fn link_label(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '[' => out.push('('),
+            ']' => out.push(')'),
+            '\\' => out.push('\u{29F5}'), // reverse solidus operator
+            '*' => out.push('\u{2217}'),  // asterisk operator
+            '_' => out.push('\u{02CD}'),  // modifier letter low macron
+            '~' => out.push('\u{223C}'),  // tilde operator
+            '`' => out.push('\u{02CB}'),  // modifier letter grave accent
+            '|' => out.push('\u{01C0}'),  // latin letter dental click
+            '@' => out.push_str("@\u{200B}"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `[title](<url>)` with a safe label; plain escaped title when the URL is not http(s).
 pub fn link(title: &str, url: &str) -> String {
-    let title = escape(&truncate(title, 200));
+    let title = truncate(title, 200);
     if url.starts_with("https://") || url.starts_with("http://") {
-        format!("[{title}](<{}>)", url.replace('>', "%3E"))
+        format!("[{}](<{}>)", link_label(&title), url.replace('>', "%3E"))
     } else {
-        title
+        escape(&title)
     }
 }
 
@@ -368,10 +391,50 @@ mod tests {
         assert_eq!(escape("a*b_[c]"), "a\\*b\\_\\[c\\]");
         assert_eq!(link("T", "https://y/z"), "[T](<https://y/z>)");
         assert_eq!(link("T", "ftp://y"), "T");
+        assert_eq!(link("a*b", "ftp://y"), "a\\*b", "plain text keeps backslash escapes");
         assert_eq!(truncate("abcdef", 5), "ab...");
         assert_eq!(truncate("abc", 5), "abc");
         assert_eq!(relative_time(5), "<t:5:R>");
         let ac = autocomplete_callback(&[("n".into(), "v".into()), ("n2".into(), "x".repeat(101))]);
         assert_eq!(ac["data"]["choices"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn link_labels_never_contain_backslashes() {
+        let url = "https://youtu.be/x";
+        assert_eq!(
+            link("Taking over (Synchronice Remix) [feat. Cassandra Kay]", url),
+            "[Taking over (Synchronice Remix) (feat. Cassandra Kay)](<https://youtu.be/x>)"
+        );
+        assert_eq!(
+            link("Live]Set", url),
+            "[Live)Set](<https://youtu.be/x>)",
+            "] cannot end the label"
+        );
+        assert_eq!(link("[Intro]", url), "[(Intro)](<https://youtu.be/x>)");
+        assert_eq!(
+            link("Hello *World*", url),
+            "[Hello \u{2217}World\u{2217}](<https://youtu.be/x>)"
+        );
+        assert_eq!(
+            link("my_song_name", url),
+            "[my\u{02CD}song\u{02CD}name](<https://youtu.be/x>)"
+        );
+        assert_eq!(link("a ~~b~~ `c` ||d||", url), "[a \u{223C}\u{223C}b\u{223C}\u{223C} \u{02CB}c\u{02CB} \u{01C0}\u{01C0}d\u{01C0}\u{01C0}](<https://youtu.be/x>)");
+        assert_eq!(
+            link("@everyone hi", url),
+            "[@\u{200B}everyone hi](<https://youtu.be/x>)"
+        );
+        assert_eq!(link("AC\\DC", url), "[AC\u{29F5}DC](<https://youtu.be/x>)");
+        for title in [
+            "Taking over (Synchronice Remix) [feat. Cassandra Kay]",
+            "a]b",
+            "*_~`|>\\[]()",
+        ] {
+            let out = link(title, url);
+            assert!(!out.contains('\\'), "{out}");
+            let label = &out[1..out.rfind("](<").unwrap()];
+            assert!(!label.contains('[') && !label.contains(']'), "{out}");
+        }
     }
 }

@@ -1,19 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, BACKEND, getSession } from './api'
-import type { AiState, GuildSettings, Permissions, PlayerState, ServerMessage } from './types'
+import { useLayoutMode } from './layout'
+import type { AiState, ChannelRef, GuildSettings, Permissions, PlayerState, ServerMessage } from './types'
 
 const PING_MS = 25_000
 const POLL_MS = 5_000
-/** Cap for `now - positionAt` when a sample arrives, so client/server clock skew can't run the bar away. */
-const MAX_SAMPLE_AGE_MS = 5_000
+/** Cap for the age of a sample measured with the local clock (client/server skew can't run the bar away). */
+const MAX_LOCAL_AGE_MS = 5_000
+/** Cap for the age measured on the server clock (`serverNow - positionAt`, no skew involved). */
+const MAX_SERVER_AGE_MS = 60_000
 
-/** Position sample anchored to the local clock at the moment it arrived. */
-export type PositionAnchor = { positionMs: number; localAt: number }
+/**
+ * The one position sample everything derives from: `positionMs` at `at` (`performance.now()`, a
+ * monotonic clock that keeps counting while the panel is hidden or in picture-in-picture). The
+ * position is always `positionMs + (performance.now() - at)` while playing, never accumulated ticks.
+ */
+export type PositionAnchor = { positionMs: number; at: number }
 
-function anchorFrom(positionMs: number, positionAt: number): PositionAnchor {
-  const now = Date.now()
-  const age = Math.min(Math.max(now - positionAt, 0), MAX_SAMPLE_AGE_MS)
-  return { positionMs: positionMs + age, localAt: now }
+/**
+ * Anchor from a server sample. The sample's age comes from the server's own clock (`serverNow`) when
+ * the message has it, so a skewed client clock does not matter; otherwise from the local clock, capped.
+ */
+export function anchorFrom(positionMs: number, positionAt: number, serverNow?: number): PositionAnchor {
+  const age =
+    serverNow != null
+      ? Math.min(Math.max(serverNow - positionAt, 0), MAX_SERVER_AGE_MS)
+      : Math.min(Math.max(Date.now() - positionAt, 0), MAX_LOCAL_AGE_MS)
+  return { positionMs: positionMs + age, at: performance.now() }
+}
+
+/** Anchor for a position the user just picked (seek), before the server confirms it. */
+export function localAnchor(positionMs: number): PositionAnchor {
+  return { positionMs, at: performance.now() }
 }
 
 type Handlers = {
@@ -22,39 +40,44 @@ type Handlers = {
 }
 
 /**
- * Live player state: WebSocket (`/ws`) with a 5 s `GET /api/player` poll while the socket is down
- * and the panel is visible.
+ * Live player state of the voice channel the user is in. The server decides that channel: the
+ * socket (`/ws`) pushes `channel` when the user joins, leaves or moves, then the new `state`. While
+ * the socket is down and the panel is visible, a 5 s poll of `GET /api/me/channel` + `GET /api/player`
+ * does the same. A socket that cannot open (refused session) triggers a request, which renews the
+ * session silently, and the next attempt uses the new one.
  */
-export function useLivePlayer(channelId: string | null, handlers: Handlers) {
+export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handlers) {
   const [state, setState] = useState<PlayerState | null>(null)
-  const [anchor, setAnchor] = useState<PositionAnchor>({ positionMs: 0, localAt: Date.now() })
+  const [channel, setChannel] = useState<ChannelRef | null>(initialChannel)
+  const [anchor, setAnchor] = useState<PositionAnchor>(() => localAnchor(0))
   const [loaded, setLoaded] = useState(false)
   const [socketOpen, setSocketOpen] = useState(false)
   const handlersRef = useRef(handlers)
   handlersRef.current = handlers
 
-  const applyState = useCallback((next: PlayerState | null) => {
+  const applyState = useCallback((next: PlayerState | null, serverNow?: number) => {
     setState(next)
     setLoaded(true)
-    if (next) setAnchor(anchorFrom(next.positionMs, next.positionAt))
+    if (next) setAnchor(anchorFrom(next.positionMs, next.positionAt, serverNow ?? next.serverNow))
+  }, [])
+
+  const applyChannel = useCallback((next: ChannelRef | null) => {
+    setChannel((prev) => (prev?.id === next?.id && prev?.name === next?.name ? prev : next))
   }, [])
 
   const refresh = useCallback(async () => {
-    if (!channelId) {
-      applyState(null)
-      return
-    }
     try {
-      applyState(await api.player(channelId))
+      const { channel: now } = await api.meChannel()
+      applyChannel(now)
+      applyState(now ? await api.player(now.id) : null)
     } catch (error) {
       console.warn('[lynx] player refresh failed', error)
       setLoaded(true)
     }
-  }, [channelId, applyState])
+  }, [applyChannel, applyState])
 
-  // WebSocket with reconnect backoff.
+  // WebSocket with reconnect backoff. One socket for the whole session: the server switches channels.
   useEffect(() => {
-    if (!channelId) return
     let ws: WebSocket | null = null
     let ping: ReturnType<typeof setInterval> | undefined
     let retry: ReturnType<typeof setTimeout> | undefined
@@ -65,7 +88,8 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
       const session = getSession()
       if (!session || closed) return
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const params = new URLSearchParams({ session, channelId })
+      const params = new URLSearchParams({ session })
+      let opened = false
       try {
         ws = new WebSocket(`${proto}://${location.host}${BACKEND}/ws?${params}`)
       } catch {
@@ -73,6 +97,7 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
         return
       }
       ws.onopen = () => {
+        opened = true
         attempts = 0
         setSocketOpen(true)
         ping = setInterval(() => ws?.readyState === WebSocket.OPEN && ws.send('{"type":"ping"}'), PING_MS)
@@ -85,11 +110,14 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
           return
         }
         switch (msg.type) {
+          case 'channel':
+            applyChannel(msg.channel)
+            break
           case 'state':
-            applyState(msg.state)
+            applyState(msg.state, msg.serverNow)
             break
           case 'position':
-            setAnchor(anchorFrom(msg.positionMs, msg.positionAt))
+            setAnchor(anchorFrom(msg.positionMs, msg.positionAt, msg.serverNow))
             setState((s) => (s ? { ...s, positionMs: msg.positionMs, positionAt: msg.positionAt } : s))
             break
           case 'ai':
@@ -106,6 +134,9 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
       ws.onclose = () => {
         setSocketOpen(false)
         clearInterval(ping)
+        // The handshake failed (the browser hides the status): a plain request finds out whether the
+        // session was refused and renews it, so the next attempt carries the new one.
+        if (!opened) void refresh()
         schedule()
       }
     }
@@ -126,40 +157,66 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
       }
       setSocketOpen(false)
     }
-  }, [channelId, applyState])
+  }, [applyChannel, applyState, refresh])
 
-  // Initial load + polling fallback while the socket is down and the panel is visible.
+  // Fresh state (and a fresh position anchor) on load and whenever Discord switches between the
+  // focused panel and picture-in-picture / grid: timers are throttled while minimized. A socket
+  // (re)connect needs nothing here, the server sends the full state on connect.
+  const layout = useLayoutMode()
   useEffect(() => {
     void refresh()
+  }, [refresh, layout])
+  // Coming back to a hidden panel: same.
+  useEffect(() => {
+    const onVisible = () => document.visibilityState === 'visible' && void refresh()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
   }, [refresh])
+  // Polling fallback while the socket is down and the panel is visible.
   useEffect(() => {
     if (socketOpen) return
     const id = setInterval(() => {
       if (document.visibilityState === 'visible') void refresh()
     }, POLL_MS)
-    const onVisible = () => document.visibilityState === 'visible' && void refresh()
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      clearInterval(id)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
+    return () => clearInterval(id)
   }, [socketOpen, refresh])
 
-  return { state, setState, anchor, setAnchor, loaded, socketOpen, refresh }
+  return { state, setState, channel, anchor, setAnchor, loaded, socketOpen, refresh }
 }
 
-/** Interpolated playback position, re-rendering ~4 times a second while playing. */
+/** Pure: the position an anchor stands for at `now` (`performance.now()` time). */
+export function positionAt(anchor: PositionAnchor, playing: boolean, now: number): number {
+  return anchor.positionMs + (playing ? Math.max(0, now - anchor.at) : 0)
+}
+
+/**
+ * Interpolated playback position, recomputed from the anchor on every render. While playing it
+ * re-renders on animation frames (about 10 per second), plus a 1 s timer because frames stop while
+ * the panel is hidden or throttled in picture-in-picture.
+ */
 export function usePosition(state: PlayerState | null, anchor: PositionAnchor): number {
   const playing = state?.status === 'playing'
-  const [now, setNow] = useState(() => Date.now())
+  const [, setTick] = useState(0)
   useEffect(() => {
     if (!playing) return
-    const id = setInterval(() => setNow(Date.now()), 250)
-    return () => clearInterval(id)
+    let raf = 0
+    let last = 0
+    const frame = (t: number) => {
+      if (t - last >= 100) {
+        last = t
+        setTick((n) => n + 1)
+      }
+      raf = requestAnimationFrame(frame)
+    }
+    raf = requestAnimationFrame(frame)
+    const id = setInterval(() => setTick((n) => n + 1), 1000)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearInterval(id)
+    }
   }, [playing])
   if (!state?.current) return 0
-  const elapsed = playing ? Math.max(0, now - anchor.localAt) : 0
-  const pos = anchor.positionMs + elapsed
+  const pos = positionAt(anchor, playing, performance.now())
   const dur = state.current.durationMs
   return dur != null ? Math.min(pos, dur) : pos
 }

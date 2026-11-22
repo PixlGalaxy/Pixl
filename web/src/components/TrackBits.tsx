@@ -6,7 +6,7 @@ import { Tag } from './ui'
 export function TrackReasonLine({ reason, compact }: { reason: TrackReason; compact?: boolean }) {
   const { t } = useTranslation()
   const text = t(`reason.${reason.key}`, { ...reason.params, defaultValue: t('reason.fallback') })
-  if (compact) return <span className="truncate text-xs text-sky-600 dark:text-sky-400">{text}</span>
+  if (compact) return <span className="truncate text-xs text-accent-600 dark:text-accent-400">{text}</span>
   return (
     <div className="flex min-w-0 items-center gap-2 text-xs">
       <Tag tone="sky">{t('reason.tag')}</Tag>

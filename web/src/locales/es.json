@@ -17,7 +17,7 @@
     "rate_limited": "Ve un poco más despacio y vuelve a intentarlo.",
     "bot_unavailable": "Ahora mismo no hay ningún bot de Lynx libre para este canal.",
     "invalid": "La petición no es válida.",
-    "history_disabled": "Activa tu historial en Privacidad para usar esto.",
+    "history_disabled": "Activa tu historial de escucha en tu cuenta (arriba a la derecha) para usar esto.",
     "channel_not_allowed": "Lynx no está permitido en este canal.",
     "unavailable": "Eso no está disponible ahora."
   },
@@ -42,6 +42,12 @@
     "expiredTitle": "Tu sesión terminó",
     "expiredBody": "Vuelve a iniciar sesión para seguir usando el panel."
   },
+  "noVoice": {
+    "title": "Entra a un canal de voz para ver y controlar la música",
+    "body": "El panel sigue el canal de voz en el que estás.",
+    "hint": "En cuanto entres a un canal de voz de este servidor, su reproductor aparece aquí. Si cambias de canal, el panel te acompaña.",
+    "pip": "Entra a un canal de voz para controlar la música."
+  },
   "topbar": {
     "language": "Idioma",
     "lightTheme": "Tema claro",
@@ -54,7 +60,6 @@
     "lyrics": "Letra",
     "radio": "Radio",
     "settings": "Ajustes",
-    "privacy": "Privacidad",
     "help": "Ayuda"
   },
   "player": {
@@ -301,12 +306,12 @@
         "body": "Solo para los managers del servidor: modo de control, lista de DJs, votar para saltar, límite de la cola y volumen por defecto."
       },
       "privacy": {
-        "title": "Privacidad",
-        "body": "Activa o desactiva tu historial, mira tus géneros y canciones principales y borra tus datos."
+        "title": "Cuenta",
+        "body": "El botón redondo con tu foto, arriba a la derecha: tema y color de acento, idioma, tu historial y tus gustos, y borrar tus datos."
       },
       "language": {
         "title": "Idioma",
-        "body": "El selector de arriba cambia el idioma del panel solo para ti. Los mensajes del bot en el canal siguen en el idioma del servidor."
+        "body": "Cámbialo en tu cuenta (arriba a la derecha). Solo cambia el idioma del panel para ti. Los mensajes del bot en el canal siguen en el idioma del servidor."
       }
     },
     "seekNote": "Ir a un punto de la canción solo se puede aquí, con el slider. No hay comando para eso.",
@@ -415,5 +420,96 @@
       "support": "Soporte"
     },
     "developedBy": "Desarrollado por"
+  },
+  "support": {
+    "eyebrow": "Una nota de Pixl",
+    "title": "¡Gracias por usar Lynx!",
+    "body": "Lynx es gratis y de código abierto. Si hace tus sesiones de música un poco mejores, considera dejar una estrella en GitHub: ayuda mucho a que el proyecto crezca. Las ideas, los reportes de errores y los pull requests también son siempre bienvenidos.",
+    "star": "Estrella en GitHub",
+    "contribute": "Contribuir",
+    "imageAlt": "PixlGalaxy en la computadora"
+  },
+  "account": {
+    "open": "Tu cuenta",
+    "title": "Cuenta",
+    "close": "Cerrar",
+    "server": "En {{name}}",
+    "appearance": "Apariencia",
+    "themeMode": "Tema",
+    "mode": {
+      "light": "Claro",
+      "dark": "Oscuro",
+      "system": "Sistema"
+    },
+    "accent": "Color de acento",
+    "accents": {
+      "sky": "Cielo",
+      "indigo": "Índigo",
+      "ocean": "Océano",
+      "sunset": "Atardecer",
+      "forest": "Bosque",
+      "grape": "Uva",
+      "crimson": "Carmesí",
+      "solar": "Solar",
+      "mint": "Menta",
+      "blossom": "Flor",
+      "ares": "Ares",
+      "poseidon": "Poseidón",
+      "zeus": "Zeus",
+      "jade": "Jade",
+      "verdigris": "Verdín",
+      "nebula": "Nebulosa",
+      "sakura": "Sakura",
+      "slate": "Pizarra",
+      "mono": "Mono",
+      "graphite": "Grafito",
+      "ash": "Ceniza",
+      "terracotta": "Terracota",
+      "olive": "Oliva",
+      "maroon": "Granate"
+    },
+    "language": "Idioma",
+    "privacy": "Privacidad",
+    "stored": {
+      "title": "Qué se guarda",
+      "items": [
+        "Las últimas 2000 canciones distintas que pediste: título, artista, enlace, cuántas veces sonó cada una y cuándo sonó por última vez.",
+        "Tus votos de Me gusta y No me gusta."
+      ]
+    },
+    "used": {
+      "title": "Para qué se usa",
+      "items": [
+        "Tu radio con IA y tus gustos por género.",
+        "Encontrar oyentes con gustos parecidos en otros servidores, de forma anónima.",
+        "Nunca se muestra a otros usuarios."
+      ]
+    },
+    "off": {
+      "title": "Si lo desactivas",
+      "items": [
+        "No se guarda nada nuevo.",
+        "Me gusta, No me gusta y /ai se desactivan para ti.",
+        "Quedas fuera de las recomendaciones de los demás."
+      ]
+    },
+    "links": {
+      "privacy": "Política de privacidad",
+      "terms": "Términos del servicio"
+    },
+    "danger": {
+      "title": "Zona de peligro",
+      "body": "Se borra al instante y no se puede deshacer. Esto elimina:",
+      "items": [
+        "Tu historial de escucha (cada canción, cuántas veces sonó y cuándo).",
+        "Tus votos de Me gusta y No me gusta.",
+        "Tu perfil de gustos (géneros y datos de la radio).",
+        "Tus vínculos de similitud con otros oyentes, en ambos sentidos."
+      ],
+      "itemsNoAi": [
+        "Todo lo que Lynx guardó sobre lo que escuchas."
+      ],
+      "kept": "Se conservan tus ajustes del panel (idioma, tema, acento y el interruptor del historial)."
+    }
   }
 }
