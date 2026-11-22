@@ -6,6 +6,7 @@
 
 #![allow(dead_code)]
 
+pub mod apple;
 pub mod counterpart;
 pub mod detect;
 pub mod fallback;
@@ -56,7 +57,15 @@ pub enum TrackOrigin {
     Youtube,
     YoutubeMusic,
     Spotify,
+    AppleMusic,
     Other,
+}
+
+impl TrackOrigin {
+    /// Song catalogs whose metadata is clean and that need a YouTube match before playing.
+    pub fn is_catalog(self) -> bool {
+        matches!(self, Self::Spotify | Self::AppleMusic)
+    }
 }
 
 /// Metadata for one queue entry. Spotify entries may not have a YouTube match yet (`youtube_id == None`):
@@ -204,6 +213,7 @@ struct Inner {
     yt: youtube::YouTube,
     ytdlp: ytdlp::Ytdlp,
     spotify: Option<spotify::Spotify>,
+    apple: apple::Apple,
     lrclib: lyrics::Lrclib,
     music_lookups: Semaphore,
     /// Original video id -> substitute that played (see `invalidate_stream`).
@@ -237,6 +247,7 @@ impl Sources {
                 )
                 .with_limit_rate(config.ytdlp_limit_rate.clone()),
                 spotify,
+                apple: apple::Apple::new(http.clone()),
                 lrclib: lyrics::Lrclib::new(http.clone()),
                 music_lookups: Semaphore::new(MUSIC_LOOKUPS),
                 substitutes: Mutex::new(HashMap::new()),
@@ -312,6 +323,20 @@ impl Sources {
                 }
                 Ok(Resolved { tracks: c.tracks, playlist_name: c.name })
             }
+            Input::AppleSong { country, id } => {
+                Ok(single(self.inner.apple.song(&self.inner.store, self.inner.ttl, &country, &id).await?))
+            }
+            Input::AppleAlbum { country, id } => {
+                let c = self.inner.apple.album(&self.inner.store, self.inner.ttl, &country, &id, limit).await?;
+                Ok(Resolved { tracks: c.tracks, playlist_name: c.name })
+            }
+            Input::ApplePlaylist { country, id } => {
+                let c = self.inner.apple.playlist(&self.inner.store, self.inner.ttl, &country, &id, limit).await?;
+                Ok(Resolved { tracks: c.tracks, playlist_name: c.name })
+            }
+            Input::AppleUnsupported(_) => Err(SourceError::Unsupported(
+                "Only Apple Music songs, albums and playlists can be played".into(),
+            )),
             Input::SpotifyUnsupported(_) | Input::SpotifyShortLink(_) => Err(SourceError::Unsupported(
                 "Only Spotify tracks, albums and playlists can be played".into(),
             )),
@@ -343,9 +368,9 @@ impl Sources {
         }
     }
 
-    /// Spotify -> YouTube match (cached). No-op for tracks that already have a video id.
+    /// Spotify / Apple Music -> YouTube match (cached). No-op for tracks that already have a video id.
     pub async fn ensure_youtube(&self, track: &TrackInfo) -> SourceResult<TrackInfo> {
-        if track.youtube_id.is_some() || track.origin != TrackOrigin::Spotify {
+        if track.youtube_id.is_some() || !track.origin.is_catalog() {
             return Ok(track.clone());
         }
         matcher::find(&self.inner.yt, &self.inner.store, self.inner.ttl, track).await
@@ -723,6 +748,28 @@ mod tests {
         assert_eq!(cached, Some(None));
 
         s.stream_dirs().remove_channel(10, 20).await;
+        store.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sources_apple_resolve_and_match() {
+        let dir = std::env::temp_dir().join(format!("lynx-apple-e2e-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = config(dir.clone());
+        let store = Store::open(&cfg.database_path()).await.unwrap();
+        let s = Sources::new(&cfg, store.clone(), ProcessRegistry::new()).unwrap();
+        let owner = ProcOwner::new(10, 20, None);
+        let r = s.resolve("https://music.apple.com/us/album/moscow-mule/1622045624?i=1622045625", 1, &owner).await.unwrap();
+        let t = &r.tracks[0];
+        assert_eq!(t.origin, TrackOrigin::AppleMusic);
+        assert!(t.youtube_id.is_none());
+        let m = s.ensure_youtube(t).await.unwrap();
+        println!("apple match: {} -> {:?}", m.title, m.youtube_id);
+        assert!(m.youtube_id.is_some());
+        let r = s.resolve("https://music.apple.com/us/album/un-verano-sin-ti/1622045624", 5, &owner).await.unwrap();
+        assert_eq!((r.playlist_name.as_deref(), r.tracks.len()), (Some("Un Verano Sin Ti"), 5));
         store.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }

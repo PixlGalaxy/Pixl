@@ -101,7 +101,7 @@ fn readings(track: &TrackInfo, panel: Option<&PanelVideo>) -> Vec<TrackInfo> {
     if let Some(m) = &track.music {
         out.push(base(&m.title, m.artists.clone(), None));
     }
-    if matches!(track.origin, TrackOrigin::Spotify | TrackOrigin::YoutubeMusic) && track.music.is_none() {
+    if (track.origin.is_catalog() || track.origin == TrackOrigin::YoutubeMusic) && track.music.is_none() {
         out.push(base(&track.title, track.artists.clone(), None));
     }
     if let Some(p) = panel.filter(|p| !p.artists.is_empty() && !p.title.is_empty()) {

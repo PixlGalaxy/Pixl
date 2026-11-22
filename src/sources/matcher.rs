@@ -243,6 +243,7 @@ pub fn cache_key(src: &TrackInfo) -> Option<String> {
         .as_ref()
         .map(|i| format!("isrc:{}", i.to_ascii_uppercase()))
         .or_else(|| src.spotify_id.as_ref().map(|i| format!("sp:{i}")))
+        .or_else(|| (src.origin == TrackOrigin::AppleMusic && !src.url.is_empty()).then(|| format!("am:{}", src.url)))
 }
 
 /// Find the YouTube video for a Spotify track. Returns the source track with `youtube_id` set.

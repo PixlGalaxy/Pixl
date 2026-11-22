@@ -171,7 +171,7 @@ pub fn added_list(v: &AddedList, i18n: &I18n) -> Message {
         TrackOrigin::Spotify => i18n.t("bot.added.source_spotify", &[]),
         TrackOrigin::Youtube => i18n.t("bot.added.source_youtube", &[]),
         TrackOrigin::YoutubeMusic => i18n.t("bot.added.source_youtube_music", &[]),
-        TrackOrigin::Other => i18n.t("bot.added.source_other", &[]),
+        TrackOrigin::AppleMusic | TrackOrigin::Other => i18n.t("bot.added.source_other", &[]),
     };
     let mut meta = vec![source];
     if v.total_ms > 0 {

@@ -17,6 +17,13 @@ pub enum Input {
     SpotifyShortLink(String),
     /// Spotify URL of a kind we cannot play (artist, show, episode...).
     SpotifyUnsupported(String),
+    /// Apple Music song (`/song/...` or `/album/...?i=<track>`), with its storefront.
+    AppleSong { country: String, id: String },
+    AppleAlbum { country: String, id: String },
+    /// Public playlist (`pl.…`).
+    ApplePlaylist { country: String, id: String },
+    /// Apple Music URL of a kind we cannot play (artist, station...).
+    AppleUnsupported(String),
     Url(String),
     Search(String),
 }
@@ -36,6 +43,7 @@ pub fn detect(raw: &str) -> Input {
         }
         "open.spotify.com" | "play.spotify.com" => spotify(&url),
         "spotify.link" | "spoti.fi" => Input::SpotifyShortLink(url.to_string()),
+        "music.apple.com" | "geo.music.apple.com" => apple(&url),
         _ => Input::Url(url.to_string()),
     }
 }
@@ -123,6 +131,31 @@ fn spotify(url: &Url) -> Input {
         [kind, id, ..] => spotify_kind(kind, id).unwrap_or_else(|| Input::SpotifyUnsupported(url.to_string())),
         _ => Input::SpotifyUnsupported(url.to_string()),
     }
+}
+
+fn apple(url: &Url) -> Input {
+    let segs: Vec<&str> = url.path_segments().map(|s| s.filter(|p| !p.is_empty()).collect()).unwrap_or_default();
+    // Optional storefront first: /us/album/..., /album/...
+    let (country, rest) = match segs.split_first() {
+        Some((cc, rest)) if cc.len() == 2 && cc.chars().all(|c| c.is_ascii_alphabetic()) => {
+            (cc.to_ascii_lowercase(), rest.to_vec())
+        }
+        _ => ("us".to_owned(), segs.clone()),
+    };
+    let numeric = |s: &&str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    let last = rest.last().copied().unwrap_or("");
+    let found = match rest.first().copied() {
+        Some("song") if rest.len() >= 2 && numeric(&last) => Some(Input::AppleSong { country, id: last.to_owned() }),
+        Some("album") if rest.len() >= 2 && numeric(&last) => match query(url, "i").filter(|i| numeric(&i.as_str())) {
+            Some(track) => Some(Input::AppleSong { country, id: track }),
+            None => Some(Input::AppleAlbum { country, id: last.to_owned() }),
+        },
+        Some("playlist") if rest.len() >= 2 && last.starts_with("pl.") && is_playlist_id(&last.replace('.', "")) => {
+            Some(Input::ApplePlaylist { country, id: last.to_owned() })
+        }
+        _ => None,
+    };
+    found.unwrap_or_else(|| Input::AppleUnsupported(url.to_string()))
 }
 
 fn spotify_uri(rest: &str) -> Option<Input> {
@@ -244,6 +277,35 @@ mod tests {
         assert!(matches!(detect(&format!("https://open.spotify.com/artist/{id}")), Input::SpotifyUnsupported(_)));
         assert!(matches!(detect("spotify:track:bad"), Input::SpotifyUnsupported(_)));
         assert!(matches!(detect("https://spotify.link/AbCdEf"), Input::SpotifyShortLink(_)));
+    }
+
+    #[test]
+    fn apple_music_urls() {
+        let song = |cc: &str, id: &str| Input::AppleSong { country: cc.into(), id: id.into() };
+        assert_eq!(detect("https://music.apple.com/us/song/moscow-mule/1622045625"), song("us", "1622045625"));
+        assert_eq!(detect("https://music.apple.com/song/1622045625"), song("us", "1622045625"));
+        assert_eq!(
+            detect("https://music.apple.com/mx/album/moscow-mule/1622045624?i=1622045625&uo=4"),
+            song("mx", "1622045625")
+        );
+        assert_eq!(
+            detect("https://music.apple.com/us/album/un-verano-sin-ti/1622045624"),
+            Input::AppleAlbum { country: "us".into(), id: "1622045624".into() }
+        );
+        assert_eq!(
+            detect("music.apple.com/ES/album/un-verano-sin-ti/1622045624?l=en"),
+            Input::AppleAlbum { country: "es".into(), id: "1622045624".into() }
+        );
+        assert_eq!(
+            detect("https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb"),
+            Input::ApplePlaylist { country: "us".into(), id: "pl.f4d106fed2bd41149aaacabb233eb5eb".into() }
+        );
+        assert_eq!(
+            detect("https://music.apple.com/gb/playlist/mine/pl.u-AkAmPlyUxKdxLv"),
+            Input::ApplePlaylist { country: "gb".into(), id: "pl.u-AkAmPlyUxKdxLv".into() }
+        );
+        assert!(matches!(detect("https://music.apple.com/us/artist/bad-bunny/1126808565"), Input::AppleUnsupported(_)));
+        assert!(matches!(detect("https://music.apple.com/us/album/x/notanumber"), Input::AppleUnsupported(_)));
     }
 
     #[test]

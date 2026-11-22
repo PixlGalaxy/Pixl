@@ -157,7 +157,7 @@ pub(crate) fn catalog_from_sqlite_row(row: &SqliteRow) -> Result<CatalogTrack> {
 /// sources with clean metadata (Spotify, YouTube Music), so a later raw YouTube title never
 /// replaces a clean one.
 pub(crate) async fn upsert_track(conn: &mut SqliteConnection, info: &TrackInfo) -> Result<TrackId> {
-    let clean = matches!(info.origin, TrackOrigin::Spotify | TrackOrigin::YoutubeMusic) || info.music.is_some();
+    let clean = info.origin.is_catalog() || info.origin == TrackOrigin::YoutubeMusic || info.music.is_some();
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO tracks (key, title, artists, url, duration_ms, isrc, info, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \

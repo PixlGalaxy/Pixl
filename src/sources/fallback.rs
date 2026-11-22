@@ -5,7 +5,7 @@
 
 use std::{collections::HashSet, future::Future};
 
-use super::{SourceError, SourceResult, StreamInfo, TrackInfo, TrackOrigin};
+use super::{SourceError, SourceResult, StreamInfo, TrackInfo};
 
 pub const CACHE_NS: &str = "yt_fallback";
 /// Alternative videos tried per track, on top of the original.
@@ -64,7 +64,7 @@ impl Step {
 /// Songs (YouTube Music results, Spotify matches) fall back to videos; pasted videos first to
 /// their YouTube Music song, then to another video.
 pub fn steps_for(track: &TrackInfo) -> &'static [Step] {
-    if track.origin == TrackOrigin::Spotify || track.is_music_song() {
+    if track.origin.is_catalog() || track.is_music_song() {
         &[Step::Video]
     } else {
         &[Step::MusicSong, Step::Video]
@@ -141,6 +141,7 @@ mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
     use super::*;
+    use crate::sources::TrackOrigin;
 
     fn stream(id: &str) -> StreamInfo {
         StreamInfo {
@@ -307,6 +308,8 @@ mod tests {
         let mut t = crate::store::test_util::track("orig");
         assert_eq!(steps_for(&t), VIDEO_STEPS);
         t.origin = TrackOrigin::Spotify;
+        assert_eq!(steps_for(&t), &[Step::Video]);
+        t.origin = TrackOrigin::AppleMusic;
         assert_eq!(steps_for(&t), &[Step::Video]);
     }
 }
