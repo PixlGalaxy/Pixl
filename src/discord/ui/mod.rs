@@ -32,7 +32,6 @@ pub mod callback {
 pub enum ButtonStyle {
     Primary = 1,
     Secondary = 2,
-    Success = 3,
     Danger = 4,
     Link = 5,
 }
@@ -210,6 +209,7 @@ impl Message {
     /// Body for `POST /channels/{id}/messages`, message edits and followups.
     /// Mentions never ping anyone (requester lines use `<@id>`).
     pub fn to_json(&self) -> Value {
+        debug_assert!(self.text_len() <= MAX_TEXT_TOTAL, "message text over the Discord limit");
         json!({
             "flags": self.flags(),
             "components": self.components.iter().map(Component::to_json).collect::<Vec<_>>(),

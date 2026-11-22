@@ -233,6 +233,55 @@ impl BotRegistry {
         }
     }
 
+    // ---- guild data from the main bot's cache ----------------------------------------------
+
+    /// Voice channel a user is in, from the main bot's cache.
+    pub fn user_voice_channel(&self, guild_id: u64, user_id: u64) -> Option<u64> {
+        let guild = self.main().cache.guild(GuildId::new(guild_id))?;
+        guild
+            .voice_states
+            .get(&UserId::new(user_id))?
+            .channel_id
+            .map(|c| c.get())
+    }
+
+    /// Humans (not bots) in a voice channel, from the main bot's cache.
+    pub fn humans_in(&self, guild_id: u64, channel_id: u64) -> HashSet<u64> {
+        let Some(guild) = self.main().cache.guild(GuildId::new(guild_id)) else {
+            return HashSet::new();
+        };
+        guild
+            .voice_states
+            .values()
+            .filter(|vs| vs.channel_id.map(|c| c.get()) == Some(channel_id))
+            .filter(|vs| {
+                let bot = vs
+                    .member
+                    .as_ref()
+                    .map(|m| m.user.bot)
+                    .or_else(|| guild.members.get(&vs.user_id).map(|m| m.user.bot))
+                    .unwrap_or(false);
+                !bot && !self.is_lynx_bot(vs.user_id.get())
+            })
+            .map(|vs| vs.user_id.get())
+            .collect()
+    }
+
+    pub fn guild_owner(&self, guild_id: u64) -> Option<u64> {
+        self.main()
+            .cache
+            .guild(GuildId::new(guild_id))
+            .map(|g| g.owner_id.get())
+    }
+
+    /// The voice channel still exists (main bot's cache).
+    pub fn channel_exists(&self, guild_id: u64, channel_id: u64) -> bool {
+        self.main()
+            .cache
+            .guild(GuildId::new(guild_id))
+            .is_some_and(|g| g.channels.contains_key(&ChannelId::new(channel_id)))
+    }
+
     // ---- presence ---------------------------------------------------------
 
     pub fn set_member(&self, guild_id: u64, index: usize, member: bool) {
@@ -364,7 +413,7 @@ pub fn assign(candidates: &[Candidate], channel_id: u64) -> Assignment {
     if let Some(c) = candidates.iter().filter(free).find(|c| c.can_play) {
         return Assignment::Free(c.index);
     }
-    if candidates.iter().filter(free).next().is_some() {
+    if candidates.iter().any(|c| free(&c)) {
         return Assignment::CannotJoin;
     }
     Assignment::Busy {

@@ -25,7 +25,8 @@ pub enum Action {
     },
     /// Like / Dislike the current track.
     Feedback,
-    /// Change guild settings and DJs.
+    /// Change guild settings and DJs (panel API).
+    #[allow(dead_code)]
     ManageSettings,
 }
 
@@ -56,6 +57,7 @@ pub enum Decision {
 }
 
 impl Decision {
+    #[allow(dead_code)]
     pub fn allowed(self) -> bool {
         matches!(self, Self::Allow)
     }
@@ -98,7 +100,8 @@ pub fn can(actor: &Actor, action: Action, settings: &GuildSettings) -> Decision 
     }
 }
 
-/// API `Permissions` object (panel).
+/// API `Permissions` object (panel API phase).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Permissions {
@@ -108,6 +111,7 @@ pub struct Permissions {
     pub can_add: bool,
 }
 
+#[allow(dead_code)]
 impl Permissions {
     pub fn of(actor: &Actor, settings: &GuildSettings) -> Self {
         Self {

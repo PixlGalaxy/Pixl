@@ -161,12 +161,9 @@ impl Queue {
         self.pos
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.current().is_none() && self.upcoming().is_empty()
-    }
-
-    pub fn upcoming_duration_ms(&self) -> u64 {
-        self.upcoming().iter().filter_map(|e| e.info.duration_ms).sum()
     }
 
     /// Append tracks, keeping at most `max` upcoming ones. Returns the 1-based upcoming position of
