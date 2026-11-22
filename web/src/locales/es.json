@@ -103,14 +103,26 @@
     "requestedBy": "La pidió {{name}}",
     "genres": "Géneros",
     "stop": "Parar",
-    "stopQuestion": "¿Parar y borrar la cola?"
+    "stopQuestion": "¿Parar y borrar la cola?",
+    "requestedByAi": "Pedida por {{name}} · Elegida por la IA"
   },
   "pip": {
     "label": "Lynx, reproductor compacto",
     "radio": "Radio: {{phase}}",
     "emptyCountdown": "Se vacía en",
     "emptyPaused": "Canal vacío",
-    "nothingHint": "Usa /play o abre el panel."
+    "nothingHint": "Usa /play o abre el panel.",
+    "noLyrics": "Esta canción no tiene letra.",
+    "lyricsPlain": "Sin letra sincronizada. Abre el panel para leerla.",
+    "lyricsError": "No se pudo cargar la letra.",
+    "upNextEmpty": "No hay nada después de esta canción.",
+    "more": "+{{count}} más",
+    "radioOn": "Radio activa · {{count}} añadidas",
+    "radioOff": "Radio apagada",
+    "radioOffHint": "Una mezcla sin fin según tus gustos.",
+    "radioNoPermission": "No puedes iniciar la radio aquí.",
+    "radioStart": "Iniciar",
+    "radioStop": "Parar"
   },
   "queue": {
     "upNext": "A continuación",
@@ -143,7 +155,9 @@
     "because_you_like": "Porque te gusta {{name}}",
     "similar_listeners": "Popular entre gente con tus gustos",
     "your_favorite": "Una de tus favoritas",
-    "matches_prompt": "Encaja con \"{{prompt}}\""
+    "matches_prompt": "Encaja con \"{{prompt}}\"",
+    "ai": "IA",
+    "selectedByAi": "Elegida por la IA"
   },
   "ai": {
     "title": "Radio IA",

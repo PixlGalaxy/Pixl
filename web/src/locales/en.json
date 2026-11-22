@@ -103,14 +103,26 @@
     "requestedBy": "Requested by {{name}}",
     "genres": "Genres",
     "stop": "Stop",
-    "stopQuestion": "Stop and clear the queue?"
+    "stopQuestion": "Stop and clear the queue?",
+    "requestedByAi": "Requested by {{name}} · Selected by AI"
   },
   "pip": {
     "label": "Lynx, compact player",
     "radio": "Radio: {{phase}}",
     "emptyCountdown": "Clears in",
     "emptyPaused": "Channel empty",
-    "nothingHint": "Use /play or open the panel."
+    "nothingHint": "Use /play or open the panel.",
+    "noLyrics": "No lyrics for this song.",
+    "lyricsPlain": "No synced lyrics. Open the panel to read them.",
+    "lyricsError": "Could not load lyrics.",
+    "upNextEmpty": "Nothing queued after this song.",
+    "more": "+{{count}} more",
+    "radioOn": "Radio is on · {{count}} added",
+    "radioOff": "Radio is off",
+    "radioOffHint": "An endless mix from your taste.",
+    "radioNoPermission": "You can't start the radio here.",
+    "radioStart": "Start",
+    "radioStop": "Stop"
   },
   "queue": {
     "upNext": "Up next",
@@ -143,7 +155,9 @@
     "because_you_like": "Because you like {{name}}",
     "similar_listeners": "Popular with listeners like you",
     "your_favorite": "One of your favorites",
-    "matches_prompt": "Matches \"{{prompt}}\""
+    "matches_prompt": "Matches \"{{prompt}}\"",
+    "ai": "AI",
+    "selectedByAi": "Selected by AI"
   },
   "ai": {
     "title": "AI radio",

@@ -60,3 +60,30 @@ export function useLayoutMode(): LayoutMode {
 export function useCompactLayout(): boolean {
   return useLayoutMode() !== 'focused'
 }
+
+/**
+ * Whether Discord agreed to deliver clicks in picture-in-picture (`setConfig({ use_interactive_pip })`).
+ * Until it answers, the compact view assumes it did not and leaves out optional buttons.
+ */
+let interactivePip = false
+const interactiveListeners = new Set<() => void>()
+
+export function setInteractivePip(value: boolean) {
+  if (value === interactivePip) return
+  interactivePip = value
+  for (const l of interactiveListeners) l()
+}
+
+/** True when the compact view's buttons can be clicked (interactive PiP granted, or a grid tile). */
+export function useCompactInteractive(): boolean {
+  const mode = useLayoutMode()
+  const pip = useSyncExternalStore(
+    (l) => {
+      interactiveListeners.add(l)
+      return () => interactiveListeners.delete(l)
+    },
+    () => interactivePip,
+    () => false,
+  )
+  return mode === 'grid' || pip
+}
