@@ -1,7 +1,10 @@
 services:
   lynx:
     image: ghcr.io/pixlgalaxy/lynx:latest
-    build: .
+    build:
+      context: .
+      args:
+        LYNX_COMMIT: ${LYNX_COMMIT:-}   # optional: commit shown by /about
     env_file: .env
     ports:
       - "8080:8080"   # nginx: panel at /, backend at /backend/

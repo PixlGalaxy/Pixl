@@ -4,6 +4,7 @@
 //! own songbird. [`registry::BotRegistry`] keeps who is where; [`Lynx`] is the shared context the
 //! event handlers use.
 
+pub mod about;
 pub mod commands;
 pub mod emojis;
 pub mod ids;
@@ -54,6 +55,8 @@ pub struct Lynx {
     pub bots: Arc<BotRegistry>,
     pub players: PlayerManager,
     pub jam: JamInvites,
+    /// yt-dlp version shown by `/about`.
+    pub ytdlp_version: Arc<about::YtdlpVersion>,
     /// Startup finished (guilds loaded, nodes reconciled, sessions resumed).
     pub booted: AtomicBool,
 }
@@ -102,12 +105,9 @@ impl Bots {
                 })
                 .register_songbird_with(songbird.clone())
                 .await?;
-            infos.push(Arc::new(BotInfo::new(
-                index,
-                client.http.clone(),
-                client.cache.clone(),
-                songbird,
-            )));
+            let info = Arc::new(BotInfo::new(index, client.http.clone(), client.cache.clone(), songbird));
+            info.set_shard_manager(client.shard_manager.clone());
+            infos.push(info);
             clients.push(client);
         }
         Ok(Self {

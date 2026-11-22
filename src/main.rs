@@ -48,6 +48,7 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    discord::about::mark_start();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("LOG_LEVEL")
@@ -121,8 +122,10 @@ async fn main() -> Result<()> {
         bots: bots.registry.clone(),
         players: players.clone(),
         jam: JamInvites::new(),
+        ytdlp_version: Default::default(),
         booted: Default::default(),
     });
+    lynx.ytdlp_version.refresh_if_stale(&lynx.sources);
     let gateway_stop = bots.stop.clone();
     let gateways = bots.start(lynx);
     let api = {
