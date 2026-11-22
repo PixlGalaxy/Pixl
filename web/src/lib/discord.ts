@@ -1,7 +1,7 @@
 import { DiscordSDK } from '@discord/embedded-app-sdk'
 import { api, setSession } from './api'
 import { errorMessage } from './format'
-import { layoutFromSdk, setSdkLayout } from './layout'
+import { layoutFromSdk, setInteractivePip, setSdkLayout } from './layout'
 import type { AuthResult, ChannelRef, PublicConfig } from './types'
 
 /** Discord always loads the Activity with `frame_id` (plus instance_id, guild_id, channel_id). */
@@ -143,7 +143,8 @@ export async function reauthenticate(): Promise<boolean> {
  */
 async function watchLayout(client: DiscordSDK): Promise<void> {
   try {
-    await client.commands.setConfig({ use_interactive_pip: true })
+    const res = await client.commands.setConfig({ use_interactive_pip: true })
+    setInteractivePip(res?.use_interactive_pip !== false)
   } catch (error) {
     console.warn('[lynx] setConfig(use_interactive_pip) not supported', error)
   }

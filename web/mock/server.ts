@@ -13,6 +13,10 @@
 //   ?channel_id=100  launch channel (default 200, a text channel: the panel follows your voice channel)
 //   ?custom_id=jam-partyroom1  opened from a jam link: the join prompt of a jam hosted elsewhere
 //   ?jam=host|member a jam already running (you host it, or your channel is a member)
+//   ?tab=queue|lyrics|radio|...  tab the panel opens on (read by the panel itself, mock mode only);
+//                    with ?pip=1 or the `p` key it picks the compact variant
+//   ?ai_track=1      the current song was picked by the AI radio (AI chip, "Selected by AI")
+//   ?radio=off|on|job  fixed radio state: off / on (no job) / a job finding songs (default: demo job cycling)
 // Keys in the browser (mock SDK): `v` moves you 100 -> 101 -> no voice -> 100 (socket `channel`
 // message + new state), `x` expires every session (the panel signs in again silently), `o` takes
 // the backend offline and back (/healthz and /api answer 502, sockets are dropped and refused).
@@ -42,6 +46,8 @@ type Flags = {
   vote: boolean
   voice: string | null
   jam: 'host' | 'member' | null
+  aiTrack: boolean
+  radio: 'off' | 'on' | 'job' | null
 }
 
 function parseFlags(search: string): Flags {
@@ -57,6 +63,8 @@ function parseFlags(search: string): Flags {
     vote: p.get('vote') === '1',
     voice: p.get('voice') === 'none' ? null : (p.get('voice') ?? '100'),
     jam: p.get('jam') === 'host' || p.get('jam') === 'member' ? (p.get('jam') as 'host' | 'member') : null,
+    aiTrack: p.get('ai_track') === '1',
+    radio: ['off', 'on', 'job'].includes(p.get('radio') ?? '') ? (p.get('radio') as 'off' | 'on' | 'job') : null,
   }
 }
 // Sessions are `mock.<epoch>.<flags>`; `x` bumps the epoch so every older session gets 401.
@@ -204,7 +212,12 @@ const s = {
   /** Voice channel the mock user is in (the panel follows it). */
   voice: '100' as string | null,
 }
-for (let i = 1; i <= 12; i++) s.upcoming.push(makeTrack(CATALOG[i]!, USERS[i % USERS.length]!))
+// A couple of upcoming songs were picked by the AI radio (they carry a reason).
+const MOCK_REASONS: Record<number, TrackReason> = {
+  2: { key: 'because_you_like', params: { name: 'Paper Lanterns' } },
+  4: { key: 'similar_listeners', params: {} },
+}
+for (let i = 1; i <= 12; i++) s.upcoming.push(makeTrack(CATALOG[i]!, USERS[i % USERS.length]!, MOCK_REASONS[i] ?? null))
 for (let i = 13; i < 18; i++) s.history.unshift(makeTrack(CATALOG[i]!, USERS[(i + 2) % USERS.length]!))
 
 // Listening history behind the taste card: every catalog song, a few played a lot.
@@ -271,14 +284,14 @@ function snapshot(f: Flags): PlayerState | null {
     status: emptyChannel ? 'paused' : s.status,
     pausedReason: emptyChannel ? 'empty_channel' : s.status === 'paused' ? 'user' : null,
     emptyChannelDeadline: emptyChannel ? startedAt + 180_000 : null,
-    current: s.current,
+    current: f.aiTrack ? { ...s.current, reason: s.current.reason ?? { key: 'your_favorite', params: {} } } : s.current,
     positionMs: Math.round(currentPosition()),
     positionAt: Date.now(),
     upcoming: s.upcoming,
     history: s.history.slice(0, 20),
     loop: s.loop,
     volume: s.volume,
-    ai: f.ai ? s.ai : null,
+    ai: f.ai ? (f.radio ? mockRadio(f) : s.ai) : null,
     skipVotes: f.vote ? { current: 2, required: 4 } : null,
     voteSkipEnabled: s.settings.voteSkip.enabled,
     version: ++mockVersion,
@@ -368,6 +381,14 @@ function requireHost(f: Flags): MockJam {
   if (j.host !== 'me') throw new HttpError(403, 'jam_not_host')
   requireControl(f)
   return j
+}
+/** `?radio=off|on|job`: fixed radio state for screenshots (instead of the cycling demo job). */
+function mockRadio(f: Flags): AiState | null {
+  if (f.radio === 'on') return { active: true, ownerId: ME.id, job: null }
+  if (f.radio === 'job') {
+    return { active: false, ownerId: ME.id, job: { id: 'mock-job', phase: 'finding_songs', startedAt: startedAt, canCancel: true } }
+  }
+  return null
 }
 function advance() {
   if (!s.current) return

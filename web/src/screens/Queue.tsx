@@ -15,7 +15,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AddBox } from '../components/AddBox'
 import { AiProgress } from '../components/AiProgress'
-import { TrackReasonLine } from '../components/TrackBits'
+import { AiTag, TrackReasonLine } from '../components/TrackBits'
 import { Artwork, Card, ConfirmButton, Empty, IconButton, PageSpinner, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import { cx, fmtTime } from '../lib/format'
@@ -60,6 +60,7 @@ function Row({ track, index, sortable, canRemove }: { track: Track; index: numbe
         <div className="truncate text-sm font-semibold">{track.title}</div>
         <div className="mt-0.5 truncate text-xs text-muted">
           {track.artists.join(', ')}
+          {track.reason && <AiTag />}
           <span className="px-1">·</span>
           {track.requestedBy.name}
         </div>
@@ -186,7 +187,10 @@ function HistoryCard() {
               <Artwork url={track.artworkUrl} className="size-9 rounded-lg opacity-80" iconSize={14} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{track.title}</div>
-                <div className="mt-0.5 truncate text-xs text-muted">{track.artists.join(', ')}</div>
+                <div className="mt-0.5 truncate text-xs text-muted">
+                  {track.artists.join(', ')}
+                  {track.reason && <AiTag />}
+                </div>
               </div>
               <span className="font-mono text-[11px] text-muted tabular-nums">{fmtTime(track.durationMs)}</span>
               {permissions.canAdd && channelId && (

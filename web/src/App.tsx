@@ -41,7 +41,7 @@ function Panel() {
   const { online } = useBackendHealth()
   return (
     <>
-      <div inert={!online}>{compact ? <PipView /> : <Shell tab={tab} onTab={setTab} />}</div>
+      <div inert={!online}>{compact ? <PipView tab={tab} /> : <Shell tab={tab} onTab={setTab} />}</div>
       {!online && <ReconnectingOverlay compact={compact} />}
     </>
   )

@@ -21,7 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { AddBox } from '../components/AddBox'
 import { AiProgress } from '../components/AiProgress'
 import { JamCard, JamJoinPrompt } from '../components/JamCard'
-import { TrackReasonLine } from '../components/TrackBits'
+import { AiChip, AiTag, TrackReasonLine } from '../components/TrackBits'
 import { Artwork, Avatar, Button, Card, Chip, ConfirmButton, IconButton, Notice, Slider, Tag } from '../components/ui'
 import { api } from '../lib/api'
 import { cx, fmtTime } from '../lib/format'
@@ -255,7 +255,10 @@ function UpNextPreview({ state, onOpenQueue }: { state: PlayerState; onOpenQueue
               <Artwork url={tr.artworkUrl} className="size-9 rounded-lg" iconSize={14} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold">{tr.title}</div>
-                <div className="mt-0.5 truncate text-xs text-muted">{tr.artists.join(', ')}</div>
+                <div className="mt-0.5 truncate text-xs text-muted">
+                  {tr.artists.join(', ')}
+                  {tr.reason && <AiTag />}
+                </div>
               </div>
               <span className="font-mono text-[11px] text-muted tabular-nums">{fmtTime(tr.durationMs)}</span>
             </li>
@@ -333,6 +336,7 @@ export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
                 {t(`player.status.${status}`)}
               </span>
               <Chip>{ORIGIN_LABEL[track.origin]}</Chip>
+              {track.reason && <AiChip />}
               {!state.bot.isMain && <Chip title={t('player.nodeBot')}>{state.bot.name}</Chip>}
             </div>
             <div className="min-w-0">
@@ -341,7 +345,7 @@ export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
             </div>
             <div className="flex items-center gap-2 text-xs text-muted">
               <Avatar url={track.requestedBy.avatarUrl} name={track.requestedBy.name} className="size-5" />
-              <span className="truncate">{t('player.requestedBy', { name: track.requestedBy.name })}</span>
+              <span className="truncate">{t(track.reason ? 'player.requestedByAi' : 'player.requestedBy', { name: track.requestedBy.name })}</span>
             </div>
             {track.genres.length > 0 && (
               <div className="flex flex-wrap gap-1.5" aria-label={t('player.genres')}>
