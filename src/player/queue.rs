@@ -169,23 +169,19 @@ impl Queue {
         self.upcoming().iter().filter_map(|e| e.info.duration_ms).sum()
     }
 
-    /// Append tracks, keeping at most `max` upcoming ones. A non-active queue starts with the
-    /// first added track as its cursor.
+    /// Append tracks, keeping at most `max` upcoming ones. Returns the 1-based upcoming position of
+    /// the first one (0 when it is the next track to start on an idle queue).
     pub fn push(&mut self, entries: Vec<Entry>, max: usize) -> Result<PushResult, PushError> {
         let room = max.saturating_sub(self.upcoming().len());
         if room == 0 {
             return Err(PushError::Full { max });
         }
-        if !self.active {
-            // Anything before the cursor is history; anything after it from a finished queue is gone.
-            self.tracks.truncate(self.pos.min(self.tracks.len()));
-            self.pos = self.tracks.len();
-        }
         let truncated = entries.len() > room;
         let first_index = self.tracks.len();
         let added = entries.len().min(room);
         self.tracks.extend(entries.into_iter().take(room));
-        let first_position = if self.active { first_index - self.pos } else { 0 };
+        // When inactive the cursor track starts next and counts as the current one (position 0).
+        let first_position = first_index - self.pos.min(first_index);
         Ok(PushResult {
             added,
             first_position,
@@ -488,6 +484,13 @@ mod tests {
         assert_eq!(titles(r.upcoming()), vec!["t2", "t3"]);
         let r = Queue::restore(entries(2), 9, LoopMode::Off);
         assert!(r.cursor().is_none());
+
+        // Adding to a restored queue that has not started keeps its upcoming tracks.
+        let mut r = Queue::restore(entries(4), 2, LoopMode::Off);
+        let res = r.push(entries(1), 10).unwrap();
+        assert_eq!(res.first_position, 2, "after t3 (the cursor t2 counts as current)");
+        assert_eq!(r.upcoming().len(), 3);
+        assert_eq!(r.start().unwrap().info.youtube_id.as_deref(), Some("t2"));
     }
 
     #[test]

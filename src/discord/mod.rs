@@ -1,6 +1,7 @@
 //! Discord side: the main bot (commands, messages) plus voice-only node bots, all in this process.
 
 pub mod ids;
+pub mod registry;
 pub mod ui;
 
 use anyhow::Result;
