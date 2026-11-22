@@ -22,16 +22,18 @@ use super::{
     lifecycle::{deadline_epoch_ms, EmptyAction, EmptyChannel, QUEUE_END_LEAVE_AFTER},
     messages::{Messenger, MessengerDeps, NpData, OwnedNotice},
     playback::{http_input, track_events, ytdlp_input, TrackNotifier, TrackSignal},
-    queue::{Entry, Queue, QueueEntry},
+    queue::{Entry, PushError, PushResult, Queue, QueueEntry},
+    radio::{self, Job, JobKind, Radio, RadioSpec, RadioTicket, StartRefused},
     state::{epoch_ms, PausedReason, PlayerEvent, PlayerSnapshot, Status},
     votes::{required_votes, VoteResult, Votes},
     Command, EndReason, PlayerDeps, PlayerManager, Restore, SkipOutcome, StartRequest,
 };
 use crate::{
+    ai::{RadioPick, RadioRequest},
     discord::registry::BotInfo,
     procs::ProcOwner,
     sources::{Playable, SourceError},
-    store::{GuildSettings, SessionKey, SessionRecord, MAX_VOLUME},
+    store::{track_key, GuildSettings, SessionKey, SessionRecord, MAX_VOLUME},
 };
 
 /// Prefetch the next track this long before the current one ends.
@@ -79,6 +81,7 @@ pub fn initial_snapshot(req: &StartRequest, bot_user_id: u64) -> PlayerSnapshot 
             .unwrap_or(req.settings.default_volume),
         vote_skip_enabled: req.settings.vote_skip.enabled,
         skip_votes: None,
+        ai: None,
     }
 }
 
@@ -158,6 +161,7 @@ struct Player {
     failures: u32,
     rng: fastrand::Rng,
     ending: Option<EndReason>,
+    radio: Option<Radio>,
 }
 
 pub async fn run(s: Spawn) {
@@ -205,6 +209,7 @@ pub async fn run(s: Spawn) {
         failures: 0,
         rng: fastrand::Rng::new(),
         ending: None,
+        radio: None,
         deps,
     };
     p.boot(s.req.restore).await;
@@ -264,6 +269,7 @@ impl Player {
             if let Some(reason) = self.ending.take() {
                 return reason;
             }
+            self.maybe_refill();
             let tick = (self.events.receiver_count() > 0 && self.playing.as_ref().is_some_and(|p| p.since.is_some()))
                 .then_some(self.next_tick);
             tokio::select! {
@@ -304,22 +310,7 @@ impl Player {
                 if let Some(c) = text_channel {
                     self.set_text_channel(c);
                 }
-                let res = self.queue.push(entries, max);
-                if res.is_ok() {
-                    self.persist(true);
-                    if self.playing.is_none()
-                        && self.loading.is_none()
-                        && !self.waiting_start
-                        && !self.queue.is_active()
-                    {
-                        if self.queue.start().is_some() {
-                            self.play_current().await;
-                        }
-                    } else {
-                        self.refresh_prefetch();
-                    }
-                    self.publish();
-                }
+                let res = self.push_entries(entries, max).await;
                 let _ = reply.send(res);
             }
             Command::Pause { reply } => {
@@ -461,7 +452,187 @@ impl Player {
             Command::End(reason) => self.ending = Some(reason),
             Command::Prepared { uid, prefetch, result } => self.on_prepared(uid, prefetch, *result).await,
             Command::Track { handle_id, signal } => self.on_track_signal(handle_id, signal).await,
+            Command::StartRadio { spec, reply } => {
+                let r = self.start_radio(spec);
+                let _ = reply.send(r);
+            }
+            Command::StopRadio { reply } => {
+                let stopped = self.radio.as_mut().is_some_and(Radio::stop);
+                if stopped {
+                    info!(guild = self.guild_id, channel = self.voice_channel_id, "radio stopped");
+                    self.publish();
+                }
+                let _ = reply.send(stopped);
+            }
+            Command::CancelRadioJob { job_id, reply } => {
+                let current = self.queue.current().map(|e| e.uid);
+                let done = self.radio.as_mut().is_some_and(|r| r.cancel(job_id, current));
+                if done {
+                    self.publish();
+                }
+                let _ = reply.send(done);
+            }
+            Command::RadioDisliked { user, uid } => {
+                let current = self.queue.current().map(|e| e.uid);
+                if self
+                    .radio
+                    .as_ref()
+                    .is_some_and(|r| r.owner_dislike_skips(user, true, uid, current))
+                {
+                    self.next_track(true).await;
+                    self.publish();
+                }
+            }
+            Command::RadioPhase { id, phase } => {
+                // Final phases are applied by RadioDone, after the last picks are queued.
+                if phase.is_final() {
+                    return;
+                }
+                let Some(job) = self.radio.as_mut().and_then(|r| r.job_mut(id)) else {
+                    return;
+                };
+                if job.phase != phase {
+                    job.set_phase(phase);
+                    self.publish();
+                }
+            }
+            Command::RadioPicks { id, picks } => self.radio_picks(id, picks, true).await,
+            Command::RadioDone { id, result } => {
+                let result = match *result {
+                    Ok(picks) => {
+                        self.radio_picks(id, picks, false).await;
+                        Ok(0)
+                    }
+                    Err(e) => Err(e),
+                };
+                let current = self.queue.current().map(|e| e.uid);
+                if let Some(r) = self.radio.as_mut() {
+                    r.job_done(id, result, current);
+                }
+                self.publish();
+            }
         }
+    }
+
+    /// Append entries (respecting `max` upcoming) and start playing when idle.
+    async fn push_entries(&mut self, entries: Vec<Entry>, max: usize) -> Result<PushResult, PushError> {
+        let res = self.queue.push(entries, max);
+        if res.is_ok() {
+            self.persist(true);
+            if self.playing.is_none() && self.loading.is_none() && !self.waiting_start && !self.queue.is_active() {
+                if self.queue.start().is_some() {
+                    self.play_current().await;
+                }
+            } else {
+                self.refresh_prefetch();
+            }
+            self.publish();
+        }
+        res
+    }
+
+    // ---- AI radio --------------------------------------------------------------------------
+
+    fn max_queue(&self) -> usize {
+        self.settings.max_queue_length as usize
+    }
+
+    fn radio_request(&self, spec: &RadioSpec, batch_size: usize) -> RadioRequest {
+        let owner = spec.owner.id;
+        let mut listener_ids: Vec<u64> = self.humans.iter().copied().filter(|h| *h != owner).collect();
+        listener_ids.sort_unstable();
+        RadioRequest {
+            guild_id: self.guild_id,
+            channel_id: self.voice_channel_id,
+            owner_id: owner,
+            listener_ids,
+            prompt: spec.prompt.clone(),
+            recent_keys: self.queue.all().iter().map(|e| track_key(&e.info)).collect(),
+            batch_size,
+            mix: spec.mix,
+            blend: spec.blend,
+        }
+    }
+
+    fn start_radio(&mut self, spec: RadioSpec) -> Result<RadioTicket, StartRefused> {
+        if !self.deps.ai.enabled() {
+            return Err(StartRefused::Disabled);
+        }
+        let max = self.max_queue();
+        let room = max.saturating_sub(self.queue.upcoming().len());
+        if room == 0 {
+            return Err(StartRefused::QueueFull { max });
+        }
+        // A new radio replaces the old one (its job is cancelled).
+        if let Some(old) = self.radio.as_mut() {
+            old.stop();
+        }
+        let job = self
+            .deps
+            .ai
+            .start_radio(self.radio_request(&spec, radio::START_BATCH.min(room)));
+        let (state, progress) = Job::new(job.id, JobKind::Start, job.cancel_token());
+        let ticket = RadioTicket {
+            job_id: job.id,
+            progress,
+        };
+        info!(
+            guild = self.guild_id,
+            channel = self.voice_channel_id,
+            owner = spec.owner.id,
+            job = %job.id,
+            "radio started"
+        );
+        self.radio = Some(Radio::new(spec, state));
+        tokio::spawn(radio::drive(job, self.tx.clone()));
+        self.publish();
+        Ok(ticket)
+    }
+
+    /// Start a refill when the radio needs one (one at a time).
+    fn maybe_refill(&mut self) {
+        let current = self.queue.current().map(|e| e.uid);
+        let upcoming = self.queue.upcoming().len();
+        let max = self.max_queue();
+        let Some((n, spec)) = self
+            .radio
+            .as_ref()
+            .and_then(|r| r.refill_size(upcoming, max, current).map(|n| (n, r.spec.clone())))
+        else {
+            return;
+        };
+        let job = self.deps.ai.refill(self.radio_request(&spec, n));
+        let (state, _) = Job::new(job.id, JobKind::Refill, job.cancel_token());
+        debug!(guild = self.guild_id, job = %job.id, picks = n, "radio refill");
+        if let Some(r) = self.radio.as_mut() {
+            r.hold = None;
+            r.job = Some(state);
+        }
+        tokio::spawn(radio::drive(job, self.tx.clone()));
+        self.publish();
+    }
+
+    /// Queue picks of the running job `id` (ignored once it ended or was replaced).
+    async fn radio_picks(&mut self, id: Uuid, picks: Vec<RadioPick>, first: bool) {
+        let Some(owner) = self.radio.as_mut().and_then(|r| {
+            let owner = r.spec.owner.clone();
+            r.job_mut(id).map(|_| owner)
+        }) else {
+            return;
+        };
+        if picks.is_empty() {
+            return;
+        }
+        let count = picks.len();
+        let max = self.max_queue();
+        let (added, truncated) = match self.push_entries(radio::pick_entries(picks, &owner), max).await {
+            Ok(r) => (r.added, r.truncated),
+            Err(PushError::Full { .. }) => (0, true),
+        };
+        if let Some(job) = self.radio.as_mut().and_then(|r| r.job_mut(id)) {
+            job.added(added, truncated || added < count, first && added > 0);
+        }
+        self.publish();
     }
 
     fn set_text_channel(&mut self, c: u64) {
@@ -984,6 +1155,7 @@ impl Player {
                     required_votes(&rule, self.humans.len()),
                 )
             }),
+            ai: self.radio.as_ref().map(Radio::snapshot),
         }
     }
 
@@ -1029,6 +1201,9 @@ impl Player {
             volume: self.volume,
             after_restart: false,
         };
+        if let Some(r) = self.radio.as_mut() {
+            r.stop();
+        }
         if let Some(p) = self.playing.take() {
             let _ = p.handle.stop();
             if reason != EndReason::Shutdown {

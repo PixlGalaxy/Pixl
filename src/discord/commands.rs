@@ -15,6 +15,7 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 
 const STRING: u8 = 3;
 const INTEGER: u8 = 4;
+const BOOLEAN: u8 = 5;
 
 fn opt(kind: u8, name: &str, description: String, required: bool) -> Value {
     json!({ "type": kind, "name": name, "description": description, "required": required })
@@ -32,8 +33,8 @@ fn cmd(name: &str, i18n: &I18n, options: Vec<Value>) -> Value {
 }
 
 /// Every slash command, in the bot's language. `entry_point` adds the Activity launch command
-/// (main bot only).
-pub fn definitions(i18n: &I18n, entry_point: bool) -> Value {
+/// (main bot only); `ai` adds `/ai` (AI_ENABLED).
+pub fn definitions(i18n: &I18n, entry_point: bool, ai: bool) -> Value {
     let d = |key: &str| i18n.t(key, &[]);
     let position = |key: &str| {
         let mut o = opt(INTEGER, "position", d(key), true);
@@ -74,8 +75,11 @@ pub fn definitions(i18n: &I18n, entry_point: bool) -> Value {
         cmd("loop", i18n, vec![mode]),
         cmd("volume", i18n, vec![volume]),
         cmd("lyrics", i18n, vec![lyrics_query]),
-        cmd("panel", i18n, vec![]),
     ];
+    if ai {
+        list.push(ai_command(i18n));
+    }
+    list.push(cmd("panel", i18n, vec![]));
     if entry_point {
         // PRIMARY_ENTRY_POINT with handler DISCORD_LAUNCH_ACTIVITY: Discord launches the Activity itself.
         list.push(json!({
@@ -88,6 +92,23 @@ pub fn definitions(i18n: &I18n, entry_point: bool) -> Value {
         }));
     }
     Value::Array(list)
+}
+
+/// `/ai`: options for prompt, mix and blend (or none when the modal asks for them).
+fn ai_command(i18n: &I18n) -> Value {
+    if super::radio::USE_MODAL {
+        return cmd("ai", i18n, vec![]);
+    }
+    let d = |key: &str| i18n.t(key, &[]);
+    let mut prompt = opt(STRING, "prompt", d("bot.cmd.ai.prompt"), false);
+    prompt["max_length"] = json!(200);
+    let mut mix = opt(STRING, "mix", d("bot.cmd.ai.mix"), false);
+    mix["choices"] = json!(["favorites", "balanced", "discover"]
+        .iter()
+        .map(|v| json!({ "name": d(&format!("bot.radio.mix.{v}")), "value": v }))
+        .collect::<Vec<_>>());
+    let blend = opt(BOOLEAN, "blend", d("bot.cmd.ai.blend"), false);
+    cmd("ai", i18n, vec![prompt, mix, blend])
 }
 
 /// Stable 64-bit FNV-1a of the JSON (no extra dependency; only used to detect changes).
@@ -103,7 +124,7 @@ pub fn hash(defs: &Value) -> String {
 /// Bulk overwrite the main bot's global commands, only when the definitions changed.
 pub async fn register_main(lynx: &Lynx) {
     let main = lynx.bots.main();
-    let defs = definitions(&lynx.i18n, true);
+    let defs = definitions(&lynx.i18n, true, lynx.config.ai_enabled);
     let h = hash(&defs);
     if lynx.store.meta_get(META_COMMANDS_HASH).await.ok().flatten().as_deref() == Some(h.as_str()) {
         info!("slash commands unchanged");
@@ -118,7 +139,7 @@ pub async fn register_main(lynx: &Lynx) {
                 _ => "timed out".into(),
             };
             warn!(%reason, "registering commands with the Activity entry point failed; retrying without it");
-            let plain = definitions(&lynx.i18n, false);
+            let plain = definitions(&lynx.i18n, false, lynx.config.ai_enabled);
             matches!(
                 tokio::time::timeout(TIMEOUT, main.http.create_global_commands(&plain)).await,
                 Ok(Ok(_))
@@ -142,7 +163,7 @@ pub async fn sync_node_guild(lynx: &Lynx, node: &BotInfo, guild_id: u64, announc
     if app == 0 {
         return;
     }
-    let defs = definitions(&lynx.i18n, false);
+    let defs = definitions(&lynx.i18n, false, lynx.config.ai_enabled);
     let h = hash(&defs);
     let stored = lynx.store.node_guild_commands(app, guild_id).await.ok().flatten();
     let gid = GuildId::new(guild_id);
@@ -229,7 +250,7 @@ mod tests {
     #[test]
     fn definitions_shape() {
         let i18n = I18n::load("en").unwrap();
-        let defs = definitions(&i18n, true);
+        let defs = definitions(&i18n, true, false);
         let list = defs.as_array().unwrap();
         let names: Vec<&str> = list.iter().map(|c| c["name"].as_str().unwrap()).collect();
         assert_eq!(
@@ -273,13 +294,34 @@ mod tests {
         assert_eq!(list[12]["options"][0]["max_value"], 200);
 
         // Nodes get the same commands without the entry point.
-        let node = definitions(&i18n, false);
+        let node = definitions(&i18n, false, false);
         assert_eq!(node.as_array().unwrap().len(), list.len() - 1);
         assert_eq!(node.as_array().unwrap()[..], list[..list.len() - 1]);
 
         // The hash is stable and changes with the language.
-        assert_eq!(hash(&defs), hash(&definitions(&i18n, true)));
-        assert_ne!(hash(&defs), hash(&definitions(&I18n::load("es").unwrap(), true)));
+        assert_eq!(hash(&defs), hash(&definitions(&i18n, true, false)));
+        assert_ne!(hash(&defs), hash(&definitions(&I18n::load("es").unwrap(), true, false)));
         assert_eq!(hash(&defs).len(), 16);
+
+        // /ai only with AI_ENABLED, before panel; it changes the hash.
+        let with_ai = definitions(&i18n, true, true);
+        let ai_list = with_ai.as_array().unwrap();
+        assert_eq!(ai_list.len(), list.len() + 1);
+        let ai = &ai_list[ai_list.len() - 3];
+        assert_eq!(ai["name"], "ai");
+        assert_eq!(ai_list[ai_list.len() - 2]["name"], "panel");
+        assert_ne!(hash(&with_ai), hash(&defs));
+        for o in ai["options"].as_array().unwrap() {
+            assert_eq!(o["required"], false);
+            let d = o["description"].as_str().unwrap();
+            assert!(!d.is_empty() && d.len() <= 100 && !d.starts_with("bot."), "{d}");
+        }
+        assert_eq!(
+            ai["options"][1]["choices"][1],
+            json!({ "name": "Balanced", "value": "balanced" })
+        );
+        assert_eq!(ai["options"][2]["type"], 5);
+        let desc = ai["description"].as_str().unwrap();
+        assert!(!desc.starts_with("bot.") && desc.len() <= 100);
     }
 }

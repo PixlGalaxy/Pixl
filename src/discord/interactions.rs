@@ -19,6 +19,7 @@ use super::{
     ids::{track_tag, CustomId, NpAction, QUEUE_BUTTONS_TTL_SECS},
     jam::JamError,
     play::{self, PlayCtx, PlayError, PlayRequest, Played},
+    radio::{self as radio_ui, RadioCtx, RadioForm},
     respond::{self, actor},
     ui::{
         self, bare_callback, callback,
@@ -182,6 +183,20 @@ impl<'a> Inv<'a> {
     }
 }
 
+fn radio_ctx<'a>(inv: &'a Inv<'a>) -> RadioCtx<'a> {
+    RadioCtx {
+        lynx: inv.lynx,
+        http: inv.http,
+        id: inv.id,
+        token: inv.token,
+        guild_id: inv.guild_id,
+        user: inv.requester(),
+        text_channel: inv.text_channel,
+        permissions: inv.permissions,
+        user_voice: inv.user_voice(),
+    }
+}
+
 fn gone(inv: &Inv) -> Message {
     inv.err("no_player", &[])
 }
@@ -251,6 +266,19 @@ async fn command(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
     if cmd.data.name == "panel" {
         return inv.callback(bare_callback(callback::LAUNCH_ACTIVITY)).await;
     }
+    if cmd.data.name == "ai" {
+        if radio_ui::USE_MODAL && lynx.config.ai_enabled {
+            return inv.callback(radio_ui::radio_modal(&lynx.i18n)).await;
+        }
+        let form = RadioForm {
+            prompt: str_opt(cmd, "prompt"),
+            mix: str_opt(cmd, "mix")
+                .and_then(|m| crate::ai::RadioMix::parse(&m))
+                .unwrap_or_default(),
+            blend: bool_opt(cmd, "blend").unwrap_or(true),
+        };
+        return radio_ui::start(&radio_ctx(&inv), form).await;
+    }
     let msg = match cmd.data.name.as_str() {
         "play" => play(&inv, &str_opt(cmd, "query").unwrap_or_default()).await,
         "pause" => pause(&inv).await,
@@ -284,6 +312,17 @@ fn str_opt(cmd: &CommandInteraction, name: &str) -> Option<String> {
             _ => None,
         })
         .filter(|s| !s.is_empty())
+}
+
+fn bool_opt(cmd: &CommandInteraction, name: &str) -> Option<bool> {
+    cmd.data
+        .options
+        .iter()
+        .find(|o| o.name == name)
+        .and_then(|o| match &o.value {
+            CommandDataOptionValue::Boolean(b) => Some(*b),
+            _ => None,
+        })
 }
 
 fn int_opt(cmd: &CommandInteraction, name: &str) -> i64 {
@@ -873,7 +912,11 @@ async fn component(lynx: &Lynx, http: &Http, c: &ComponentInteraction) {
             let msg = replay(&inv, voice_channel_id).await;
             inv.send(msg).await;
         }
-        CustomId::StartRadio { .. } => inv.send(inv.err("radio_unavailable", &[])).await,
+        CustomId::StartRadio { .. } => radio_ui::start(&radio_ctx(&inv), RadioForm::default()).await,
+        CustomId::StopRadio { voice_channel_id } => radio_ui::stop_button(&radio_ctx(&inv), voice_channel_id).await,
+        CustomId::CancelRadio { voice_channel_id, job } => {
+            radio_ui::cancel_button(&radio_ctx(&inv), voice_channel_id, &job).await
+        }
     }
 }
 
@@ -933,8 +976,16 @@ async fn np_button(inv: &Inv<'_>, action: NpAction, vc: u64, tag: &str) -> Optio
                 warn!(error = %err, "could not save feedback");
                 return Some(inv.err("generic", &[]));
             }
+            // The radio owner disliking the playing track skips it.
+            let skips = value == Some(Feedback::Dislike)
+                && snap
+                    .ai
+                    .as_ref()
+                    .is_some_and(|ai| ai.active && ai.owner_id == inv.user_id);
+            crate::player::radio::radio_feedback(&player, inv.user_id, e.uid, value).await;
             let key = match value {
                 Some(Feedback::Like) => "bot.reply.liked",
+                Some(Feedback::Dislike) if skips => "bot.reply.disliked_skipped",
                 Some(Feedback::Dislike) => "bot.reply.disliked",
                 None => "bot.reply.feedback_cleared",
             };

@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use super::{tagger::clean_channel, taste::cosine, Reason};
+use super::{tagger::clean_channel, taste::cosine, RadioMix, Reason};
 use crate::{
     sources::{text::normalize, TrackInfo},
     store::{normalize_artist, TasteVector, TrackId},
@@ -146,6 +146,27 @@ pub fn quotas(prompt: bool, cold_start: bool) -> Vec<(Source, f64)> {
             ]
         }
     }
+}
+
+/// Apply the `/ai` "Mix" to the source shares: Favorites leans on the user's own tracks, Discover
+/// on tracks they never played. The prompt share is left alone; the result sums to 1 again.
+pub fn with_mix(quotas: Vec<(Source, f64)>, mix: RadioMix) -> Vec<(Source, f64)> {
+    let factor = |s: Source| match (mix, s) {
+        (RadioMix::Balanced, _) | (_, Source::Prompt) => 1.0,
+        (RadioMix::Favorites, Source::Favorite) => 3.0,
+        (RadioMix::Favorites, Source::Similar) => 0.8,
+        (RadioMix::Favorites, Source::Discover) => 0.3,
+        (RadioMix::Discover, Source::Discover) => 1.5,
+        (RadioMix::Discover, Source::Similar) => 1.2,
+        (RadioMix::Discover, Source::Favorite) => 0.25,
+    };
+    let before: f64 = quotas.iter().map(|(_, q)| q).sum();
+    let scaled: Vec<(Source, f64)> = quotas.into_iter().map(|(s, q)| (s, q * factor(s))).collect();
+    let after: f64 = scaled.iter().map(|(_, q)| q).sum();
+    if after <= 0.0 {
+        return scaled;
+    }
+    scaled.into_iter().map(|(s, q)| (s, q * before / after)).collect()
 }
 
 /// Algorithmic order: interleave sources by quota (largest deficit first, best score within a
@@ -297,6 +318,28 @@ pub fn merge_model_order(picks: &[usize], pool_len: usize, n: usize, min_valid: 
 pub(crate) mod tests {
     use super::*;
     use crate::{ai::ReasonKey, store::test_util::track};
+
+    #[test]
+    fn mix_shifts_source_shares() {
+        let base = quotas(false, false);
+        assert_eq!(with_mix(base.clone(), RadioMix::Balanced), base);
+        let share = |q: &[(Source, f64)], s: Source| q.iter().find(|(x, _)| *x == s).unwrap().1;
+        let fav = with_mix(base.clone(), RadioMix::Favorites);
+        let disc = with_mix(base.clone(), RadioMix::Discover);
+        assert!(share(&fav, Source::Favorite) > 0.4, "{fav:?}");
+        assert!(share(&fav, Source::Discover) < share(&base, Source::Discover));
+        assert!(share(&disc, Source::Discover) > share(&base, Source::Discover));
+        assert!(share(&disc, Source::Favorite) < 0.1);
+        for q in [&fav, &disc] {
+            let total: f64 = q.iter().map(|(_, v)| v).sum();
+            assert!((total - 1.0).abs() < 1e-9);
+        }
+        // The prompt share is kept.
+        let p = quotas(true, false);
+        assert!(
+            (share(&with_mix(p.clone(), RadioMix::Discover), Source::Prompt) - share(&p, Source::Prompt)).abs() < 0.05
+        );
+    }
 
     pub fn cand(key: &str, artist: &str, source: Source, score: f64) -> Candidate {
         let mut info = track(key);
