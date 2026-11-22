@@ -19,6 +19,8 @@ use crate::{
 };
 
 const FORMAT: &str = "bestaudio[acodec=opus]/bestaudio/best";
+/// Executable name (native Windows dev runs use the .exe release).
+const BIN_NAME: &str = if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" };
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 const VERSION_TIMEOUT: Duration = Duration::from_secs(20);
@@ -105,11 +107,11 @@ impl Ytdlp {
 
     /// `DATA_DIR/bin/yt-dlp` when present, else `yt-dlp` from PATH.
     pub fn binary(&self) -> PathBuf {
-        let local = self.inner.bin_dir.join("yt-dlp");
+        let local = self.inner.bin_dir.join(BIN_NAME);
         if local.is_file() {
             local
         } else {
-            PathBuf::from("yt-dlp")
+            PathBuf::from(BIN_NAME)
         }
     }
 
@@ -243,8 +245,10 @@ impl Ytdlp {
     /// Returns the new version when an update was installed.
     pub async fn update(&self) -> anyhow::Result<Option<String>> {
         let _guard = self.inner.update_lock.lock().await;
-        let asset = match std::env::consts::ARCH {
-            "aarch64" => "yt-dlp_linux_aarch64",
+        let asset = match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("windows", _) => "yt-dlp.exe",
+            ("macos", _) => "yt-dlp_macos",
+            (_, "aarch64") => "yt-dlp_linux_aarch64",
             _ => "yt-dlp_linux",
         };
         let rel: Value = self
@@ -286,7 +290,7 @@ impl Ytdlp {
             let _ = tokio::fs::remove_file(&tmp).await;
             anyhow::bail!("downloaded yt-dlp does not run");
         }
-        tokio::fs::rename(&tmp, self.inner.bin_dir.join("yt-dlp")).await?;
+        tokio::fs::rename(&tmp, self.inner.bin_dir.join(BIN_NAME)).await?;
         info!(from = ?current, to = %latest, "yt-dlp updated");
         Ok(Some(latest))
     }
