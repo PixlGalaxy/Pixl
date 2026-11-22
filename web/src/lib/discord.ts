@@ -1,6 +1,7 @@
 import { DiscordSDK } from '@discord/embedded-app-sdk'
 import { api, setSession } from './api'
 import { errorMessage } from './format'
+import { layoutFromSdk, setSdkLayout } from './layout'
 import type { AuthResult, PublicConfig } from './types'
 
 /** Discord always loads the Activity with `frame_id` (plus instance_id, guild_id, channel_id). */
@@ -39,6 +40,7 @@ export async function connect(onStep: (s: LoginStep) => void): Promise<Connectio
   const config = await step('config', onStep, () => api.publicConfig())
   const client = new DiscordSDK(config.clientId)
   await step('ready', onStep, () => client.ready())
+  void watchLayout(client)
 
   const { code } = await step('authorize', onStep, () =>
     client.commands.authorize({
@@ -55,6 +57,24 @@ export async function connect(onStep: (s: LoginStep) => void): Promise<Connectio
   setSession(auth.session)
   sdk = client
   return { config, auth, channelId: client.channelId, guildId: client.guildId }
+}
+
+/**
+ * Follows Discord's layout (focused / picture-in-picture / grid) and asks for interactive PiP so the
+ * compact view's buttons receive clicks. Best effort: older clients may reject either call, and the
+ * layout hook falls back to the viewport size.
+ */
+async function watchLayout(client: DiscordSDK): Promise<void> {
+  try {
+    await client.commands.setConfig({ use_interactive_pip: true })
+  } catch (error) {
+    console.warn('[lynx] setConfig(use_interactive_pip) not supported', error)
+  }
+  try {
+    await client.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', ({ layout_mode }) => setSdkLayout(layoutFromSdk(layout_mode)))
+  } catch (error) {
+    console.warn('[lynx] ACTIVITY_LAYOUT_MODE_UPDATE subscribe failed', error)
+  }
 }
 
 /** External links must go through the client (no new windows inside the iframe). */

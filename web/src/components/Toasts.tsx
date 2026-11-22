@@ -1,6 +1,7 @@
 import { CircleAlert, CircleCheck, Info, X } from 'lucide-react'
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useCompactLayout } from '../lib/layout'
 
 type ToneName = 'success' | 'error' | 'info'
 type Toast = { id: number; tone: ToneName; message: string }
@@ -33,6 +34,37 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [dismiss],
   )
   const value = useMemo(() => ({ push }), [push])
+  const compact = useCompactLayout()
+
+  if (compact) {
+    // Picture-in-picture: only the newest toast, one small line along the top edge.
+    const last = toasts.at(-1)
+    return (
+      <ToastContext.Provider value={value}>
+        {children}
+        {last && (
+          <div className="pointer-events-none fixed inset-x-1.5 top-1.5 z-[60]">
+            <div
+              key={last.id}
+              role="status"
+              className="pointer-events-auto flex animate-[toast-in_.2s_ease-out] items-center gap-1.5 rounded-lg border border-line bg-surface px-2 py-1 shadow-lg shadow-black/10"
+            >
+              {(() => {
+                const { icon: Icon, cls } = TONES[last.tone]
+                return <Icon size={13} className={`shrink-0 ${cls}`} />
+              })()}
+              <p className="min-w-0 flex-1 truncate text-[11px]" title={last.message}>
+                {last.message}
+              </p>
+              <button type="button" aria-label={t('common.dismiss')} onClick={() => dismiss(last.id)} className="text-muted hover:text-fg">
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+        )}
+      </ToastContext.Provider>
+    )
+  }
 
   return (
     <ToastContext.Provider value={value}>

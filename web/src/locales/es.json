@@ -100,6 +100,13 @@
     "stop": "Parar",
     "stopQuestion": "¿Parar y borrar la cola?"
   },
+  "pip": {
+    "label": "Lynx, reproductor compacto",
+    "radio": "Radio: {{phase}}",
+    "emptyCountdown": "Se vacía en",
+    "emptyPaused": "Canal vacío",
+    "nothingHint": "Usa /play o abre el panel."
+  },
   "queue": {
     "upNext": "A continuación",
     "emptyUpcoming": "No hay nada en la cola después de esta canción.",
