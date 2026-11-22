@@ -10,6 +10,7 @@ pub mod lifecycle;
 pub mod messages;
 pub mod playback;
 pub mod queue;
+pub mod radio;
 pub mod state;
 pub mod votes;
 
@@ -176,6 +177,36 @@ pub enum Command {
     Track {
         handle_id: Uuid,
         signal: TrackSignal,
+    },
+    // AI radio (see `radio`)
+    StartRadio {
+        spec: radio::RadioSpec,
+        reply: Reply<Result<radio::RadioTicket, radio::StartRefused>>,
+    },
+    StopRadio {
+        reply: Reply<bool>,
+    },
+    CancelRadioJob {
+        job_id: Option<Uuid>,
+        reply: Reply<bool>,
+    },
+    /// Someone disliked a track (already stored).
+    RadioDisliked {
+        user: u64,
+        uid: Uuid,
+    },
+    RadioPhase {
+        id: Uuid,
+        phase: crate::ai::AiPhase,
+    },
+    /// The early pick of a start job.
+    RadioPicks {
+        id: Uuid,
+        picks: Vec<crate::ai::RadioPick>,
+    },
+    RadioDone {
+        id: Uuid,
+        result: Box<Result<Vec<crate::ai::RadioPick>, crate::ai::RadioError>>,
     },
 }
 
