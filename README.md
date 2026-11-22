@@ -8,7 +8,7 @@ A Discord music bot with a built-in panel that opens as a Discord Activity.
 - Can run several bots at once, so different voice channels in the same server each get their own music.
 - Optional AI radio (`/ai`) based on your listening history, powered by your own Ollama server.
 
-> Work in progress: this branch is a full rewrite of the previous PIXL bot.
+> Work in progress: this branch is a full rewrite of the previous PIXL/Rawon bot.
 
 ## Requirements
 
