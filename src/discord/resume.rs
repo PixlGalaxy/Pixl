@@ -159,6 +159,10 @@ async fn resume_one(lynx: &Lynx, saved: SavedSession) {
         }),
     };
     let _guard = lynx.players.lock_guild(g).await;
+    if lynx.players.get(g, vc).is_some() {
+        // Someone already started playing there during startup; that player owns the session now.
+        return;
+    }
     match lynx.players.start(req).await {
         Ok(_) => info!(guild = g, channel = vc, bot, "session resumed"),
         Err(e) => {

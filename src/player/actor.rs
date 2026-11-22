@@ -271,7 +271,16 @@ impl Player {
                     Some(cmd) => self.handle(cmd).await,
                     None => return EndReason::GuildGone,
                 },
-                _ = until(self.empty.deadline()) => self.ending = Some(EndReason::EmptyTimeout),
+                _ = until(self.empty.deadline()) => {
+                    // Voice events can arrive out of order: check the cache before deleting the queue.
+                    let humans = self.deps.bots.humans_in(self.guild_id, self.voice_channel_id);
+                    if humans.is_empty() {
+                        self.ending = Some(EndReason::EmptyTimeout);
+                    } else {
+                        self.humans = humans;
+                        self.on_humans_changed().await;
+                    }
+                }
                 _ = until(self.idle_leave_at) => self.ending = Some(EndReason::QueueEnded),
                 _ = until(self.prefetch_at) => self.start_prefetch(),
                 _ = until(tick) => {

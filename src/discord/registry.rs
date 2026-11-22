@@ -488,4 +488,69 @@ mod tests {
         );
         assert_eq!(NODE_INVITE_PERMISSIONS, 3148800);
     }
+
+    fn registry(n: usize) -> BotRegistry {
+        let bots = (0..n)
+            .map(|i| {
+                Arc::new(BotInfo::new(
+                    i,
+                    Arc::new(Http::new("x")),
+                    Arc::new(Cache::new()),
+                    Songbird::serenity(),
+                ))
+            })
+            .collect();
+        BotRegistry::new(bots)
+    }
+
+    #[tokio::test]
+    async fn readiness_waits_for_every_shard_and_guild() {
+        let r = registry(2);
+        r.on_ready(0, 100, 1000, "Lynx", 2, &[1, 2]);
+        r.on_ready(1, 101, 1001, "Lynx Node 1", 1, &[1]);
+        assert!(!r.all_synced());
+        r.on_guild_available(0, 1, None);
+        r.on_guild_available(1, 1, Some(50));
+        assert!(r.bot(1).unwrap().is_synced());
+        r.on_guild_available(0, 2, None);
+        assert!(!r.bot(0).unwrap().is_synced(), "second shard not ready yet");
+        r.on_ready(0, 100, 1000, "Lynx", 2, &[]);
+        assert!(r.all_synced());
+        r.wait_synced(std::time::Duration::from_millis(10)).await;
+
+        assert_eq!(r.index_of_user(101), Some(1));
+        assert!(r.is_lynx_bot(100));
+        assert!(!r.is_lynx_bot(0));
+        assert_eq!(r.bot(1).unwrap().name(), "Lynx Node 1");
+        assert!(r.bot(0).unwrap().invite_url().unwrap().ends_with("permissions=3148801"));
+    }
+
+    #[tokio::test]
+    async fn presence_tracking() {
+        let r = registry(3);
+        r.on_ready(1, 101, 1001, "Node 1", 1, &[]);
+        r.on_ready(2, 102, 1002, "Node 2", 1, &[]);
+        r.set_member(7, 0, true);
+        r.set_member(7, 1, true);
+        r.set_voice(7, 1, Some(70));
+        assert!(r.main_in_guild(7));
+        assert_eq!(r.voice_of(7, 1), Some(70));
+        assert_eq!(r.bot_in_channel(7, 70), Some(1));
+        assert_eq!(r.all_voice(), vec![(7, 1, 70)]);
+        assert_eq!(r.guilds_of(1), vec![7]);
+        // Node 2 is the next one to invite.
+        assert_eq!(r.next_node_invite(7).map(|(n, _)| n), Some(2));
+        r.set_member(7, 2, true);
+        assert_eq!(r.next_node_invite(7), None);
+        // Leaving a guild clears its voice state; the guild entry goes away with the last bot.
+        r.set_member(7, 1, false);
+        assert_eq!(r.voice_of(7, 1), None);
+        r.set_member(7, 0, false);
+        r.set_member(7, 2, false);
+        assert!(!r.in_guild(7, 0));
+        assert!(r.presence.is_empty());
+        // No cache data: nobody in voice, no permissions.
+        assert!(r.humans_in(7, 70).is_empty());
+        assert!(!r.bot(0).unwrap().can_play_in(7, 70));
+    }
 }
