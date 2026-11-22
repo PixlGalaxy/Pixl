@@ -306,6 +306,21 @@ impl BotRegistry {
             .map(|g| g.owner_id.get())
     }
 
+    /// Name of a channel, from the first bot cache that has the guild.
+    pub fn channel_name(&self, guild_id: u64, channel_id: u64) -> Option<String> {
+        self.bots.iter().find_map(|b| {
+            let g = b.cache.guild(GuildId::new(guild_id))?;
+            g.channels.get(&ChannelId::new(channel_id)).map(|c| c.name.clone())
+        })
+    }
+
+    /// Name of a guild, from the first bot cache that has it.
+    pub fn guild_name(&self, guild_id: u64) -> Option<String> {
+        self.bots
+            .iter()
+            .find_map(|b| b.cache.guild(GuildId::new(guild_id)).map(|g| g.name.clone()))
+    }
+
     /// The voice channel still exists (main bot's cache).
     pub fn channel_exists(&self, guild_id: u64, channel_id: u64) -> bool {
         self.main()

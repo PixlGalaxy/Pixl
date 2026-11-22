@@ -108,6 +108,7 @@ fn snapshot_api_carries_ai_and_reasons() {
         vote_skip_enabled: false,
         skip_votes: None,
         ai: Some(r.snapshot()),
+        jam: None,
     };
     let v = serde_json::to_value(snap.to_api(&ApiContext::default())).unwrap();
     assert_eq!(v["ai"]["active"], true);

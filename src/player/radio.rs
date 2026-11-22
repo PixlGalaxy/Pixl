@@ -456,6 +456,9 @@ pub enum RadioApiError {
     /// `AI_ENABLED` is off (or the engine failed unexpectedly).
     #[error("the AI radio is not available")]
     Unavailable,
+    /// The channel plays a jam's shared queue.
+    #[error("the radio does not work in a jam")]
+    InJam,
 }
 
 #[allow(dead_code)] // Used by the panel API.
@@ -470,6 +473,7 @@ impl RadioApiError {
             Self::NotFound => "not_found",
             Self::QueueFull { .. } => "queue_full",
             Self::Unavailable => "unavailable",
+            Self::InJam => "in_jam",
         }
     }
 
@@ -477,7 +481,7 @@ impl RadioApiError {
         match self {
             Self::NoPermission | Self::HistoryDisabled | Self::NotInChannel | Self::ChannelNotAllowed { .. } => 403,
             Self::NotFound => 404,
-            Self::QueueFull { .. } | Self::BotUnavailable(_) => 409,
+            Self::QueueFull { .. } | Self::BotUnavailable(_) | Self::InJam => 409,
             Self::Unavailable => 503,
         }
     }
@@ -494,6 +498,8 @@ impl From<PlayerError> for RadioApiError {
 pub enum StartRefused {
     QueueFull { max: usize },
     Disabled,
+    /// The channel is in a jam (the radio would feed every channel of it).
+    InJam,
 }
 
 pub struct RadioTicket {
@@ -664,6 +670,7 @@ pub async fn start_radio(players: &PlayerManager, req: RadioStartRequest) -> Res
         }),
         Err(StartRefused::QueueFull { max }) => Err(RadioApiError::QueueFull { max }),
         Err(StartRefused::Disabled) => Err(RadioApiError::Unavailable),
+        Err(StartRefused::InJam) => Err(RadioApiError::InJam),
     }
 }
 

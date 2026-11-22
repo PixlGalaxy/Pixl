@@ -36,6 +36,7 @@
       "previous": "Previous",
       "next": "Next",
       "open_invite": "Open invite",
+      "open_jam": "Open jam link",
       "replay": "Play it again",
       "start_radio": "Start radio",
       "vote": "Vote to skip",
@@ -47,6 +48,8 @@
     "now_playing": {
       "title_in": "Now playing in {channel}",
       "played_by": "played by {bot}",
+      "jam_with": "Jam with {channel} · {count} channels",
+      "jam_host": "Hosting a jam · {count} channels",
       "paused": "Paused",
       "volume": "Volume: {volume}%"
     },
@@ -68,8 +71,9 @@
       "footer": "Lyrics from LRCLIB. The panel shows them in sync with the song."
     },
     "jam": {
-      "title": "Jam invite for {channel}",
-      "body": "Share this link: whoever opens it joins {channel} and the Lynx panel opens for them. It works for 24 hours."
+      "title": "Jam from {channel}",
+      "body": "Share this link. Whoever opens it gets the Lynx panel in their own voice channel and can join the jam: every channel hears the same music at the same time.",
+      "invite": "Or bring people straight into {channel}: {url}"
     },
     "notice": {
       "paused_empty": {
@@ -108,6 +112,36 @@
       "stopped": {
         "title": "Stopped",
         "body": "{user} stopped the music and I left {channel}."
+      },
+      "jam_entered": {
+        "title": "Joined the jam of {host}",
+        "body": "{channel} plays the jam's shared queue now. Its own queue is saved and comes back when it leaves the jam."
+      },
+      "jam_joined": {
+        "title": "{channel} joined the jam",
+        "body": "{count} channels hear the same music now."
+      },
+      "jam_left": {
+        "title": "{channel} left the jam",
+        "body": "{count} channels are still in the jam."
+      },
+      "jam_host": {
+        "title": "{channel} is the jam host now",
+        "body": "The previous host channel left the jam.",
+        "title_own": "{channel} is the jam host now",
+        "body_own": "The host channel left, so the jam settings are decided here now."
+      },
+      "jam_ended": {
+        "title": "The jam ended",
+        "body": "The music keeps playing in {channel}.",
+        "body_restored": "{channel} is back to its own queue."
+      },
+      "jam_left_own": {
+        "title": "{channel} left the jam"
+      },
+      "jam_removed": {
+        "title": "This channel was removed from the jam",
+        "body": "{channel} is back to its own queue."
       }
     },
     "vote": {
@@ -214,7 +248,9 @@
       "nothing_to_shuffle": { "title": "There is nothing to shuffle.", "body": "Add more songs to the queue first." },
       "already_paused": { "title": "The music is already paused.", "body": "Use `/resume` to continue." },
       "not_paused": { "title": "The music is not paused.", "body": "" },
-      "nothing_to_replay": { "title": "That queue is gone.", "body": "Start something new with `/play`." }
+      "nothing_to_replay": { "title": "That queue is gone.", "body": "Start something new with `/play`." },
+      "radio_in_jam": { "title": "The radio does not work in a jam.", "body": "Leave the jam to start a radio in this channel." },
+      "jam_host_only": { "title": "Only the jam host channel can change the music.", "body": "The host of this jam lets only people in {channel} edit the shared queue." }
     },
     "reply": {
       "paused": "**Paused.** Use `/resume` or the Resume button to continue.",

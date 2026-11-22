@@ -100,6 +100,40 @@ pub fn can(actor: &Actor, action: Action, settings: &GuildSettings) -> Decision 
     }
 }
 
+/// Jam actions (panel API and the "Invite to jam" button).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JamAction {
+    /// Start a jam from the channel (or share the one it is in).
+    Create,
+    /// Make the user's channel a member. `replaces_queue`: its player has a queue, which is saved
+    /// and replaced by the shared one while the jam lasts.
+    Join { replaces_queue: bool },
+    /// Take the user's channel out of the jam (its own queue comes back).
+    Leave,
+    /// Host settings, kick, close, end: only from the host channel.
+    Manage,
+}
+
+/// The jam rule. `actor.in_channel` is about the channel the action concerns (the user's own for
+/// create / join / leave, the host channel for manage), and nobody acts on a jam from outside it,
+/// managers included:
+/// - create, or join with an empty channel: anyone in the channel (like adding a song);
+/// - join replacing a queue, leave, manage: the channel's normal control rule (DJ mode applies).
+///
+/// Editing the shared queue is the normal rule of the member's own server plus the jam's
+/// `editable_by` setting (see `player::jam::Jams::edit_allowed`).
+pub fn can_jam(actor: &Actor, action: JamAction, settings: &GuildSettings) -> Decision {
+    if !actor.in_channel {
+        return Decision::Deny(Deny::NotInChannel);
+    }
+    match action {
+        JamAction::Create | JamAction::Join { replaces_queue: false } => Decision::Allow,
+        JamAction::Join { replaces_queue: true } | JamAction::Leave | JamAction::Manage => {
+            can(actor, Action::Control, settings)
+        }
+    }
+}
+
 /// Channel restriction rule: an empty list allows every channel; managers are never restricted.
 pub fn channel_allowed(allowed: &[u64], channel: u64, is_manager: bool) -> bool {
     is_manager || allowed.is_empty() || allowed.contains(&channel)
@@ -248,6 +282,43 @@ mod tests {
                 ),
                 Decision::Allow
             );
+        }
+    }
+
+    #[test]
+    fn jam_rules() {
+        let dj_mode = settings(ControlMode::Dj, false);
+        let everyone = settings(ControlMode::Everyone, false);
+        let outside_manager = Actor {
+            is_manager: true,
+            in_channel: false,
+            ..LISTENER
+        };
+        for action in [
+            JamAction::Create,
+            JamAction::Join { replaces_queue: false },
+            JamAction::Leave,
+            JamAction::Manage,
+        ] {
+            assert_eq!(
+                can_jam(&outside_manager, action, &everyone),
+                Decision::Deny(Deny::NotInChannel),
+                "{action:?} needs the channel, even for managers"
+            );
+        }
+        assert_eq!(can_jam(&LISTENER, JamAction::Create, &dj_mode), Decision::Allow);
+        assert_eq!(
+            can_jam(&LISTENER, JamAction::Join { replaces_queue: false }, &dj_mode),
+            Decision::Allow
+        );
+        for action in [JamAction::Join { replaces_queue: true }, JamAction::Leave, JamAction::Manage] {
+            assert_eq!(can_jam(&LISTENER, action, &everyone), Decision::Allow);
+            assert_eq!(can_jam(&LISTENER, action, &dj_mode), Decision::Deny(Deny::DjOnly));
+            let dj = Actor {
+                is_dj: true,
+                ..LISTENER
+            };
+            assert_eq!(can_jam(&dj, action, &dj_mode), Decision::Allow);
         }
     }
 

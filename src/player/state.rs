@@ -69,6 +69,8 @@ pub struct PlayerSnapshot {
     pub skip_votes: Option<(usize, usize)>,
     /// AI radio state (None until a radio was started in this session).
     pub ai: Option<AiSnapshot>,
+    /// The jam this channel is in.
+    pub jam: Option<std::sync::Arc<super::jam::JamView>>,
 }
 
 impl PlayerSnapshot {
@@ -166,6 +168,8 @@ pub struct ApiPlayerState {
     pub ai: Option<serde_json::Value>,
     pub skip_votes: Option<ApiSkipVotes>,
     pub vote_skip_enabled: bool,
+    /// `Jam` of the channel (filled in by the API layer, which knows the viewer).
+    pub jam: Option<serde_json::Value>,
     pub server_now: i64,
 }
 
@@ -240,6 +244,7 @@ impl PlayerSnapshot {
                 .skip_votes
                 .map(|(current, required)| ApiSkipVotes { current, required }),
             vote_skip_enabled: self.vote_skip_enabled,
+            jam: None,
             server_now: now,
         }
     }
@@ -301,6 +306,7 @@ mod tests {
             vote_skip_enabled: true,
             skip_votes: Some((1, 2)),
             ai: None,
+            jam: None,
         };
         let mut ctx = ApiContext {
             channel_name: "General".into(),
@@ -362,6 +368,7 @@ mod tests {
             vote_skip_enabled: false,
             skip_votes: None,
             ai: None,
+            jam: None,
         };
         let api = snap.to_api(&ApiContext::default());
         assert!((306_000..306_500).contains(&api.position_ms), "{}", api.position_ms);

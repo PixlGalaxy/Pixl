@@ -12,7 +12,7 @@ use std::{
 use serenity::all::GuildId;
 use songbird::{tracks::TrackHandle, Call, Event};
 use tokio::{
-    sync::{broadcast, mpsc, Mutex},
+    sync::{broadcast, mpsc, watch, Mutex},
     time::{sleep_until, Instant},
 };
 use tracing::{debug, info, warn};
@@ -20,8 +20,12 @@ use uuid::Uuid;
 
 use super::{
     checkpoint::{self, ResumePlan, CHECKPOINT_EVERY},
+    jam::{
+        self, CreateRefused, HostPosition, JamCmd, JamHandle, JamView, JoinRefused, Member as JamMember, Phase,
+        DRIFT_CHECK_EVERY, DRIFT_CHECK_FIRST, DRIFT_TOLERANCE_MS,
+    },
     lifecycle::{deadline_epoch_ms, EmptyAction, EmptyChannel, QUEUE_END_LEAVE_AFTER},
-    messages::{Messenger, MessengerDeps, NpData, OwnedNotice},
+    messages::{jam_line, Messenger, MessengerDeps, NpData, OwnedNotice},
     playback::{http_input, track_events, ytdlp_input, TrackNotifier, TrackSignal},
     queue::{Entry, PushError, PushResult, Queue, QueueEntry},
     radio::{self, Job, JobKind, Radio, RadioSpec, RadioTicket, StartRefused},
@@ -34,7 +38,7 @@ use crate::{
     discord::registry::BotInfo,
     procs::ProcOwner,
     sources::{Playable, SourceError},
-    store::{track_key, GuildSettings, SessionKey, SessionRecord, MAX_VOLUME, MIN_VOLUME},
+    store::{track_key, GuildSettings, LoopMode, SessionKey, SessionRecord, MAX_VOLUME, MIN_VOLUME},
 };
 
 /// Prefetch the next track this long before the current one ends.
@@ -87,6 +91,7 @@ pub fn initial_snapshot(req: &StartRequest, bot_user_id: u64) -> PlayerSnapshot 
         vote_skip_enabled: req.settings.vote_skip.enabled,
         skip_votes: None,
         ai: None,
+        jam: None,
     }
 }
 
@@ -177,6 +182,49 @@ impl Playing {
     }
 }
 
+/// The own queue of a channel while it plays a jam's shared queue (it comes back on leaving).
+struct SavedQueue {
+    tracks: Vec<Entry>,
+    index: usize,
+    loop_mode: LoopMode,
+    position_ms: u64,
+    paused: bool,
+}
+
+/// This channel's membership of a jam (see `jam`).
+struct JamLink {
+    handle: JamHandle,
+    rx: watch::Receiver<Arc<JamView>>,
+    /// Last view applied.
+    view: Arc<JamView>,
+    /// None for the channel that started the jam: the shared queue was its own and stays.
+    saved: Option<SavedQueue>,
+    /// Timeline `seq` this player follows.
+    seq: u64,
+    queue_version: u64,
+    /// The track is ready but waits for the jam's start time (or the others).
+    hold: bool,
+    hold_until: Option<Instant>,
+    drift_at: Option<Instant>,
+    has_humans: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Detach {
+    /// This channel left (leave, moved).
+    Left,
+    /// The host removed it.
+    Removed,
+    Ended,
+}
+
+async fn jam_changed(rx: &mut Option<watch::Receiver<Arc<JamView>>>) -> bool {
+    match rx {
+        Some(rx) => rx.changed().await.is_ok(),
+        None => pending().await,
+    }
+}
+
 /// Seek of a restored track, applied once it is playable.
 struct PendingResume {
     uid: Uuid,
@@ -230,6 +278,7 @@ struct Player {
     rng: fastrand::Rng,
     ending: Option<EndReason>,
     radio: Option<Radio>,
+    jam: Option<JamLink>,
 }
 
 pub async fn run(s: Spawn) {
@@ -280,6 +329,7 @@ pub async fn run(s: Spawn) {
         rng: fastrand::Rng::new(),
         ending: None,
         radio: None,
+        jam: None,
         deps,
     };
     p.boot(s.req.restore).await;
@@ -311,7 +361,7 @@ impl Player {
     }
 
     fn paused(&self) -> bool {
-        self.user_paused || self.empty.is_waiting()
+        self.user_paused || self.empty.is_waiting() || self.jam.as_ref().is_some_and(|j| j.hold)
     }
 
     async fn boot(&mut self, restore: Option<Restore>) {
@@ -370,6 +420,10 @@ impl Player {
                 .as_ref()
                 .is_some_and(|p| p.running())
                 .then_some(self.checkpoint_at);
+            // Jam timers exist only while this channel is in a jam.
+            let mut jam_rx = self.jam.as_ref().map(|j| j.rx.clone());
+            let jam_hold = self.jam.as_ref().and_then(|j| j.hold_until);
+            let jam_drift = self.jam.as_ref().and_then(|j| j.drift_at);
             tokio::select! {
                 cmd = rx.recv() => match cmd {
                     Some(cmd) => self.handle(cmd).await,
@@ -388,6 +442,20 @@ impl Player {
                 _ = until(self.idle_leave_at) => self.ending = Some(EndReason::QueueEnded),
                 _ = until(self.prefetch_at) => self.start_prefetch(),
                 _ = until(checkpoint) => self.persist(false),
+                alive = jam_changed(&mut jam_rx) => {
+                    if alive {
+                        self.on_jam_view().await;
+                    } else {
+                        self.detach(Detach::Ended, false).await;
+                    }
+                }
+                _ = until(jam_hold) => {
+                    if let Some(j) = self.jam.as_mut() {
+                        j.hold_until = None;
+                    }
+                    self.jam_timing().await;
+                }
+                _ = until(jam_drift) => self.drift_check().await,
                 _ = until(tick) => {
                     self.next_tick = Instant::now() + POSITION_TICK;
                     if let Some(p) = &self.playing {
@@ -399,6 +467,14 @@ impl Player {
     }
 
     async fn handle(&mut self, cmd: Command) {
+        let cmd = if self.jam.is_some() {
+            match self.jam_intercept(cmd) {
+                Some(cmd) => cmd,
+                None => return,
+            }
+        } else {
+            cmd
+        };
         match cmd {
             Command::Enqueue {
                 entries,
@@ -596,6 +672,19 @@ impl Player {
                 }
             }
             Command::RadioPicks { id, picks } => self.radio_picks(id, picks, true).await,
+            Command::JamCreate { reply } => {
+                let r = self.jam_create().await;
+                let _ = reply.send(r);
+            }
+            Command::JamJoin { jam, reply } => {
+                let r = self.jam_join(jam).await;
+                let _ = reply.send(r);
+            }
+            Command::JamLeave { reply } => {
+                let was = self.jam.is_some();
+                self.detach(Detach::Left, true).await;
+                let _ = reply.send(was);
+            }
             Command::RadioDone { id, result } => {
                 let result = match *result {
                     Ok(picks) => {
@@ -862,6 +951,13 @@ impl Player {
         self.persist(false);
         self.publish();
         self.messenger.now_playing(self.np_data(&entry));
+        if let Some(link) = &self.jam {
+            link.handle.post(JamCmd::Ready {
+                key: self.key(),
+                seq: link.seq,
+            });
+            self.jam_timing().await;
+        }
         let (ai, info) = (self.deps.ai.clone(), entry.info.clone());
         tokio::spawn(async move { ai.enqueue_tagging(&info).await });
         if self.back_online {
@@ -919,6 +1015,7 @@ impl Player {
         NpData {
             entry: entry.clone(),
             node_name: (!self.bot.is_main()).then(|| self.bot.name().to_owned()),
+            jam: self.jam.as_ref().map(|j| jam_line(&j.view, self.key())),
             paused: self.paused(),
         }
     }
@@ -937,8 +1034,20 @@ impl Player {
         }
     }
 
-    /// The current track finished (`skip: false`) or was skipped: move on.
+    /// The current track finished (`skip: false`) or was skipped: move on. In a jam the shared
+    /// queue moves on instead (every member follows).
     async fn next_track(&mut self, skip: bool) {
+        if let Some(link) = &self.jam {
+            let (key, seq) = (self.key(), link.seq);
+            link.handle.post(if skip {
+                JamCmd::Skip { key, seq }
+            } else {
+                JamCmd::Ended { key, seq }
+            });
+            self.end_track();
+            self.publish();
+            return;
+        }
         self.end_track();
         match self.queue.advance(skip) {
             Some(_) => self.play_current().await,
@@ -948,6 +1057,23 @@ impl Player {
     }
 
     async fn failed(&mut self, entry: Entry, reason: &str) {
+        if let Some(link) = &self.jam {
+            // Silent until the next shared track; the jam skips only when no channel can play it.
+            warn!(guild = self.guild_id, track = %entry.info.url, %reason, "jam track failed here");
+            self.deps.sources.invalidate_stream(&entry.info);
+            link.handle.post(JamCmd::Failed {
+                key: self.key(),
+                seq: link.seq,
+            });
+            self.messenger.notice(OwnedNotice::TrackFailed {
+                title: entry.info.title.clone(),
+                url: entry.info.url.clone(),
+                reason: reason.trim_end_matches('.').to_owned(),
+            });
+            self.end_track();
+            self.publish();
+            return;
+        }
         self.failures += 1;
         warn!(guild = self.guild_id, track = %entry.info.url, %reason, failures = self.failures, "track failed");
         self.deps.sources.invalidate_stream(&entry.info);
@@ -1253,6 +1379,16 @@ impl Player {
                 self.apply_pause();
             }
         }
+        let key = self.key();
+        if let Some(link) = self.jam.as_mut() {
+            let has = !self.humans.is_empty();
+            if link.has_humans != has {
+                link.has_humans = has;
+                link.handle.post(JamCmd::Humans { key, has });
+            }
+            // People came back: line up with the jam again.
+            self.jam_timing().await;
+        }
         self.publish();
     }
 
@@ -1260,6 +1396,8 @@ impl Player {
         if to == self.voice_channel_id {
             return;
         }
+        // A dragged bot leaves its jam (the jam is about the channel, not the bot).
+        self.detach(Detach::Left, true).await;
         info!(
             guild = self.guild_id,
             from = self.voice_channel_id,
@@ -1286,6 +1424,443 @@ impl Player {
         }
         self.persist(true);
         self.publish();
+    }
+
+    // ---- jam -------------------------------------------------------------------------------
+
+    fn jam_member(&self) -> JamMember {
+        JamMember::new(
+            self.key(),
+            self.deps
+                .bots
+                .channel_name(self.guild_id, self.voice_channel_id)
+                .unwrap_or_default(),
+            self.deps.bots.guild_name(self.guild_id).unwrap_or_default(),
+            !self.humans.is_empty(),
+        )
+    }
+
+    /// Shared-queue commands go to the jam (their replies come from it); a skip vote is counted
+    /// here first, with this channel's listeners. Volume, stop and the rest stay local.
+    fn jam_intercept(&mut self, cmd: Command) -> Option<Command> {
+        let handle = self.jam.as_ref()?.handle.clone();
+        let from = self.key();
+        match cmd {
+            Command::Enqueue {
+                entries,
+                max,
+                text_channel,
+                reply,
+            } => {
+                if let Some(c) = text_channel {
+                    self.set_text_channel(c);
+                }
+                let cmd = Command::Enqueue {
+                    entries,
+                    max,
+                    text_channel: None,
+                    reply,
+                };
+                handle.post(JamCmd::Edit { from, cmd });
+                None
+            }
+            Command::Skip {
+                user,
+                force,
+                rule,
+                reply,
+            } => {
+                if !force && rule.enabled {
+                    let listeners = self.listeners();
+                    match self.votes.vote(user, &listeners, &rule) {
+                        VoteResult::Passed => {}
+                        VoteResult::Counted { current, required } => {
+                            self.publish();
+                            let _ = reply.send(SkipOutcome::Voted { current, required });
+                            return None;
+                        }
+                        VoteResult::AlreadyVoted { current, required } => {
+                            let _ = reply.send(SkipOutcome::AlreadyVoted { current, required });
+                            return None;
+                        }
+                    }
+                }
+                let cmd = Command::Skip {
+                    user,
+                    force: true,
+                    rule,
+                    reply,
+                };
+                handle.post(JamCmd::Edit { from, cmd });
+                None
+            }
+            cmd @ (Command::Pause { .. }
+            | Command::Resume { .. }
+            | Command::Previous { .. }
+            | Command::Seek { .. }
+            | Command::Loop { .. }
+            | Command::Shuffle { .. }
+            | Command::Move { .. }
+            | Command::MoveUid { .. }
+            | Command::Remove { .. }
+            | Command::RemoveUid { .. }
+            | Command::SkipTo { .. }
+            | Command::Clear { .. }) => {
+                handle.post(JamCmd::Edit { from, cmd });
+                None
+            }
+            Command::StartRadio { reply, .. } => {
+                let _ = reply.send(Err(StartRefused::InJam));
+                None
+            }
+            other => Some(other),
+        }
+    }
+
+    /// Host a jam: the shared queue starts as this channel's queue and the playing track goes on.
+    async fn jam_create(&mut self) -> Result<JamHandle, CreateRefused> {
+        if self.jam.is_some() {
+            return Err(CreateRefused::AlreadyInJam);
+        }
+        let host_position = self
+            .playing
+            .as_ref()
+            .filter(|p| self.queue.current().is_some_and(|c| c.uid == p.entry.uid))
+            .map(|p| HostPosition {
+                position_ms: p.position_ms(),
+                paused: self.user_paused,
+            });
+        let handle = self
+            .manager
+            .jams()
+            .create(self.jam_member(), self.queue.clone(), host_position)?;
+        if let Some(r) = self.radio.as_mut() {
+            r.stop();
+        }
+        let mut rx = handle.subscribe();
+        let view = rx.borrow_and_update().clone();
+        self.jam = Some(JamLink {
+            handle: handle.clone(),
+            rx,
+            view: view.clone(),
+            saved: None,
+            // The playing track already is the jam's first one.
+            seq: if host_position.is_some() { view.seq } else { 0 },
+            queue_version: 0,
+            hold: false,
+            hold_until: None,
+            drift_at: None,
+            has_humans: !self.humans.is_empty(),
+        });
+        self.apply_jam_view(&view).await;
+        if let Some(p) = &self.playing {
+            self.messenger.refresh_now_playing(self.np_data(&p.entry));
+        }
+        Ok(handle)
+    }
+
+    /// Join `jam`: save the own queue and follow the shared one.
+    async fn jam_join(&mut self, jam: JamHandle) -> Result<(), JoinRefused> {
+        if self.jam.is_some() {
+            return Err(JoinRefused::InAnotherJam);
+        }
+        jam.join(self.jam_member()).await?;
+        let saved = SavedQueue {
+            tracks: self.queue.all().to_vec(),
+            index: self.queue.index(),
+            loop_mode: self.queue.loop_mode,
+            position_ms: self.checkpoint_ms(),
+            paused: self.user_paused,
+        };
+        if let Some(r) = self.radio.as_mut() {
+            r.stop();
+        }
+        self.end_track();
+        if let Some((uid, _)) = self.prefetched.take() {
+            self.cleanup_track(uid);
+        }
+        self.prefetching = None;
+        self.idle_leave_at = None;
+        self.resume_at = None;
+        self.waiting_start = false;
+        self.votes.reset();
+        let mut rx = jam.subscribe();
+        let view = rx.borrow_and_update().clone();
+        info!(
+            guild = self.guild_id,
+            channel = self.voice_channel_id,
+            jam = %jam.id,
+            "joined a jam"
+        );
+        self.jam = Some(JamLink {
+            handle: jam,
+            rx,
+            view: view.clone(),
+            saved: Some(saved),
+            seq: 0,
+            queue_version: 0,
+            hold: true,
+            hold_until: None,
+            drift_at: None,
+            has_humans: !self.humans.is_empty(),
+        });
+        // The own queue as it was (later writes keep it while the jam lasts).
+        self.persist(true);
+        self.apply_jam_view(&view).await;
+        let host = view.host_member().map(|m| m.name.clone()).unwrap_or_default();
+        self.messenger.notice(OwnedNotice::JamEntered { host });
+        Ok(())
+    }
+
+    /// A new view of the jam: leave when it ended or removed this channel, else follow it.
+    async fn on_jam_view(&mut self) {
+        let me = self.key();
+        let (view, prev) = {
+            let Some(link) = self.jam.as_mut() else { return };
+            let view = link.rx.borrow_and_update().clone();
+            let prev = std::mem::replace(&mut link.view, view.clone());
+            (view, prev)
+        };
+        if view.ended {
+            self.detach(Detach::Ended, false).await;
+            return;
+        }
+        if !view.is_member(me) {
+            // Right after joining the first view may not list this channel yet.
+            if prev.is_member(me) {
+                self.detach(Detach::Removed, false).await;
+            }
+            return;
+        }
+        self.jam_notices(&prev, &view, me);
+        self.apply_jam_view(&view).await;
+    }
+
+    fn jam_notices(&mut self, prev: &JamView, view: &JamView, me: SessionKey) {
+        let count = view.members.len();
+        if prev.host != view.host {
+            let channel = view.host_member().map(|m| m.name.clone()).unwrap_or_default();
+            self.messenger.notice(OwnedNotice::JamHost {
+                channel,
+                own: view.host == me,
+            });
+        } else if prev.is_member(me) {
+            for m in view.members.iter().filter(|m| m.key != me && !prev.is_member(m.key)) {
+                self.messenger.notice(OwnedNotice::JamJoined {
+                    channel: m.name.clone(),
+                    count,
+                });
+            }
+            for m in prev.members.iter().filter(|m| m.key != me && !view.is_member(m.key)) {
+                self.messenger.notice(OwnedNotice::JamLeft {
+                    channel: m.name.clone(),
+                    count,
+                });
+            }
+        }
+        if prev.members.len() != count || prev.host != view.host {
+            if let Some(p) = &self.playing {
+                self.messenger.refresh_now_playing(self.np_data(&p.entry));
+            }
+        }
+    }
+
+    /// Mirror the shared queue, follow the pause state and start (prepare) a new shared track.
+    async fn apply_jam_view(&mut self, view: &JamView) {
+        let Some(link) = self.jam.as_mut() else { return };
+        let new_queue = link.queue_version != view.queue_version;
+        link.queue_version = view.queue_version;
+        let new_track = link.seq != view.seq;
+        if new_track {
+            link.seq = view.seq;
+            link.hold = true;
+            link.hold_until = None;
+            link.drift_at = None;
+        }
+        if new_queue {
+            self.queue = Queue::mirror(view.tracks.to_vec(), view.index, view.active, view.loop_mode);
+            self.refresh_prefetch();
+        }
+        let paused = view.phase.paused();
+        if self.user_paused != paused {
+            self.user_paused = paused;
+            if paused {
+                self.empty.user_paused();
+            } else {
+                self.empty.user_resumed();
+            }
+        }
+        if new_track {
+            self.resume_at = None;
+            self.waiting_start = false;
+            if view.current.is_some() && self.queue.current().map(|e| e.uid) == view.current {
+                self.play_current().await;
+            } else {
+                self.end_track();
+                self.on_queue_end();
+            }
+        }
+        self.jam_timing().await;
+        self.publish();
+    }
+
+    /// Line the playing track up with the jam timeline: hold it until the start time, seek when it
+    /// is too far from the jam position, and keep the drift check armed while it runs.
+    async fn jam_timing(&mut self) {
+        let Some(link) = self.jam.as_ref() else { return };
+        if link.seq != link.view.seq {
+            return;
+        }
+        let phase = link.view.phase;
+        let Some(p) = self.playing.as_ref() else {
+            if let Some(link) = self.jam.as_mut() {
+                link.hold_until = None;
+                link.drift_at = None;
+            }
+            return;
+        };
+        let duration = p.entry.info.duration_ms;
+        let position = p.position_ms();
+        let mut seek_to = None;
+        let (hold, hold_until, drift_at) = match phase {
+            Phase::Stopped | Phase::Preparing { .. } => (true, None, None),
+            Phase::Paused { position_ms } => {
+                if position.abs_diff(position_ms) > DRIFT_TOLERANCE_MS {
+                    seek_to = Some(position_ms);
+                }
+                (false, None, None)
+            }
+            Phase::Running { anchor_ms } => {
+                let expected = epoch_ms() - anchor_ms;
+                if expected < 0 {
+                    let wait = Duration::from_millis(expected.unsigned_abs());
+                    (true, Some(Instant::now() + wait), None)
+                } else {
+                    seek_to = jam::drift_correction(position, expected as u64, duration);
+                    (false, None, Some(Instant::now() + DRIFT_CHECK_FIRST))
+                }
+            }
+        };
+        if let Some(link) = self.jam.as_mut() {
+            link.hold = hold;
+            link.hold_until = hold_until;
+            link.drift_at = drift_at;
+        }
+        if let Some(target) = seek_to {
+            debug!(
+                guild = self.guild_id,
+                channel = self.voice_channel_id,
+                position,
+                target,
+                "jam: lining up"
+            );
+            self.seek(target).await;
+        }
+        self.sync_pause();
+    }
+
+    /// Compare the real songbird position with the jam position; seek when they drifted apart.
+    async fn drift_check(&mut self) {
+        let Some(link) = self.jam.as_mut() else { return };
+        link.drift_at = None;
+        let Phase::Running { anchor_ms } = link.view.phase else {
+            return;
+        };
+        if link.seq != link.view.seq {
+            return;
+        }
+        let Some(p) = self.playing.as_ref().filter(|p| p.running()) else {
+            return;
+        };
+        let actual = match tokio::time::timeout(Duration::from_secs(1), p.handle.get_info()).await {
+            Ok(Ok(info)) => info.position.as_millis() as u64,
+            _ => p.position_ms(),
+        };
+        let expected = (epoch_ms() - anchor_ms).max(0) as u64;
+        if let Some(target) = jam::drift_correction(actual, expected, p.entry.info.duration_ms) {
+            debug!(
+                guild = self.guild_id,
+                channel = self.voice_channel_id,
+                actual,
+                target,
+                "jam: drift, seeking"
+            );
+            self.seek(target).await;
+        }
+        if let Some(link) = self.jam.as_mut() {
+            link.drift_at = Some(Instant::now() + DRIFT_CHECK_EVERY);
+        }
+    }
+
+    /// Pause or resume songbird only when it differs from `paused()` (no message edit otherwise).
+    fn sync_pause(&mut self) {
+        let want_paused = self.paused();
+        if self.playing.as_ref().is_some_and(|p| p.running() == want_paused) {
+            self.apply_pause();
+        }
+    }
+
+    /// Stop following the jam. A member gets its own queue back (from the saved position); the
+    /// channel that started it keeps the shared queue and the playing track.
+    async fn detach(&mut self, kind: Detach, notify: bool) {
+        let Some(link) = self.jam.take() else { return };
+        if notify {
+            link.handle.post(JamCmd::Leave { key: self.key() });
+        }
+        info!(
+            guild = self.guild_id,
+            channel = self.voice_channel_id,
+            jam = %link.handle.id,
+            ?kind,
+            "left a jam"
+        );
+        let restored = link.saved.is_some();
+        match link.saved {
+            Some(saved) => {
+                self.end_track();
+                if let Some((uid, _)) = self.prefetched.take() {
+                    self.cleanup_track(uid);
+                }
+                self.prefetching = None;
+                self.queue = Queue::restore(saved.tracks, saved.index, saved.loop_mode);
+                self.user_paused = saved.paused;
+                if saved.paused {
+                    self.empty.user_paused();
+                } else {
+                    self.empty.user_resumed();
+                }
+                self.resume_at = None;
+                if let Some(e) = self.queue.cursor() {
+                    if let ResumePlan::SeekTo(target_ms) = checkpoint::resume_plan(saved.position_ms, e.info.duration_ms) {
+                        self.resume_at = Some(PendingResume {
+                            uid: e.uid,
+                            saved_ms: saved.position_ms,
+                            target_ms,
+                        });
+                    }
+                }
+                if self.queue.cursor().is_none() {
+                    self.on_queue_end();
+                } else if self.humans.is_empty() {
+                    self.waiting_start = true;
+                } else {
+                    self.queue.start();
+                    self.play_current().await;
+                }
+            }
+            None => self.sync_pause(),
+        }
+        self.votes.reset();
+        self.messenger.notice(match kind {
+            Detach::Ended => OwnedNotice::JamEnded { restored },
+            Detach::Removed => OwnedNotice::JamRemoved,
+            Detach::Left => OwnedNotice::JamLeftOwn { restored },
+        });
+        self.persist(true);
+        self.publish();
+        if let Some(p) = &self.playing {
+            self.messenger.refresh_now_playing(self.np_data(&p.entry));
+        }
     }
 
     // ---- prefetch --------------------------------------------------------------------------
@@ -1378,6 +1953,7 @@ impl Player {
                 (self.votes.current(&listeners), required_votes(&rule, listeners.len()))
             }),
             ai: self.radio.as_ref().map(Radio::snapshot),
+            jam: self.jam.as_ref().map(|j| j.view.clone()),
         }
     }
 
@@ -1393,6 +1969,9 @@ impl Player {
     /// Position saved with the session: the saved position of a restored track until its seek is
     /// applied, else the playing position.
     fn checkpoint_ms(&self) -> u64 {
+        if let Some(saved) = self.jam.as_ref().and_then(|j| j.saved.as_ref()) {
+            return saved.position_ms;
+        }
         if let Some(r) = &self.resume_at {
             if self.queue.cursor().is_some_and(|e| e.uid == r.uid) {
                 return r.saved_ms;
@@ -1424,7 +2003,17 @@ impl Player {
             position_ms,
             updated_at: 0,
         };
-        let list = tracks.then(|| self.queue.all().iter().map(|e| e.to_session()).collect());
+        let mut record = record;
+        // A jam member keeps its own queue saved (it resumes that one after a restart).
+        let list = match self.jam.as_ref().and_then(|j| j.saved.as_ref()) {
+            Some(saved) => {
+                record.current_index = saved.index as u32;
+                record.loop_mode = saved.loop_mode;
+                record.paused = saved.paused;
+                tracks.then(|| saved.tracks.iter().map(|e| e.to_session()).collect())
+            }
+            None => tracks.then(|| self.queue.all().iter().map(|e| e.to_session()).collect()),
+        };
         self.deps.sessions.save(record, list);
     }
 
@@ -1435,6 +2024,19 @@ impl Player {
             ?reason,
             "player ending"
         );
+        // Leave the jam; a member's own queue is what gets saved (restart) or kept ("Play it again").
+        if let Some(link) = self.jam.take() {
+            link.handle.post(JamCmd::Leave { key: self.key() });
+            if let Some(saved) = link.saved {
+                self.queue = Queue::restore(saved.tracks, saved.index, saved.loop_mode);
+                self.user_paused = saved.paused;
+                self.resume_at = self.queue.cursor().map(|e| PendingResume {
+                    uid: e.uid,
+                    saved_ms: saved.position_ms,
+                    target_ms: saved.position_ms,
+                });
+            }
+        }
         let restore = Restore {
             tracks: self.queue.all().to_vec(),
             index: self.queue.index().min(self.queue.all().len().saturating_sub(1)),
@@ -1599,8 +2201,9 @@ mod tests {
         (saved.session.current_index, saved.session.position_ms)
     }
 
-    /// A real actor with nobody in the channel and an empty queue (nothing is fetched).
-    async fn idle_actor() -> (mpsc::Sender<Command>, Arc<RwLock<Arc<PlayerSnapshot>>>) {
+    type Slot = Arc<RwLock<Arc<PlayerSnapshot>>>;
+
+    async fn test_manager() -> (PlayerManager, Arc<BotInfo>) {
         let dir = std::env::temp_dir().join(format!("lynx-actor-test-{}", Uuid::new_v4()));
         let config = Arc::new(crate::ai::test_util::config(dir));
         let store = Store::open_in_memory().await.unwrap();
@@ -1626,26 +2229,37 @@ mod tests {
             ai,
             http: reqwest::Client::new(),
         });
+        (manager, bot)
+    }
+
+    /// A real actor with nobody in the channel (so nothing is fetched), optionally with a restored
+    /// queue that waits for people.
+    fn spawn_on(
+        manager: &PlayerManager,
+        bot: &Arc<BotInfo>,
+        voice: u64,
+        restore: Option<Restore>,
+    ) -> (mpsc::Sender<Command>, Slot) {
         let req = StartRequest {
             guild_id: GUILD,
-            voice_channel_id: VOICE,
+            voice_channel_id: voice,
             bot_index: 0,
             text_channel_id: None,
             started_by: 1,
             humans: HashSet::new(),
             settings: GuildSettings::default(),
-            restore: None,
+            restore,
         };
         let (tx, rx) = mpsc::channel(64);
         let (events, _) = broadcast::channel(16);
         let snapshot = Arc::new(RwLock::new(Arc::new(initial_snapshot(&req, 0))));
         let call = Arc::new(Mutex::new(Call::standalone(GuildId::new(GUILD), UserId::new(99))));
         tokio::spawn(run(Spawn {
-            manager,
+            manager: manager.clone(),
             req,
             call,
-            bot,
-            generation: 1,
+            bot: bot.clone(),
+            generation: voice,
             tx: tx.clone(),
             rx,
             events,
@@ -1653,6 +2267,114 @@ mod tests {
         }));
         (tx, snapshot)
     }
+
+    /// A real actor with nobody in the channel and an empty queue (nothing is fetched).
+    async fn idle_actor() -> (mpsc::Sender<Command>, Slot) {
+        let (manager, bot) = test_manager().await;
+        spawn_on(&manager, &bot, VOICE, None)
+    }
+
+    fn restore_of(ids: &[&str]) -> Restore {
+        Restore {
+            tracks: ids
+                .iter()
+                .map(|id| Arc::new(QueueEntry::new(track(id), Requester::id_only(1))))
+                .collect(),
+            index: 0,
+            loop_mode: LoopMode::Off,
+            volume: 100,
+            position_ms: 0,
+            after_restart: false,
+        }
+    }
+
+    async fn ask<T>(tx: &mpsc::Sender<Command>, make: impl FnOnce(oneshot::Sender<T>) -> Command) -> T {
+        let (r, rx) = oneshot::channel();
+        tx.send(make(r)).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), rx).await.unwrap().unwrap()
+    }
+
+    /// Wait until the snapshot satisfies `f`.
+    async fn until_snap(slot: &Slot, f: impl Fn(&PlayerSnapshot) -> bool) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !f(&slot.read().unwrap()) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("snapshot condition");
+    }
+
+    fn uids(s: &PlayerSnapshot) -> Vec<String> {
+        s.current
+            .iter()
+            .chain(s.upcoming.iter())
+            .map(|e| e.info.youtube_id.clone().unwrap_or_default())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn jam_members_share_the_queue_and_get_their_own_back() {
+        let (manager, bot) = test_manager().await;
+        // Host and member wait for people (nothing plays, nothing is fetched).
+        let (host, host_slot) = spawn_on(&manager, &bot, VOICE, Some(restore_of(&["a", "b"])));
+        let (member, member_slot) = spawn_on(&manager, &bot, VOICE + 1, Some(restore_of(&["x", "y", "z"])));
+        until_snap(&member_slot, |s| uids(s) == ["x", "y", "z"]).await;
+
+        let jam = ask(&host, |reply| Command::JamCreate { reply }).await.unwrap();
+        assert!(ask(&host, |reply| Command::JamCreate { reply }).await.is_err(), "already hosting");
+        ask(&member, |reply| Command::JamJoin { jam: jam.clone(), reply })
+            .await
+            .unwrap();
+        until_snap(&member_slot, |s| s.jam.as_ref().is_some_and(|j| j.members.len() == 2)).await;
+        // The member shows the shared queue (the host's).
+        until_snap(&member_slot, |s| uids(s) == ["a", "b"]).await;
+
+        // A shared edit from the member reaches the host.
+        ask(&member, |reply| Command::Loop {
+            mode: LoopMode::Queue,
+            reply,
+        })
+        .await;
+        until_snap(&host_slot, |s| s.loop_mode == LoopMode::Queue).await;
+        until_snap(&member_slot, |s| s.loop_mode == LoopMode::Queue).await;
+        // Volume stays per channel.
+        ask(&member, |reply| Command::Volume { volume: 40, reply }).await;
+        assert_eq!(host_slot.read().unwrap().volume, 100);
+
+        // Host-only editing: the member's edit changes nothing.
+        jam.settings(jam::SettingsPatch {
+            editable_by: Some(jam::EditRule::Host),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let n = ask(&member, |reply| Command::Clear { reply }).await;
+        assert_eq!(n, 0);
+        assert_eq!(uids(&host_slot.read().unwrap()), ["a", "b"]);
+
+        // Leaving brings the member's own queue back.
+        assert!(ask(&member, |reply| Command::JamLeave { reply }).await);
+        until_snap(&member_slot, |s| s.jam.is_none() && uids(s) == ["x", "y", "z"]).await;
+        until_snap(&host_slot, |s| s.jam.as_ref().is_some_and(|j| j.members.len() == 1)).await;
+        assert!(manager.jams().of(SessionKey {
+            guild_id: GUILD,
+            voice_channel_id: VOICE + 1
+        })
+        .is_none());
+
+        // Join again; then the host's player ends: nobody else has people, so the jam ends and the
+        // member's own queue comes back.
+        ask(&member, |reply| Command::JamJoin { jam: jam.clone(), reply })
+            .await
+            .unwrap();
+        until_snap(&member_slot, |s| uids(s) == ["a", "b"]).await;
+        host.send(Command::End(EndReason::EmptyTimeout)).await.unwrap();
+        until_snap(&member_slot, |s| s.jam.is_none() && uids(s) == ["x", "y", "z"]).await;
+        assert_eq!(manager.jams().len(), 0);
+        member.send(Command::End(EndReason::Shutdown)).await.unwrap();
+    }
+
 
     fn version(slot: &Arc<RwLock<Arc<PlayerSnapshot>>>) -> u64 {
         slot.read().unwrap().version
