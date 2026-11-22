@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 use super::{
     lastfm::LastFm,
     musicbrainz::MusicBrainz,
-    ollama::Ollama,
+    ollama::{LlmSlot, Ollama, Patience},
     taxonomy::{self, GENRES},
     ApiError,
 };
@@ -47,6 +47,9 @@ enum TagError {
     Cancelled,
     /// Ollama was busy with a radio job; try again later without counting an attempt.
     Busy,
+    /// No acceptable model is loaded and the preferred one did not load quickly (shared GPU):
+    /// leave the track pending without counting an attempt and move on.
+    NoModel,
     Api(String),
 }
 
@@ -81,6 +84,8 @@ impl Tagger {
                 }
                 continue;
             }
+            let total = batch.len();
+            let mut deferred = 0;
             for t in batch {
                 if stop.is_cancelled() {
                     return;
@@ -95,6 +100,10 @@ impl Tagger {
                     }
                     Err(TagError::Cancelled) => return,
                     Err(TagError::Busy) => ERROR_BACKOFF,
+                    Err(TagError::NoModel) => {
+                        deferred += 1;
+                        PACING
+                    }
                     Err(TagError::Api(e)) => {
                         debug!(track = %t.key, error = %e, "tagging failed");
                         let _ = self.store.record_tag_failure(t.id, MAX_ATTEMPTS).await;
@@ -108,6 +117,13 @@ impl Tagger {
                 if pause == ERROR_BACKOFF {
                     // Re-read the queue: order changed (attempt counts) and the API may be back.
                     break;
+                }
+            }
+            if deferred == total {
+                // Every pending track waits for the model: do not spin on the same batch.
+                tokio::select! {
+                    _ = tokio::time::sleep(ERROR_BACKOFF) => {}
+                    _ = stop.cancelled() => return,
                 }
             }
         }
@@ -157,7 +173,15 @@ impl Tagger {
                 let Some(permit) = o.try_acquire() else {
                     return Err(TagError::Busy);
                 };
-                let g = classify(o, &permit, &artist, &title, c).await?;
+                // Only a model that is loaded or loads quickly; never waits for a busy GPU.
+                let Some(slot) = o
+                    .select_model(permit, Patience::Quick, c, &|_| {})
+                    .await
+                    .map_err(|_| TagError::Cancelled)?
+                else {
+                    return Err(TagError::NoModel);
+                };
+                let g = classify(o, &slot, &artist, &title, c).await?;
                 merge(g, 0.7, TagSource::Ollama, &mut genres);
             }
         }
@@ -216,6 +240,9 @@ impl Tagger {
             return out;
         };
         let Some(permit) = o.try_acquire() else { return out };
+        let Ok(Some(slot)) = o.select_model(permit, Patience::Quick, c, &|_| {}).await else {
+            return out;
+        };
         #[derive(Deserialize)]
         struct Resp {
             mappings: Vec<Mapping>,
@@ -245,7 +272,7 @@ impl Tagger {
             serde_json::to_string(&tags).unwrap_or_default()
         );
         let system = "You classify music tags into a fixed genre taxonomy. Answer only with JSON.";
-        match o.chat_json::<Resp>(&permit, system, &user, &schema, c).await {
+        match o.chat_json::<Resp>(&slot, system, &user, &schema, c).await {
             Ok(r) => {
                 let by_tag: HashMap<String, Vec<String>> =
                     r.mappings.into_iter().map(|m| (normalize(&m.tag), m.genres)).collect();
@@ -279,7 +306,7 @@ fn merge(list: Vec<(&'static str, f64)>, scale: f64, src: TagSource, genres: &mu
 /// Last resort: ask the model for 1-3 genres from the closed list.
 async fn classify(
     o: &Ollama,
-    permit: &super::ollama::OllamaPermit,
+    slot: &LlmSlot,
     artist: &str,
     title: &str,
     c: &CancellationToken,
@@ -297,7 +324,7 @@ async fn classify(
         format!("Song: \"{title}\" by \"{artist}\". Pick 1 to 3 genres from the allowed list, most fitting first.");
     let r: Resp = o
         .chat_json(
-            permit,
+            slot,
             "You are a music librarian. Answer only with JSON.",
             &user,
             &schema,

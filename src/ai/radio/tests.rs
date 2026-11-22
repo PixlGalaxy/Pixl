@@ -220,6 +220,9 @@ async fn history_disabled_and_ai_disabled() {
 enum Chat {
     Hang,
     Reply(String),
+    /// Nothing acceptable is loaded and every load fails for lack of memory (GPU used by
+    /// something else); `/api/chat` hangs, so a job that reached it would not finish.
+    NoMemory,
 }
 
 /// Minimal Ollama: `/api/ps` says the model is loaded, `/api/chat` hangs or replies.
@@ -262,11 +265,19 @@ async fn fake_ollama(chat: Chat) -> String {
                     buf.extend_from_slice(&tmp[..n]);
                 }
                 let path = head.split_whitespace().nth(1).unwrap_or("").to_owned();
+                let mut status = "200 OK";
                 let body = if path.starts_with("/api/ps") {
-                    r#"{"models":[{"name":"test:latest","model":"test:latest"}]}"#.to_owned()
+                    if matches!(chat, Chat::NoMemory) {
+                        r#"{"models":[{"name":"other:70b","model":"other:70b"}]}"#.to_owned()
+                    } else {
+                        r#"{"models":[{"name":"test:latest","model":"test:latest"}]}"#.to_owned()
+                    }
+                } else if path.starts_with("/api/generate") && matches!(chat, Chat::NoMemory) {
+                    status = "500 Internal Server Error";
+                    r#"{"error":"model requires more system memory (30 GiB) than is available (4 GiB)"}"#.to_owned()
                 } else if path.starts_with("/api/chat") {
                     match chat {
-                        Chat::Hang => {
+                        Chat::Hang | Chat::NoMemory => {
                             std::future::pending::<()>().await;
                             unreachable!()
                         }
@@ -279,7 +290,7 @@ async fn fake_ollama(chat: Chat) -> String {
                     r#"{"done":true}"#.to_owned()
                 };
                 let res = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
                 let _ = sock.write_all(res.as_bytes()).await;
@@ -295,8 +306,24 @@ async fn engine_with_ollama(store: &Store, chat: Chat) -> AiEngine {
         c.ollama_url = Some(url);
         c.ollama_model = Some("test".into());
         c.ollama_timeout_secs = 20;
+        c.ollama_load_retry_secs = 0;
     })
     .await
+}
+
+#[tokio::test]
+async fn no_model_on_a_busy_gpu_falls_back_to_the_algorithm() {
+    let store = fixture().await;
+    let engine = engine_with_ollama(&store, Chat::NoMemory).await;
+    let job = engine.refill(request(1));
+    let phases = job.phases.clone();
+    let picks = tokio::time::timeout(Duration::from_secs(10), job.result())
+        .await
+        .expect("the job never reaches /api/chat")
+        .unwrap();
+    assert_eq!(picks.len(), 10);
+    assert_eq!(*phases.borrow(), AiPhase::Ready);
+    assert_eq!(engine.inner().ollama.as_ref().unwrap().available_permits(), 1);
 }
 
 #[tokio::test]

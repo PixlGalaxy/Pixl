@@ -661,6 +661,8 @@ mod tests {
             ollama_model: None,
             ollama_keep_alive: String::new(),
             ollama_timeout_secs: 0,
+            ollama_checked_models: Vec::new(),
+            ollama_load_retry_secs: 30,
             ytdlp_cookies_file: None,
             ytdlp_limit_rate: None,
             empty_channel_timeout_secs: 0,

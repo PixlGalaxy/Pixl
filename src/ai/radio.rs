@@ -17,7 +17,7 @@ use tracing::debug;
 use super::{
     candidates::{self, cid, Candidate, Filters, Source},
     lastfm::LastFm,
-    ollama::{Ollama, OllamaPermit},
+    ollama::{LlmSlot, Ollama, Patience, SelectStage},
     queries, tagger,
     taste::{self, compute_vector},
     taxonomy::{self, GENRES},
@@ -129,14 +129,14 @@ pub(crate) async fn run(
     // --- Prompt interpretation (model) ----------------------------------------------------
     let mut intent = None;
     if let (Some(p), Some(o)) = (prompt, &e.ollama) {
-        if let Some(permit) = gpu(o, c, phase).await? {
+        if let Some(slot) = gpu(o, c, phase).await? {
             set(phase, AiPhase::Thinking);
-            match interpret(o, &permit, p, c).await {
+            match interpret(o, &slot, p, c).await {
                 Ok(i) => intent = Some(i),
                 Err(ApiError::Cancelled) => return Err(RadioError::Cancelled),
                 Err(err) => debug!(error = %err, "prompt interpretation failed"),
             }
-            drop(permit);
+            drop(slot);
             set(phase, AiPhase::FindingSongs);
         }
     }
@@ -177,9 +177,9 @@ pub(crate) async fn run(
     // --- Model pick and order ------------------------------------------------------------
     let mut order: Vec<usize> = (0..pool.len()).collect();
     if let (Some(o), true) = (&e.ollama, pool.len() > 1) {
-        if let Some(permit) = gpu(o, c, phase).await? {
+        if let Some(slot) = gpu(o, c, phase).await? {
             set(phase, AiPhase::Thinking);
-            match pick_with_model(o, &permit, &pool, n, prompt, intent.as_ref(), &taste, c).await {
+            match pick_with_model(o, &slot, &pool, n, prompt, intent.as_ref(), &taste, c).await {
                 Ok(ids) => {
                     let valid = candidates::validate_picks(&ids, pool.len(), n);
                     match candidates::merge_model_order(&valid, pool.len(), pool.len(), (n / 2).max(1)) {
@@ -190,7 +190,7 @@ pub(crate) async fn run(
                 Err(ApiError::Cancelled) => return Err(RadioError::Cancelled),
                 Err(err) => debug!(error = %err, "model pick failed, using the algorithmic order"),
             }
-            drop(permit);
+            drop(slot);
         }
     }
     let ordered: Vec<Candidate> = order.into_iter().map(|i| pool[i].clone()).collect();
@@ -543,12 +543,12 @@ fn lfm_candidate(artist: String, title: String, duration_ms: Option<u64>, score:
     }
 }
 
-/// Wait for the GPU and make sure the model is loaded. None: Ollama is unreachable, use the algorithm.
-async fn gpu(
-    o: &Ollama,
-    c: &CancellationToken,
-    phase: &watch::Sender<AiPhase>,
-) -> Result<Option<OllamaPermit>, RadioError> {
+/// Wait for the GPU and pick a model (see [`Ollama::select_model`]). None: no model is usable
+/// (Ollama unreachable, or the GPU is taken by other work), use the algorithm.
+///
+/// While waiting to retry a failed load the phase is `queued` again ("waiting for the GPU"); the
+/// API contract has no separate value for it.
+async fn gpu(o: &Ollama, c: &CancellationToken, phase: &watch::Sender<AiPhase>) -> Result<Option<LlmSlot>, RadioError> {
     let permit = match o.try_acquire() {
         Some(p) => p,
         None => {
@@ -556,24 +556,16 @@ async fn gpu(
             o.acquire(c).await?
         }
     };
-    match guard(c, o.is_loaded()).await? {
-        None => Ok(None),
-        Some(true) => Ok(Some(permit)),
-        Some(false) => {
-            set(phase, AiPhase::LoadingModel);
-            match o.warm_up(&permit, c).await {
-                Ok(took) => {
-                    debug!(ms = took.as_millis() as u64, "model loaded");
-                    Ok(Some(permit))
-                }
-                Err(ApiError::Cancelled) => Err(RadioError::Cancelled),
-                Err(err) => {
-                    debug!(error = %err, "model load failed");
-                    Ok(None)
-                }
-            }
-        }
-    }
+    let on_stage = |s: SelectStage| {
+        set(
+            phase,
+            match s {
+                SelectStage::Loading => AiPhase::LoadingModel,
+                SelectStage::Waiting => AiPhase::Queued,
+            },
+        )
+    };
+    Ok(o.select_model(permit, Patience::Wait, c, &on_stage).await?)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -588,7 +580,7 @@ pub(crate) struct Intent {
     pub era: String,
 }
 
-async fn interpret(o: &Ollama, permit: &OllamaPermit, prompt: &str, c: &CancellationToken) -> Result<Intent, ApiError> {
+async fn interpret(o: &Ollama, slot: &LlmSlot, prompt: &str, c: &CancellationToken) -> Result<Intent, ApiError> {
     let schema = json!({
         "type": "object",
         "properties": {
@@ -605,7 +597,7 @@ async fn interpret(o: &Ollama, permit: &OllamaPermit, prompt: &str, c: &Cancella
         serde_json::to_string(prompt).unwrap_or_default()
     );
     o.chat_json(
-        permit,
+        slot,
         "You turn music requests into search parameters. Answer only with JSON.",
         &user,
         &schema,
@@ -617,7 +609,7 @@ async fn interpret(o: &Ollama, permit: &OllamaPermit, prompt: &str, c: &Cancella
 #[allow(clippy::too_many_arguments)]
 async fn pick_with_model(
     o: &Ollama,
-    permit: &OllamaPermit,
+    slot: &LlmSlot,
     pool: &[Candidate],
     n: usize,
     prompt: Option<&str>,
@@ -668,7 +660,7 @@ async fn pick_with_model(
                   flows (energy and genre transitions, no same artist back to back). Follow the listener's request \
                   when there is one. Never invent ids. Answer only with JSON.";
     let user = format!("Pick {n} songs and order them.\n{context}");
-    let r: Resp = o.chat_json(permit, system, &user, &schema, c).await?;
+    let r: Resp = o.chat_json(slot, system, &user, &schema, c).await?;
     Ok(r.ids)
 }
 
