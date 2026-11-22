@@ -4,6 +4,10 @@
 # If either process dies, the container exits so Docker can restart it.
 set -eu
 
+# nginx proxies /backend/ to 127.0.0.1:4000, so the bot's HTTP server must listen there whatever
+# the env file says (HTTP_HOST / HTTP_PORT only matter when running the binary without Docker).
+export HTTP_HOST=127.0.0.1 HTTP_PORT=4000
+
 nginx -c /etc/nginx/nginx.conf -g 'daemon off;' &
 NGINX_PID=$!
 
