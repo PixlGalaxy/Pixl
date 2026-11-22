@@ -31,6 +31,7 @@ const COMMANDS: Array<{ name: string; access: Access; ai?: boolean }> = [
 const PANEL_AREAS: Array<{ id: string; ai?: boolean }> = [
   { id: 'player' },
   { id: 'queue' },
+  { id: 'jam' },
   { id: 'lyrics' },
   { id: 'radio', ai: true },
   { id: 'settings' },

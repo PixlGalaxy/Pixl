@@ -19,7 +19,18 @@
     "invalid": "That request was not valid.",
     "history_disabled": "Turn on your listening history in your account (top right) to use this.",
     "channel_not_allowed": "Lynx is not allowed in this channel.",
-    "unavailable": "That is not available right now."
+    "unavailable": "That is not available right now.",
+    "in_jam": "The radio does not work in a jam. Leave the jam to start one here.",
+    "not_in_jam": "This channel is not in a jam.",
+    "jam_host_only": "Only people in the jam's host channel can change the music.",
+    "jam_not_host": "Only the host channel manages the jam.",
+    "jam_closed": "This jam is closed to new channels.",
+    "jam_full": "This jam is full.",
+    "jam_already_in": "Your channel is already in this jam.",
+    "jam_channels_off": "The host does not let other channels of the server join.",
+    "jam_servers_off": "The host does not let channels of other servers join.",
+    "jam_ended": "That jam has ended.",
+    "jam_other": "Your channel is in another jam. Leave it first."
   },
   "login": {
     "title": "Connecting to Lynx",
@@ -337,6 +348,10 @@
       "language": {
         "title": "Language",
         "body": "Change it in your account (top right). It changes the panel language for you only. The bot's messages in the channel keep the server's language."
+      },
+      "jam": {
+        "title": "Jam",
+        "body": "Invite to jam (in the panel or on the Now playing message) shares a link. Whoever opens it gets the panel in their own voice channel and can join: every channel plays the same queue at the same position, and the volume stays per channel. The host channel decides who may join (other channels of the server, other servers), who edits the shared queue, closes the jam, removes channels or ends it. Joining saves your channel's own queue; it comes back when you leave or the jam ends. If the host channel empties, the host role passes to the channel that joined first. Jams are not kept across a Lynx restart: each channel resumes its own queue."
       }
     },
     "seekNote": "Moving to a point in the song is only possible here, with the slider. There is no seek command.",
@@ -537,5 +552,47 @@
       ],
       "kept": "Your panel settings (language, theme, accent and the history switch) are kept."
     }
+  },
+  "jam": {
+    "title": "Jam",
+    "startBody": "Play the same music in other voice channels at the same time.",
+    "startHint": "Share the link: whoever opens it gets the panel in their own voice channel and can join. Every channel hears the same song at the same position; volume stays per channel.",
+    "invite": "Invite to jam",
+    "share": "Share link",
+    "shareMessage": "Join my Lynx jam from {{channel}}",
+    "hosting": "You are hosting a jam",
+    "withHost": "Jam with {{name}}",
+    "channels": "{{count}} of {{max}} channels",
+    "host": "Host",
+    "you": "You",
+    "listening": "People are listening",
+    "empty": "Nobody is in this channel",
+    "unnamedChannel": "Voice channel",
+    "kick": "Remove {{name}} from the jam",
+    "kicked": "{{name}} was removed from the jam.",
+    "settingsTitle": "Host settings",
+    "readOnly": "Only people in {{name}} can change these.",
+    "allowChannels": "Other channels of this server",
+    "allowChannelsHint": "Voice channels of the host's server may join.",
+    "allowServers": "Other servers",
+    "allowServersHint": "Voice channels of other servers may join.",
+    "editableBy": "Who edits the queue",
+    "editableByHint": "Each server's DJ mode still applies.",
+    "editEveryone": "Everyone",
+    "editHost": "Host channel",
+    "closed": "Closed to new channels",
+    "closedHint": "Channels already in the jam stay.",
+    "hostOnlyNotice": "Only people in {{name}} can change the music. You can still set the volume here.",
+    "end": "End jam",
+    "endQuestion": "Every channel goes back to its own queue. End it?",
+    "leave": "Leave jam",
+    "leaveQuestion": "Your channel gets its own queue back. Leave?",
+    "joinTitle": "Join the {{name}} jam?",
+    "joinBody": "{{channel}} will play the jam's music at the same time as the others. Its own queue is saved and comes back when it leaves.",
+    "joinFrom": "From {{guild}}, {{count}} channels in it.",
+    "joinUnavailable": "This jam is not available",
+    "join": "Join jam",
+    "notNow": "Not now",
+    "addBot": "Add another Lynx"
   }
 }

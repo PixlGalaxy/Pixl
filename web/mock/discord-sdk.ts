@@ -31,6 +31,9 @@ export class DiscordSDK {
   readonly instanceId = params.get('instance_id') ?? 'mock-instance'
   readonly guildId: string | null = params.get('guild_id')
   readonly channelId: string | null = params.get('channel_id')
+  /** Set when the Activity was opened from a shared link (`?custom_id=jam-partyroom1`). */
+  readonly customId: string | null = params.get('custom_id')
+  readonly referrerId: string | null = params.get('referrer_id')
 
   constructor(clientId: string) {
     this.clientId = clientId
@@ -64,6 +67,12 @@ export class DiscordSDK {
     authenticate: async (args: { access_token: string }) => {
       await wait(150)
       return { access_token: args.access_token, user: { id: '1001', username: 'pixl' }, scopes: ['identify'] }
+    },
+    /** Discord shows its share sheet; the mock logs the link and pretends it was copied. */
+    shareLink: async (args: { message: string; custom_id?: string }) => {
+      console.info('[mock sdk] shareLink', args)
+      await wait(200)
+      return { success: true, didCopyLink: true, didSendMessage: false }
     },
     openExternalLink: async ({ url }: { url: string }) => {
       window.open(url, '_blank', 'noopener')

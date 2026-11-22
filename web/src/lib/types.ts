@@ -88,9 +88,53 @@ export type PlayerState = {
   ai: AiState | null
   skipVotes: { current: number; required: number } | null
   voteSkipEnabled?: boolean
+  /** The jam this channel is in, as the viewer sees it. */
+  jam?: Jam | null
   /** Server clock (epoch ms) when the state was sent. */
   serverNow?: number
 }
+
+/** Who may edit the shared queue of a jam. */
+export type JamEditRule = 'everyone' | 'host'
+export type JamSettings = {
+  /** Other voice channels of the host's server may join. */
+  allowChannels: boolean
+  /** Voice channels of other servers may join. */
+  allowServers: boolean
+  editableBy: JamEditRule
+  /** No new channels may join. */
+  closed: boolean
+}
+export type JamMember = {
+  guildId: string
+  channelId: string
+  name: string
+  guildName: string
+  isHost: boolean
+  /** People are in the channel. */
+  listening: boolean
+  /** The viewer's channel. */
+  you: boolean
+}
+/**
+ * A synchronized jam: several voice channels play one shared queue at the same position. Host
+ * actions are only for people in the host channel; everyone else sees them read-only.
+ */
+export type Jam = {
+  id: string
+  hostGuildId: string
+  hostChannelId: string
+  hostName: string
+  hostGuildName: string
+  members: JamMember[]
+  maxMembers: number
+  settings: JamSettings
+  /** Activity link with the jam's `custom_id`. */
+  shareLink: string
+  you: { member: boolean; isHost: boolean; canManage: boolean; canEdit: boolean }
+}
+/** `GET /jam/{id}`: the join prompt of a link. */
+export type JamPreview = { jam: Jam; join: { allowed: boolean; code: string | null } }
 
 export type SearchResult = {
   title: string
@@ -157,6 +201,17 @@ export type ErrorCode =
   | 'history_disabled'
   | 'channel_not_allowed'
   | 'unavailable'
+  | 'in_jam'
+  | 'not_in_jam'
+  | 'jam_host_only'
+  | 'jam_not_host'
+  | 'jam_closed'
+  | 'jam_full'
+  | 'jam_already_in'
+  | 'jam_channels_off'
+  | 'jam_servers_off'
+  | 'jam_ended'
+  | 'jam_other'
 
 export type ServerMessage =
   | { type: 'state'; state: PlayerState | null; serverNow?: number }
@@ -166,3 +221,5 @@ export type ServerMessage =
   | { type: 'permissions'; permissions: Permissions }
   /** The followed voice channel changed (the user joined, left or moved); `state` follows. */
   | { type: 'channel'; channel: ChannelRef | null }
+  /** The channel's jam changed (also sent right after `state`). */
+  | { type: 'jam'; jam: Jam | null }

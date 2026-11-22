@@ -44,6 +44,14 @@ export type Connection = {
   channel: ChannelRef | null
   launchChannelId: string | null
   guildId: string | null
+  /** Jam id when the Activity was opened from a jam link (`custom_id` = `jam-<id>`). */
+  jamId: string | null
+}
+
+/** Jam links carry `custom_id` = `jam-<id>` (see the backend's `player::jam::CUSTOM_ID_PREFIX`). */
+export function jamIdFromCustomId(customId: string | null | undefined): string | null {
+  const m = /^jam-([a-z0-9]{10})$/.exec((customId ?? '').trim())
+  return m?.[1] ?? null
 }
 
 async function authorizeCode(client: DiscordSDK, id: string): Promise<string> {
@@ -89,6 +97,23 @@ export async function connect(onStep: (s: LoginStep) => void): Promise<Connectio
     channel: auth.channel ?? null,
     launchChannelId: client.channelId,
     guildId: client.guildId,
+    jamId: jamIdFromCustomId(client.customId ?? new URLSearchParams(location.search).get('custom_id')),
+  }
+}
+
+/**
+ * Discord's share sheet for a jam link: the link launches the Activity with the jam's `custom_id`
+ * (wherever the opener is; the panel then offers to join from their voice channel). Resolves false
+ * when the user closed it or the client does not support it.
+ */
+export async function shareJamLink(jamId: string, message: string): Promise<boolean> {
+  if (!sdk) return false
+  try {
+    const res = await sdk.commands.shareLink({ message, custom_id: `jam-${jamId}` })
+    return res.success
+  } catch (error) {
+    console.warn('[lynx] shareLink failed', error)
+    return false
   }
 }
 

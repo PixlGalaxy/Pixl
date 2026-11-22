@@ -124,6 +124,9 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
             setAnchor(anchorFrom(msg.positionMs, msg.positionAt, msg.serverNow))
             setState((s) => (s ? { ...s, positionMs: msg.positionMs, positionAt: msg.positionAt } : s))
             break
+          case 'jam':
+            setState((s) => (s ? { ...s, jam: msg.jam } : s))
+            break
           case 'ai':
             setState((s) => (s ? { ...s, ai: msg.ai as AiState | null } : s))
             break
