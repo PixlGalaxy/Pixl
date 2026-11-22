@@ -674,7 +674,21 @@ async fn history_disabled_blocks_feedback() {
     let (s, v) = h
         .call("POST", "/api/ai/start", Some(&ana), Some(json!({ "channelId": "100" })))
         .await;
-    assert_eq!((s, code(&v)), (StatusCode::SERVICE_UNAVAILABLE, "unavailable"));
+    // The radio checks the real voice state first (the fake Discord has none for it).
+    assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
+    let (s, v) = h
+        .call("POST", "/api/ai/stop", Some(&ana), Some(json!({ "channelId": "100" })))
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"));
+    let (s, v) = h
+        .call(
+            "POST",
+            "/api/ai/cancel",
+            Some(&ana),
+            Some(json!({ "channelId": "100", "jobId": "x" })),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::BAD_REQUEST, "invalid"));
 }
 
 #[tokio::test]

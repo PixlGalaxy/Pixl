@@ -182,7 +182,7 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, channel: u64, s
                     // Missed events: send the full state instead.
                     Err(broadcast::error::RecvError::Lagged(_)) => conn.state(player.as_ref().map(|p| &p.0)).await,
                     // Closed, or the bot moved to another channel.
-                    Ok(_) | Err(broadcast::error::RecvError::Closed) => {
+                    Ok(PlayerEvent::State(_)) | Ok(PlayerEvent::Closed) | Err(broadcast::error::RecvError::Closed) => {
                         last_generation = player.take().map(|p| p.0.generation);
                         conn.state(None).await
                     }

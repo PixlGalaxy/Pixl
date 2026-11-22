@@ -195,6 +195,7 @@ pub async fn feedback(State(st): State<ApiState>, m: Member, Body(b): Body<Feedb
         .set_feedback(user, &entry.info, b.value)
         .await
         .map_err(|e| ApiError::internal("could not save feedback", e))?;
+    crate::player::radio::radio_feedback(&a.player, user, uid, b.value).await;
     let _ = st.events.send(GuildEvent::User(user));
     Ok(StatusCode::NO_CONTENT)
 }
