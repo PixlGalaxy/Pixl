@@ -22,3 +22,7 @@ data/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Native Windows dev builds
+target-win/
+appdata/
