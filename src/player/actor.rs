@@ -37,7 +37,7 @@ use crate::{
     ai::{RadioPick, RadioRequest},
     discord::registry::BotInfo,
     procs::ProcOwner,
-    sources::{Playable, SourceError},
+    sources::{LateMusic, MetaTiming, MusicMeta, Playable, PrepareTimings, SourceError},
     store::{track_key, GuildSettings, LoopMode, SessionKey, SessionRecord, MAX_VOLUME, MIN_VOLUME},
 };
 
@@ -160,6 +160,8 @@ struct Playing {
     clock: TrackClock,
     /// songbird built the input (audio was reachable). An error before that gets one fresh resolve.
     became_playable: bool,
+    /// Start-up timings and when the input started being built; logged (once) when playable.
+    startup: Option<(PrepareTimings, Instant)>,
 }
 
 impl Playing {
@@ -650,6 +652,7 @@ impl Player {
             Command::Moved(to) => self.moved(to).await,
             Command::End(reason) => self.ending = Some(reason),
             Command::Prepared { uid, prefetch, result } => self.on_prepared(uid, prefetch, *result).await,
+            Command::MusicMeta { uid, music } => self.on_music_meta(uid, music),
             Command::Track { handle_id, signal } => self.on_track_signal(handle_id, signal).await,
             Command::StartRadio { spec, reply } => {
                 let r = self.start_radio(spec);
@@ -872,6 +875,7 @@ impl Player {
         self.idle_leave_at = None;
         if let Some((uid, playable)) = self.prefetched.take() {
             if uid == entry.uid && playable.stream.expires_at > crate::store::now_secs() + 60 {
+                let entry = self.adopt_prepared(entry, &playable);
                 self.begin(entry, playable).await;
                 return;
             }
@@ -891,10 +895,22 @@ impl Player {
         let info = entry.info.clone();
         let uid = entry.uid;
         tokio::spawn(async move {
-            let result = match tokio::time::timeout(PREPARE_TIMEOUT, sources.prepare(&info, &owner)).await {
+            let mut result = match tokio::time::timeout(PREPARE_TIMEOUT, sources.prepare(&info, &owner)).await {
                 Ok(r) => r,
                 Err(_) => Err(SourceError::Timeout),
             };
+            if let Ok(p) = &mut result {
+                p.timings.prefetch = prefetch;
+                // Nothing waits for a prefetch: let it carry the full metadata.
+                if let Some(late) = p.late_music.as_ref().filter(|_| prefetch).and_then(LateMusic::take) {
+                    p.late_music = None;
+                    let (music, took) = late.await;
+                    p.timings.meta = MetaTiming::Ready(took);
+                    if music.is_some() {
+                        p.track.music = music;
+                    }
+                }
+            }
             let cmd = Command::Prepared {
                 uid,
                 prefetch,
@@ -924,42 +940,79 @@ impl Player {
         };
         match result {
             Ok(playable) => {
-                // Lazy Spotify match: keep the matched video in the queue (and the saved session).
-                // Also keep the YouTube Music metadata found while preparing (playlist entries).
-                let entry = if playable.track.youtube_id != entry.info.youtube_id
-                    || playable.track.music != entry.info.music
-                {
-                    let updated = Arc::new(QueueEntry {
-                        info: playable.track.clone(),
-                        ..(*entry).clone()
-                    });
-                    self.queue.update(updated.clone());
-                    self.persist(true);
-                    updated
-                } else {
-                    entry
-                };
+                let entry = self.adopt_prepared(entry, &playable);
                 self.begin(entry, playable).await;
             }
             Err(e) => self.failed(entry, &e.to_string()).await,
         }
     }
 
-    async fn begin(&mut self, entry: Entry, playable: Playable) {
+    /// YouTube Music metadata that arrived after its track started: show it in the queue, the
+    /// saved session, the panel and the now-playing card.
+    fn on_music_meta(&mut self, uid: Uuid, music: MusicMeta) {
+        let Some(entry) = self.queue.all().iter().find(|e| e.uid == uid).cloned() else {
+            return;
+        };
+        if entry.info.music.is_some() {
+            return;
+        }
+        let mut info = entry.info.clone();
+        info.music = Some(music);
+        let updated = Arc::new(QueueEntry {
+            info,
+            ..(*entry).clone()
+        });
+        self.queue.update(updated.clone());
+        let playing = match self.playing.as_mut().filter(|p| p.entry.uid == uid) {
+            Some(p) => {
+                p.playable.track.music = updated.info.music.clone();
+                p.entry = updated.clone();
+                true
+            }
+            None => false,
+        };
+        self.persist(true);
+        self.publish();
+        if playing {
+            self.messenger.refresh_now_playing(self.np_data(&updated));
+        }
+    }
+
+    /// Lazy Spotify match: keep the matched video in the queue (and the saved session). Also keep
+    /// the YouTube Music metadata found while preparing (playlist entries).
+    fn adopt_prepared(&mut self, entry: Entry, playable: &Playable) -> Entry {
+        if playable.track.youtube_id == entry.info.youtube_id && playable.track.music == entry.info.music {
+            return entry;
+        }
+        let updated = Arc::new(QueueEntry {
+            info: playable.track.clone(),
+            ..(*entry).clone()
+        });
+        self.queue.update(updated.clone());
+        self.persist(true);
+        updated
+    }
+
+    async fn begin(&mut self, entry: Entry, mut playable: Playable) {
         if self.resume_at.as_ref().is_some_and(|r| r.uid != entry.uid) {
             self.resume_at = None;
         }
+        let begun = Instant::now();
+        // Taken here so the copy kept for seeks / retries does not hold it.
+        let late_music = playable.late_music.take().and_then(|l| l.take());
         let handle = match self.start_input(&entry, &playable).await {
             Ok(h) => h,
             Err(reason) => return self.failed(entry, &reason).await,
         };
         let paused = self.paused();
+        let startup = Some((playable.timings.clone(), begun));
         self.playing = Some(Playing {
             entry: entry.clone(),
             playable,
             handle,
             clock: TrackClock::new(!paused),
             became_playable: false,
+            startup,
         });
         self.schedule_prefetch();
         self.persist(false);
@@ -972,8 +1025,26 @@ impl Player {
             });
             self.jam_timing().await;
         }
-        let (ai, info) = (self.deps.ai.clone(), entry.info.clone());
-        tokio::spawn(async move { ai.enqueue_tagging(&info).await });
+        let (ai, mut info) = (self.deps.ai.clone(), entry.info.clone());
+        match late_music {
+            None => {
+                tokio::spawn(async move { ai.enqueue_tagging(&info).await });
+            }
+            // The catalog key depends on the song metadata: tag once it is known.
+            Some(late) => {
+                let (tx, uid) = (self.tx.clone(), entry.uid);
+                tokio::spawn(async move {
+                    let (music, took) = late.await;
+                    debug!(%uid, took_ms = took.as_millis() as u64, found = music.is_some(), "late music metadata");
+                    if let Some(music) = music {
+                        info.music = Some(music.clone());
+                        let cmd = Command::MusicMeta { uid, music };
+                        let _ = tokio::time::timeout(Duration::from_secs(10), tx.send(cmd)).await;
+                    }
+                    ai.enqueue_tagging(&info).await;
+                });
+            }
+        }
         if self.back_online {
             self.back_online = false;
             self.messenger.notice(OwnedNotice::BackOnline {
@@ -1112,6 +1183,17 @@ impl Player {
                 self.failures = 0;
                 if let Some(p) = self.playing.as_mut() {
                     p.became_playable = true;
+                    if let Some((timings, begun)) = p.startup.take() {
+                        let id = p.playable.played_youtube_id.as_deref().unwrap_or(&p.playable.page_url);
+                        info!(
+                            guild = self.guild_id,
+                            uid = %p.entry.uid,
+                            track = id,
+                            prefetch = timings.prefetch,
+                            "track start: {}",
+                            timings.summary(begun, Instant::now())
+                        );
+                    }
                 }
                 self.apply_resume().await;
             }
@@ -2695,5 +2777,39 @@ mod tests {
         assert_eq!(restore_then_shutdown(177_000, 0).await, (1, 0));
         // No checkpoint: same track from the start.
         assert_eq!(restore_then_shutdown(0, 2).await, (2, 0));
+    }
+
+    #[tokio::test]
+    async fn late_music_metadata_updates_the_queue_once() {
+        let (manager, bot) = test_manager().await;
+        let restore = restore_of(&["a", "b"]);
+        let (first, second) = (restore.tracks[0].uid, restore.tracks[1].uid);
+        let (tx, slot) = spawn_on(&manager, &bot, VOICE, Some(restore));
+        let send = |uid: Uuid, title: &str| {
+            let music = MusicMeta {
+                youtube_id: "song0000000".into(),
+                title: title.into(),
+                artists: vec!["Artist".into()],
+                album: None,
+                isrc: None,
+            };
+            tx.send(Command::MusicMeta { uid, music })
+        };
+        let title = |e: Option<&Entry>| e.map(|e| e.info.display_title().to_owned());
+        send(first, "Clean Title").await.unwrap();
+        until_snap(&slot, |s| title(s.current.as_ref()).as_deref() == Some("Clean Title")).await;
+        // An upcoming entry is updated too.
+        send(second, "Second").await.unwrap();
+        until_snap(&slot, |s| title(s.upcoming.first()).as_deref() == Some("Second")).await;
+        // Metadata already known is not replaced by a late answer; unknown entries are ignored.
+        send(first, "Other").await.unwrap();
+        send(Uuid::new_v4(), "Nobody").await.unwrap();
+        // Commands run in order: once this answers, the ones above were handled.
+        let _ = ask(&tx, |reply| Command::Pause { reply }).await;
+        let snap = slot.read().unwrap().clone();
+        assert_eq!(title(snap.current.as_ref()).as_deref(), Some("Clean Title"));
+        // The playback id never changes.
+        assert_eq!(snap.current.as_ref().unwrap().info.youtube_id.as_deref(), Some("a"));
+        tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
     }
 }

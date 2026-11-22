@@ -37,7 +37,7 @@ use crate::{
     discord::registry::BotRegistry,
     i18n::I18n,
     procs::{ProcOwner, ProcessRegistry},
-    sources::{Playable, SourceError, Sources},
+    sources::{MusicMeta, Playable, SourceError, Sources},
     store::{GuildSettings, LoopMode, SessionKey, SessionWriter, Store, VoteSkip},
 };
 use playback::TrackSignal;
@@ -186,6 +186,11 @@ pub enum Command {
         uid: Uuid,
         prefetch: bool,
         result: Box<Result<Playable, SourceError>>,
+    },
+    /// YouTube Music metadata of a track that started before its lookup finished.
+    MusicMeta {
+        uid: Uuid,
+        music: MusicMeta,
     },
     Track {
         handle_id: Uuid,

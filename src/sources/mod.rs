@@ -13,6 +13,7 @@ pub mod fallback;
 pub mod lyrics;
 pub mod matcher;
 pub mod spotify;
+pub mod startup;
 pub mod text;
 pub mod youtube;
 pub mod ytdlp;
@@ -36,6 +37,9 @@ use crate::{
 };
 use detect::Input;
 pub use lyrics::Lyrics;
+pub use startup::{LateMusic, MetaTiming, PrepareTimings};
+use startup::{MetaLookup, MetaOutcome};
+use ytdlp::ResolveStats;
 pub use ytdlp::StreamInfo;
 
 /// Generic client identification for third-party APIs. Never put personal data here.
@@ -47,6 +51,9 @@ const SEARCH_CACHE_NS: &str = "search";
 const MUSIC_LOOKUPS: usize = 4;
 /// A slow counterpart lookup never holds up playback longer than this.
 const MUSIC_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Once the stream is ready, how much longer `prepare` waits for a metadata lookup still running
+/// (so a quick one makes the first now-playing card). Past that the track starts without it.
+const MUSIC_GRACE: Duration = Duration::from_millis(250);
 /// In-memory original -> substitute ids kept for stream invalidation.
 const SUBSTITUTES_MAX: usize = 2048;
 
@@ -198,6 +205,10 @@ pub struct Playable {
     pub played_youtube_id: Option<String>,
     /// Why an alternative plays, for logging.
     pub fallback_reason: Option<String>,
+    /// YouTube Music metadata still being looked up when the stream was ready (`track.music`
+    /// is filled in by the player when it arrives).
+    pub late_music: Option<LateMusic>,
+    pub timings: PrepareTimings,
 }
 
 #[derive(Clone)]
@@ -379,8 +390,7 @@ impl Sources {
     /// Attach the YouTube Music song metadata of a YouTube track (cached, negative results too).
     /// Never fails: on any error the track comes back unchanged.
     pub async fn with_music_meta(&self, mut track: TrackInfo) -> TrackInfo {
-        let youtube = matches!(track.origin, TrackOrigin::Youtube | TrackOrigin::YoutubeMusic);
-        if track.music.is_none() && youtube && track.youtube_id.is_some() {
+        if needs_music_meta(&track) {
             track.music = self.music_meta(&track).await;
         }
         track
@@ -404,11 +414,63 @@ impl Sources {
     /// Everything needed to start playing `track` now: lazy Spotify match, YouTube Music metadata
     /// (for playlist entries, looked up only when they are about to play), stream URL and, when
     /// the video is unavailable here, an alternative upload of the same recording.
+    ///
+    /// The metadata never decides which video is resolved, so it is looked up alongside the
+    /// stream; if it is still running when the stream is ready (plus [`MUSIC_GRACE`]) it comes
+    /// back as [`Playable::late_music`] instead of holding up the start.
     pub async fn prepare(&self, track: &TrackInfo, owner: &ProcOwner) -> SourceResult<Playable> {
+        let mut t = PrepareTimings::new(tokio::time::Instant::now());
+        let matching = track.youtube_id.is_none() && track.origin.is_catalog();
         let track = self.ensure_youtube(track).await?;
-        let track = self.with_music_meta(track).await;
+        t.matched = matching.then(|| t.requested.elapsed());
+        let mut meta = needs_music_meta(&track).then(|| {
+            let (sources, track) = (self.clone(), track.clone());
+            MetaLookup::spawn(async move { sources.music_meta(&track).await })
+        });
+        let resolving = tokio::time::Instant::now();
+        let mut playable = self.prepare_stream(track, &mut meta, &mut t, owner).await?;
+        t.resolve = resolving.elapsed().saturating_sub(t.waited);
+        if let Some(lookup) = meta {
+            match lookup.settle(MUSIC_GRACE).await {
+                MetaOutcome::Ready(music, took) => {
+                    t.meta = MetaTiming::Ready(took);
+                    if music.is_some() {
+                        playable.track.music = music;
+                    }
+                }
+                MetaOutcome::Late(late) => {
+                    t.meta = MetaTiming::Late;
+                    playable.late_music = Some(late);
+                }
+            }
+        }
+        t.prepared = t.requested.elapsed();
+        debug!(
+            id = ?playable.track.youtube_id,
+            matched_ms = ?t.matched.map(|d| d.as_millis()),
+            meta = ?t.meta,
+            resolve_ms = t.resolve.as_millis() as u64,
+            cache_hit = t.cache_hit,
+            wait_ms = t.waited.as_millis() as u64,
+            prepare_ms = t.prepared.as_millis() as u64,
+            "track prepared"
+        );
+        playable.timings = t;
+        Ok(playable)
+    }
+
+    /// The stream part of [`Self::prepare`]. A metadata lookup still in `meta` is only awaited
+    /// before looking for alternatives (the YouTube Music song is one of them).
+    async fn prepare_stream(
+        &self,
+        mut track: TrackInfo,
+        meta: &mut Option<MetaLookup>,
+        t: &mut PrepareTimings,
+        owner: &ProcOwner,
+    ) -> SourceResult<Playable> {
         let Some(orig) = track.youtube_id.clone() else {
-            let stream = self.inner.ytdlp.resolve_stream(&track.url, &track.url, owner).await?;
+            let (stream, stats) = self.inner.ytdlp.resolve_stream_stats(&track.url, &track.url, owner).await?;
+            record(t, stats);
             let page_url = track.url.clone();
             return Ok(self.playable(track, stream, page_url, None, None, owner));
         };
@@ -417,7 +479,9 @@ impl Sources {
         let mut tried = HashSet::from([orig.clone()]);
         if let Some(Some(alt)) = &cached {
             match self.youtube_stream(alt, owner).await {
-                Ok(stream) => {
+                Ok((stream, stats)) => {
+                    record(t, stats);
+                    t.fallback = true;
                     let reason = format!("{orig} is unavailable here; playing the known substitute {alt}");
                     return Ok(self.substitute(track, &orig, alt, stream, reason, owner));
                 }
@@ -428,14 +492,33 @@ impl Sources {
             }
         }
         let err = match self.youtube_stream(&orig, owner).await {
-            Ok(stream) => return Ok(self.playable(track, stream, watch_url(&orig), Some(orig), None, owner)),
+            Ok((stream, stats)) => {
+                record(t, stats);
+                return Ok(self.playable(track, stream, watch_url(&orig), Some(orig), None, owner));
+            }
             // "No alternative" is cached: fail right away.
             Err(e) if fallback::fallback_worthy(&e) && cached != Some(None) => e,
             Err(e) => return Err(e),
         };
-        let alts = LiveAlternatives { sources: self, track: &track, owner };
+        // The alternatives (and which steps apply) depend on the song metadata: wait for it now.
+        if let Some(lookup) = meta.take() {
+            let (music, took) = lookup.wait().await;
+            t.meta = MetaTiming::Ready(took);
+            if music.is_some() {
+                track.music = music;
+            }
+        }
+        let alts = LiveAlternatives {
+            sources: self,
+            track: &track,
+            owner,
+            last: Mutex::new(ResolveStats::default()),
+        };
         match fallback::try_alternatives(&alts, fallback::steps_for(&track), tried, fallback::MAX_ALTERNATIVES).await {
             fallback::Outcome::Played(f) => {
+                let stats = *alts.last.lock().unwrap();
+                record(t, stats);
+                t.fallback = true;
                 let _ = store.cache_put(fallback::CACHE_NS, &orig, &Some(f.id.clone()), self.inner.ttl).await;
                 let reason = format!("{orig} is unavailable ({err}); playing {} ({})", f.id, f.step.label());
                 Ok(self.substitute(track, &orig, &f.id, f.stream, reason, owner))
@@ -448,8 +531,8 @@ impl Sources {
         }
     }
 
-    async fn youtube_stream(&self, id: &str, owner: &ProcOwner) -> SourceResult<StreamInfo> {
-        self.inner.ytdlp.resolve_stream(&watch_url(id), id, owner).await
+    async fn youtube_stream(&self, id: &str, owner: &ProcOwner) -> SourceResult<(StreamInfo, ResolveStats)> {
+        self.inner.ytdlp.resolve_stream_stats(&watch_url(id), id, owner).await
     }
 
     fn substitute(
@@ -490,6 +573,8 @@ impl Sources {
             work_dir,
             played_youtube_id,
             fallback_reason,
+            late_music: None,
+            timings: PrepareTimings::new(tokio::time::Instant::now()),
         }
     }
 
@@ -545,11 +630,25 @@ fn watch_url(id: &str) -> String {
     format!("https://www.youtube.com/watch?v={id}")
 }
 
+/// A YouTube track whose YouTube Music song metadata is not known yet.
+fn needs_music_meta(track: &TrackInfo) -> bool {
+    let youtube = matches!(track.origin, TrackOrigin::Youtube | TrackOrigin::YoutubeMusic);
+    track.music.is_none() && youtube && track.youtube_id.is_some()
+}
+
+/// Keep the stats of the resolve that produced the playing stream.
+fn record(t: &mut PrepareTimings, stats: ResolveStats) {
+    t.cache_hit = stats.cache_hit;
+    t.waited = stats.waited;
+}
+
 /// The real alternative sources for one track.
 struct LiveAlternatives<'a> {
     sources: &'a Sources,
     track: &'a TrackInfo,
     owner: &'a ProcOwner,
+    /// Stats of the last stream tried (the one that played, when one did).
+    last: Mutex<ResolveStats>,
 }
 
 impl fallback::Alternatives for LiveAlternatives<'_> {
@@ -585,7 +684,9 @@ impl fallback::Alternatives for LiveAlternatives<'_> {
     }
 
     async fn try_stream(&self, id: &str) -> SourceResult<StreamInfo> {
-        self.sources.youtube_stream(id, self.owner).await
+        let (stream, stats) = self.sources.youtube_stream(id, self.owner).await?;
+        *self.last.lock().unwrap() = stats;
+        Ok(stream)
     }
 }
 

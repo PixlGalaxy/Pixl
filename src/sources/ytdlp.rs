@@ -54,6 +54,15 @@ pub struct StreamInfo {
     pub available_at: Option<i64>,
 }
 
+/// How one stream resolve went, for the start-up timing log.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResolveStats {
+    /// The URL came from the in-memory stream cache (no yt-dlp run).
+    pub cache_hit: bool,
+    /// Time slept waiting for YouTube's `available_at`.
+    pub waited: Duration,
+}
+
 #[derive(Clone)]
 pub struct Ytdlp {
     inner: Arc<Inner>,
@@ -164,9 +173,20 @@ impl Ytdlp {
 
     /// Resolve the direct audio URL. `cache_key` is the YouTube video id (or the URL for others).
     pub async fn resolve_stream(&self, url: &str, cache_key: &str, owner: &ProcOwner) -> SourceResult<StreamInfo> {
+        self.resolve_stream_stats(url, cache_key, owner).await.map(|(info, _)| info)
+    }
+
+    /// [`Self::resolve_stream`], also telling whether the URL came from the cache and how long
+    /// the `available_at` wait slept (for the start-up timing log).
+    pub async fn resolve_stream_stats(
+        &self,
+        url: &str,
+        cache_key: &str,
+        owner: &ProcOwner,
+    ) -> SourceResult<(StreamInfo, ResolveStats)> {
         if let Some(hit) = self.cached(cache_key) {
-            wait_until_available(&hit).await;
-            return Ok(hit);
+            let waited = wait_until_available(&hit).await;
+            return Ok((hit, ResolveStats { cache_hit: true, waited }));
         }
         let template = "%(.{id,url,http_headers,acodec,ext,format_id,protocol,duration,is_live,available_at})j";
         let args = vec![
@@ -185,8 +205,8 @@ impl Ytdlp {
             serde_json::from_str(line).map_err(|_| SourceError::Other("yt-dlp returned no stream info".into()))?;
         let info = parse_stream(&v, now_secs()).ok_or_else(|| SourceError::Unavailable("No audio stream".into()))?;
         self.store(cache_key, info.clone());
-        wait_until_available(&info).await;
-        Ok(info)
+        let waited = wait_until_available(&info).await;
+        Ok((info, ResolveStats { cache_hit: false, waited }))
     }
 
     fn cached(&self, key: &str) -> Option<StreamInfo> {
@@ -437,13 +457,17 @@ pub(crate) fn parse_stream(v: &Value, now: i64) -> Option<StreamInfo> {
 const MAX_AVAILABILITY_WAIT: Duration = Duration::from_secs(20);
 
 /// Sleep until the stream's `available_at` (plus a margin), so the first request is not refused.
-async fn wait_until_available(info: &StreamInfo) {
-    let Some(at) = info.available_at else { return };
+/// Returns how long it slept.
+async fn wait_until_available(info: &StreamInfo) -> Duration {
+    let Some(at) = info.available_at else { return Duration::ZERO };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
     let wait_ms = (at * 1000 + 750) - now;
-    if wait_ms > 0 {
-        tokio::time::sleep(Duration::from_millis(wait_ms as u64).min(MAX_AVAILABILITY_WAIT)).await;
+    if wait_ms <= 0 {
+        return Duration::ZERO;
     }
+    let wait = Duration::from_millis(wait_ms as u64).min(MAX_AVAILABILITY_WAIT);
+    tokio::time::sleep(wait).await;
+    wait
 }
 
 fn thumb_of(v: &Value) -> Option<String> {
