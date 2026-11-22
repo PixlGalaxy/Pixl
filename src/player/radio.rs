@@ -29,12 +29,12 @@ use uuid::Uuid;
 use super::{
     queue::{Entry, QueueEntry, Requester},
     state::epoch_ms,
-    Command, PlayerError, PlayerHandle, PlayerManager, StartError, StartRequest,
+    Command, PlayerError, PlayerHandle, PlayerManager,
 };
 use crate::{
     ai::{AiPhase, RadioError, RadioJob, RadioMix, RadioPick},
     discord::{
-        registry::{assign, Assignment},
+        play::{self, PlayCtx, PlayError},
         respond::actor,
     },
     perms::{can, Action, Actor, Decision, Deny},
@@ -448,6 +448,9 @@ pub enum RadioApiError {
     /// No player / no active radio / no such job.
     #[error("not found")]
     NotFound,
+    /// A manager limited Lynx to other voice channels.
+    #[error("Lynx may not play in that channel")]
+    ChannelNotAllowed { allowed: Vec<u64> },
     #[error("the queue is full")]
     QueueFull { max: usize },
     /// `AI_ENABLED` is off (or the engine failed unexpectedly).
@@ -463,6 +466,7 @@ impl RadioApiError {
             Self::HistoryDisabled => "history_disabled",
             Self::NotInChannel => "not_in_channel",
             Self::BotUnavailable(_) => "bot_unavailable",
+            Self::ChannelNotAllowed { .. } => "channel_not_allowed",
             Self::NotFound => "not_found",
             Self::QueueFull { .. } => "queue_full",
             Self::Unavailable => "unavailable",
@@ -471,7 +475,7 @@ impl RadioApiError {
 
     pub fn http_status(&self) -> u16 {
         match self {
-            Self::NoPermission | Self::HistoryDisabled | Self::NotInChannel => 403,
+            Self::NoPermission | Self::HistoryDisabled | Self::NotInChannel | Self::ChannelNotAllowed { .. } => 403,
             Self::NotFound => 404,
             Self::QueueFull { .. } | Self::BotUnavailable(_) => 409,
             Self::Unavailable => 503,
@@ -578,7 +582,18 @@ async fn actor_of(players: &PlayerManager, guild_id: u64, user_id: u64, perms: O
     actor(&deps.bots, &deps.store, guild_id, user_id, perms, channel, false).await
 }
 
-/// The player of a channel, or a new one on the bot `/play` would pick (guild lock held).
+fn play_ctx(players: &PlayerManager) -> PlayCtx<'_> {
+    let deps = players.deps();
+    PlayCtx {
+        players,
+        bots: &deps.bots,
+        store: &deps.store,
+        sources: &deps.sources,
+    }
+}
+
+/// The player of a channel, or a new one on the bot `/play` would pick (the shared assignment in
+/// `discord::play`, guild lock held).
 pub async fn get_or_start_player(
     players: &PlayerManager,
     guild_id: u64,
@@ -586,34 +601,21 @@ pub async fn get_or_start_player(
     text_channel_id: Option<u64>,
     started_by: u64,
 ) -> Result<PlayerHandle, BotUnavailable> {
-    let deps = players.deps();
-    let _guard = players.lock_guild(guild_id).await;
-    if let Some(p) = players.get(guild_id, voice_channel_id) {
-        return Ok(p);
-    }
-    let candidates = deps
-        .bots
-        .candidates(guild_id, voice_channel_id, |i| players.bot_has_player(guild_id, i));
-    let bot_index = match assign(&candidates, voice_channel_id) {
-        Assignment::Existing(i) | Assignment::Free(i) => i,
-        Assignment::CannotJoin => return Err(BotUnavailable::CannotJoin),
-        Assignment::Busy { busy_channel } => return Err(BotUnavailable::Busy { busy_channel }),
-    };
-    let req = StartRequest {
+    play::player_for(
+        play_ctx(players),
         guild_id,
         voice_channel_id,
-        bot_index,
         text_channel_id,
         started_by,
-        humans: deps.bots.humans_in(guild_id, voice_channel_id),
-        settings: settings_of(players, guild_id).await,
-        restore: None,
-    };
-    match players.start(req).await {
-        Ok(p) => Ok(p),
-        Err(StartError::ShuttingDown) => Err(BotUnavailable::ShuttingDown),
-        Err(_) => Err(BotUnavailable::JoinFailed),
-    }
+        None,
+    )
+    .await
+    .map_err(|e| match e {
+        PlayError::CannotJoin { .. } => BotUnavailable::CannotJoin,
+        PlayError::Busy { busy_channel, .. } => BotUnavailable::Busy { busy_channel },
+        PlayError::ShuttingDown => BotUnavailable::ShuttingDown,
+        _ => BotUnavailable::JoinFailed,
+    })
 }
 
 /// Start a radio in the user's voice channel (creating the player when needed). Replaces an
@@ -635,6 +637,12 @@ pub async fn start_radio(players: &PlayerManager, req: RadioStartRequest) -> Res
         .and_then(|p| p.snapshot().ai.clone())
         .is_some_and(|ai| ai.active && ai.owner_id != user);
     radio_permission(&a, &settings, RadioOp::Start { replaces_other }, false)?;
+    play::check_voice(play_ctx(players), guild, vc, a.is_manager)
+        .await
+        .map_err(|e| match e {
+            PlayError::VoiceNotAllowed { allowed } => RadioApiError::ChannelNotAllowed { allowed },
+            _ => RadioApiError::Unavailable,
+        })?;
 
     let player = get_or_start_player(players, guild, vc, req.text_channel_id, user)
         .await

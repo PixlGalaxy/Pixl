@@ -13,7 +13,7 @@ songbird = "0.6"
 symphonia = { version = "0.5", features = ["aac", "mp3", "isomp4", "alac"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["fs", "trace", "set-header"] }
+tower-http = { version = "0.6", features = ["trace", "set-header"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -26,9 +26,13 @@ dashmap = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
 unicode-normalization = "0.1"
 fastrand = "2"
+getrandom = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
+tower = { version = "0.5", features = ["util"] }
+tokio-tungstenite = "0.29"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -18,8 +18,8 @@ use tracing::{debug, warn};
 use super::{
     ids::{track_tag, CustomId, NpAction, QUEUE_BUTTONS_TTL_SECS},
     jam::JamError,
+    play::{self, PlayCtx, PlayError, PlayRequest, Played},
     radio::{self as radio_ui, RadioCtx, RadioForm},
-    registry::{assign, Assignment},
     respond::{self, actor},
     ui::{
         self, bare_callback, callback,
@@ -30,17 +30,12 @@ use super::{
 };
 use crate::{
     perms::{can, Action, Decision, Deny},
-    player::{
-        Entry, PlayerHandle, PlayerSnapshot, PushError, QueueEntry, Requester, Restore, SkipOutcome, StartError,
-        StartRequest,
-    },
-    procs::ProcOwner,
-    sources::{SourceError, TrackInfo, DEFAULT_LIST_LIMIT},
+    player::{Entry, PlayerHandle, PlayerSnapshot, QueueEntry, Requester, Restore, SkipOutcome},
+    sources::{SourceError, TrackInfo},
     store::{now_secs, Feedback, GuildSettings, LoopMode},
 };
 
 const AUTOCOMPLETE_TIMEOUT: Duration = Duration::from_millis(2500);
-const RESOLVE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// One interaction being answered. Tracks whether the response was deferred.
 struct Inv<'a> {
@@ -226,6 +221,9 @@ fn track_link(e: &QueueEntry) -> String {
 // ---------------------------------------------------------------------------
 
 pub async fn handle(lynx: Arc<Lynx>, http: Arc<Http>, interaction: Interaction) {
+    if super::restrict::reject(&lynx, &http, &interaction).await {
+        return;
+    }
     match interaction {
         Interaction::Command(cmd) => command(&lynx, &http, &cmd).await,
         Interaction::Autocomplete(cmd) => autocomplete(&lynx, &http, &cmd).await,
@@ -387,44 +385,63 @@ fn source_error(inv: &Inv, e: &SourceError) -> Message {
     }
 }
 
-/// Get (or create) the player for the user's voice channel. Holds the guild lock while assigning.
-async fn player_for_play(inv: &Inv<'_>, vc: u64, restore: Option<Restore>) -> Result<PlayerHandle, Message> {
-    let lynx = inv.lynx;
-    let _guard = lynx.players.lock_guild(inv.guild_id).await;
-    if let Some(p) = lynx.players.get(inv.guild_id, vc) {
-        return Ok(p);
+fn play_ctx(lynx: &Lynx) -> PlayCtx<'_> {
+    PlayCtx {
+        players: &lynx.players,
+        bots: &lynx.bots,
+        store: &lynx.store,
+        sources: &lynx.sources,
     }
-    let candidates = lynx
-        .bots
-        .candidates(inv.guild_id, vc, |i| lynx.players.bot_has_player(inv.guild_id, i));
-    let bot_index = match assign(&candidates, vc) {
-        Assignment::Existing(i) | Assignment::Free(i) => i,
-        Assignment::CannotJoin => return Err(inv.err("cannot_connect", &[("channel", &format!("<#{vc}>"))])),
-        Assignment::Busy { busy_channel } => {
-            let invite = lynx.bots.next_node_invite(inv.guild_id);
-            return Err(cards::all_busy(
-                busy_channel,
-                vc,
-                invite.as_ref().map(|(n, u)| (*n, u.as_str())),
-                &lynx.i18n,
-            ));
+}
+
+fn play_error(inv: &Inv, e: PlayError) -> Message {
+    match e {
+        PlayError::NoResults => inv.err("no_results", &[]),
+        PlayError::Source(e) => source_error(inv, &e),
+        PlayError::Timeout => inv.err("timeout", &[]),
+        PlayError::CannotJoin { channel } => inv.err("cannot_connect", &[("channel", &format!("<#{channel}>"))]),
+        PlayError::Busy {
+            busy_channel,
+            channel,
+            invite,
+        } => cards::all_busy(
+            busy_channel,
+            channel,
+            invite.as_ref().map(|(n, u)| (*n, u.as_str())),
+            &inv.lynx.i18n,
+        ),
+        PlayError::ShuttingDown => inv.err("restarting", &[]),
+        PlayError::JoinFailed => inv.err("join_failed", &[]),
+        PlayError::Denied(d) => inv.deny(d),
+        PlayError::VoiceNotAllowed { allowed } => {
+            inv.err("voice_channel", &[("channels", &super::restrict::mentions(&allowed))])
         }
-    };
-    let req = StartRequest {
-        guild_id: inv.guild_id,
-        voice_channel_id: vc,
-        bot_index,
-        text_channel_id: Some(inv.text_channel),
-        started_by: inv.user_id,
-        humans: lynx.bots.humans_in(inv.guild_id, vc),
-        settings: inv.settings().await,
-        restore,
-    };
-    match lynx.players.start(req).await {
-        Ok(p) => Ok(p),
-        Err(StartError::ShuttingDown) => Err(inv.err("restarting", &[])),
-        Err(_) => Err(inv.err("join_failed", &[])),
+        PlayError::QueueFull { max } => inv.err("queue_full", &[("max", &max.to_string())]),
+        PlayError::Gone => gone(inv),
     }
+}
+
+/// Voice channel restriction (managers are never restricted).
+async fn voice_allowed(inv: &Inv<'_>, vc: u64) -> Result<(), Message> {
+    let manager = respond::is_manager(&inv.lynx.bots, inv.guild_id, inv.user_id, inv.permissions).await;
+    play::check_voice(play_ctx(inv.lynx), inv.guild_id, vc, manager)
+        .await
+        .map_err(|e| play_error(inv, e))
+}
+
+/// Get (or create) the player for the user's voice channel.
+async fn player_for_play(inv: &Inv<'_>, vc: u64, restore: Option<Restore>) -> Result<PlayerHandle, Message> {
+    voice_allowed(inv, vc).await?;
+    play::player_for(
+        play_ctx(inv.lynx),
+        inv.guild_id,
+        vc,
+        Some(inv.text_channel),
+        inv.user_id,
+        restore,
+    )
+    .await
+    .map_err(|e| play_error(inv, e))
 }
 
 async fn play(inv: &Inv<'_>, query: &str) -> Message {
@@ -435,63 +452,34 @@ async fn play(inv: &Inv<'_>, query: &str) -> Message {
     if query.is_empty() {
         return inv.err("no_results", &[]);
     }
+    if let Err(m) = voice_allowed(inv, vc).await {
+        return m;
+    }
     // Fail fast (before resolving) when no bot could play here.
-    if lynx.players.get(inv.guild_id, vc).is_none() {
-        let candidates = lynx
-            .bots
-            .candidates(inv.guild_id, vc, |i| lynx.players.bot_has_player(inv.guild_id, i));
-        match assign(&candidates, vc) {
-            Assignment::CannotJoin => return inv.err("cannot_connect", &[("channel", &format!("<#{vc}>"))]),
-            Assignment::Busy { busy_channel } => {
-                let invite = lynx.bots.next_node_invite(inv.guild_id);
-                return cards::all_busy(
-                    busy_channel,
-                    vc,
-                    invite.as_ref().map(|(n, u)| (*n, u.as_str())),
-                    &lynx.i18n,
-                );
-            }
-            _ => {}
-        }
+    if let Err(e) = play::precheck(play_ctx(lynx), inv.guild_id, vc) {
+        return play_error(inv, e);
     }
     inv.defer(false).await;
 
-    let settings = inv.settings().await;
-    let limit = (settings.max_queue_length as usize).min(DEFAULT_LIST_LIMIT);
-    let owner = ProcOwner::new(inv.guild_id, vc, None);
-    let resolved = match tokio::time::timeout(RESOLVE_TIMEOUT, lynx.sources.resolve(query, limit, &owner)).await {
-        Ok(Ok(r)) if !r.tracks.is_empty() => r,
-        Ok(Ok(_)) => return inv.err("no_results", &[]),
-        Ok(Err(e)) => return source_error(inv, &e),
-        Err(_) => return inv.err("timeout", &[]),
+    let request = PlayRequest {
+        guild_id: inv.guild_id,
+        user_id: inv.user_id,
+        voice_channel_id: vc,
+        query,
+        requester: inv.requester(),
+        text_channel: Some(inv.text_channel),
     };
-    let player = match player_for_play(inv, vc, None).await {
+    let Played {
+        player,
+        entries,
+        playlist_name,
+        push: res,
+    } = match play::play(play_ctx(lynx), request).await {
         Ok(p) => p,
-        Err(m) => return m,
+        Err(e) => return play_error(inv, e),
     };
-    if let Err(m) = inv.check(player.clone(), Action::Add).await {
-        return m;
-    }
-    let requester = inv.requester();
-    let entries: Vec<Entry> = resolved
-        .tracks
-        .iter()
-        .map(|t| Arc::new(QueueEntry::new(t.clone(), requester.clone())))
-        .collect();
     let first = entries[0].clone();
-    let is_list = resolved.playlist_name.is_some() || entries.len() > 1;
-    let res = match player
-        .enqueue(
-            entries.clone(),
-            settings.max_queue_length as usize,
-            Some(inv.text_channel),
-        )
-        .await
-    {
-        Ok(Ok(r)) => r,
-        Ok(Err(PushError::Full { max })) => return inv.err("queue_full", &[("max", &max.to_string())]),
-        Err(_) => return gone(inv),
-    };
+    let is_list = playlist_name.is_some() || entries.len() > 1;
     let snap = player.snapshot();
     if !is_list {
         let eta = eta_ms(&snap, res.first_position);
@@ -508,7 +496,7 @@ async fn play(inv: &Inv<'_>, query: &str) -> Message {
     let url = (query.starts_with("https://") || query.starts_with("http://")).then_some(query);
     cards::added_list(
         &cards::AddedList {
-            name: resolved.playlist_name.as_deref(),
+            name: playlist_name.as_deref(),
             url,
             origin: first.info.origin,
             count: res.added,

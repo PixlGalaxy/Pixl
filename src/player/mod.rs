@@ -25,7 +25,7 @@ use std::{
 
 use dashmap::DashMap;
 use serenity::all::{ChannelId, GuildId};
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex, OwnedMutexGuard};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex, Notify, OwnedMutexGuard};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -435,6 +435,8 @@ struct ManagerInner {
     ended: DashMap<SessionKey, (Instant, Restore)>,
     closing: AtomicBool,
     generation: AtomicU64,
+    /// Woken whenever a player starts in or moves into a channel (panel sockets waiting for one).
+    appeared: Notify,
 }
 
 impl PlayerManager {
@@ -447,6 +449,7 @@ impl PlayerManager {
                 ended: DashMap::new(),
                 closing: AtomicBool::new(false),
                 generation: AtomicU64::new(1),
+                appeared: Notify::new(),
             }),
         }
     }
@@ -496,6 +499,20 @@ impl PlayerManager {
             .players
             .iter()
             .any(|p| p.key().guild_id == guild_id && p.bot_index == bot_index)
+    }
+
+    /// Wait until a player other than generation `not` lives in the channel (panel socket opened
+    /// before anything plays, or after the previous player closed).
+    pub async fn wait_player(&self, guild_id: u64, voice_channel_id: u64, not: Option<u64>) -> PlayerHandle {
+        loop {
+            let appeared = self.inner.appeared.notified();
+            if let Some(p) = self.get(guild_id, voice_channel_id) {
+                if Some(p.generation) != not && !p.is_closed() {
+                    return p;
+                }
+            }
+            appeared.await;
+        }
     }
 
     /// Serializes bot assignment and player creation within one guild.
@@ -563,6 +580,7 @@ impl PlayerManager {
             warn!(?key, "replacing an existing player");
             let _ = old.end(EndReason::GuildGone).await;
         }
+        self.inner.appeared.notify_waiters();
         info!(
             guild = req.guild_id,
             channel = req.voice_channel_id,
@@ -603,6 +621,7 @@ impl PlayerManager {
         if let Some((_, h)) = self.inner.players.remove(&from) {
             h.voice_channel.store(to, Ordering::Release);
             self.inner.players.insert(to_key, h);
+            self.inner.appeared.notify_waiters();
         }
         true
     }

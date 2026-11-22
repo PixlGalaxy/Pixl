@@ -1,10 +1,13 @@
-import { Gauge, Search, Shield, UserPlus, Users, Vote, X } from 'lucide-react'
+import { Gauge, Hash, Search, Shield, UserPlus, Users, Vote, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Avatar, Button, Card, Empty, IconButton, PageSpinner, Segmented, SettingRow, Spinner, Toggle, inputCls } from '../components/ui'
 import { api } from '../lib/api'
 import { useLynx } from '../lib/lynx'
-import type { GuildSettings, Member } from '../lib/types'
+import type { GuildChannel, GuildChannels, GuildSettings, Member } from '../lib/types'
+
+/** Same cap as the backend. */
+const MAX_RULE_CHANNELS = 25
 
 /** Number field that saves on blur / Enter, clamped to [min, max]. */
 function NumberField({
@@ -160,6 +163,138 @@ function DjCard() {
   )
 }
 
+type ChannelOption = GuildChannel & { label: string }
+
+/** Selected channels as removable chips plus a native select (reliable inside the iframe) to add one. */
+function ChannelPicker({
+  label,
+  description,
+  options,
+  value,
+  onChange,
+}: {
+  label: string
+  description: string
+  options: ChannelOption[]
+  value: string[]
+  onChange: (next: string[]) => void
+}) {
+  const { t } = useTranslation()
+  const byId = new Map(options.map((o) => [o.id, o]))
+  const remaining = options.filter((o) => !value.includes(o.id))
+  const groups = new Map<string, ChannelOption[]>()
+  for (const o of remaining) {
+    const key = o.parentName ?? t('settings.noCategory')
+    groups.set(key, [...(groups.get(key) ?? []), o])
+  }
+  return (
+    <div className="space-y-2">
+      <div>
+        <div className="text-sm font-medium">{label}</div>
+        <div className="text-xs text-muted">{description}</div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {value.length === 0 ? (
+          <span className="text-xs text-muted">{t('settings.allChannels')}</span>
+        ) : (
+          value.map((id) => {
+            const name = byId.get(id)?.label ?? t('settings.unknownChannel')
+            return (
+              <span
+                key={id}
+                className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface-2 py-0.5 pr-1 pl-2 text-xs"
+              >
+                <Hash size={12} className="text-muted" />
+                <span className="max-w-40 truncate">{name}</span>
+                <IconButton
+                  label={t('settings.removeChannel', { name })}
+                  className="!size-5 hover:!text-red-500"
+                  onClick={() => onChange(value.filter((v) => v !== id))}
+                >
+                  <X size={12} />
+                </IconButton>
+              </span>
+            )
+          })
+        )}
+      </div>
+      {remaining.length > 0 && value.length < MAX_RULE_CHANNELS && (
+        <select
+          aria-label={t('settings.addChannel')}
+          value=""
+          onChange={(e) => e.target.value && onChange([...value, e.target.value])}
+          className={inputCls}
+        >
+          <option value="">{t('settings.addChannel')}</option>
+          {[...groups].map(([group, list]) => (
+            <optgroup key={group} label={group}>
+              {list.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      )}
+    </div>
+  )
+}
+
+function ChannelsCard({
+  settings,
+  save,
+}: {
+  settings: GuildSettings
+  save: (patch: Partial<GuildSettings>) => Promise<void>
+}) {
+  const { t } = useTranslation()
+  const { errorText } = useLynx()
+  const [channels, setChannels] = useState<GuildChannels | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    api.guildChannels().then(setChannels, (e) => setError(errorText(e)))
+  }, [errorText])
+
+  const text: ChannelOption[] = channels
+    ? [
+        ...channels.text.map((c) => ({ ...c, label: c.name })),
+        ...channels.voice.map((c) => ({ ...c, label: t('settings.voiceChat', { name: c.name }) })),
+      ]
+    : []
+  const voice: ChannelOption[] = channels ? channels.voice.map((c) => ({ ...c, label: c.name })) : []
+
+  return (
+    <Card title={t('settings.channels')} description={t('settings.channelsHint')} icon={<Hash size={18} />}>
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {!channels && !error ? (
+        <div className="flex justify-center py-4 text-muted">
+          <Spinner />
+        </div>
+      ) : (
+        <>
+          <ChannelPicker
+            label={t('settings.commandChannels')}
+            description={t('settings.commandChannelsHint')}
+            options={text}
+            value={settings.commandChannels ?? []}
+            onChange={(commandChannels) => save({ commandChannels })}
+          />
+          <div className="border-t border-line pt-4">
+            <ChannelPicker
+              label={t('settings.voiceChannels')}
+              description={t('settings.voiceChannelsHint')}
+              options={voice}
+              value={settings.voiceChannels ?? []}
+              onChange={(voiceChannels) => save({ voiceChannels })}
+            />
+          </div>
+        </>
+      )}
+    </Card>
+  )
+}
+
 export function SettingsScreen() {
   const { t } = useTranslation()
   const { settings, setSettings, run } = useLynx()
@@ -199,6 +334,8 @@ export function SettingsScreen() {
       </Card>
 
       <DjCard />
+
+      <ChannelsCard settings={settings} save={save} />
 
       <Card title={t('settings.voteSkip')} description={t('settings.voteSkipHint')} icon={<Vote size={18} />}>
         <SettingRow label={t('settings.voteSkipEnabled')}>

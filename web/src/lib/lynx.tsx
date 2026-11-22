@@ -10,6 +10,8 @@ type LynxContext = {
   config: PublicConfig
   user: User
   guildName: string | null
+  /** Name of the voice channel the Activity was launched in. */
+  launchChannelName: string | null
   channelId: string | null
   aiEnabled: boolean
   permissions: Permissions
@@ -85,6 +87,7 @@ export function LynxProvider({ conn, children }: { conn: Connection; children: R
       config: conn.config,
       user: conn.auth.user,
       guildName: conn.auth.guild?.name ?? null,
+      launchChannelName: conn.auth.channel?.name ?? null,
       channelId: conn.channelId,
       aiEnabled: conn.config.features?.ai === true,
       permissions,

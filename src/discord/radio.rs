@@ -217,6 +217,9 @@ fn start_error(ctx: &RadioCtx, vc: u64, e: &RadioApiError) -> Message {
         }
         RadioApiError::BotUnavailable(BotUnavailable::JoinFailed) => ctx.err("join_failed", &[]),
         RadioApiError::BotUnavailable(BotUnavailable::ShuttingDown) => ctx.err("restarting", &[]),
+        RadioApiError::ChannelNotAllowed { allowed } => {
+            ctx.err("voice_channel", &[("channels", &super::restrict::mentions(allowed))])
+        }
         RadioApiError::NotFound | RadioApiError::Unavailable => ctx.err("radio_unavailable", &[]),
     }
 }
