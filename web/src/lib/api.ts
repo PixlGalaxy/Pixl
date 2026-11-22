@@ -1,6 +1,7 @@
 import type {
   AuthResult,
   Feedback,
+  GuildChannels,
   GuildSettings,
   LoopMode,
   Lyrics,
@@ -130,6 +131,7 @@ export const api = {
   djs: () => request<{ djs: Member[] }>('/djs'),
   addDj: (userId: string) => request<void>('/djs', 'POST', { userId }),
   removeDj: (userId: string) => request<void>(`/djs/${encodeURIComponent(userId)}`, 'DELETE'),
+  guildChannels: () => request<GuildChannels>('/guild/channels'),
   candidates: (query: string) => request<{ members: Member[] }>(`/members/candidates?${q({ q: query })}`),
 
   // User

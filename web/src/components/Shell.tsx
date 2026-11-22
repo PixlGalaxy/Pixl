@@ -107,7 +107,7 @@ function ThemeToggle() {
 
 export function Shell() {
   const { t } = useTranslation()
-  const { state, permissions, aiEnabled, guildName } = useLynx()
+  const { state, permissions, aiEnabled, guildName, launchChannelName } = useLynx()
   const [tab, setTabState] = useState<TabId>(readTab)
 
   const tabs = TABS.filter(
@@ -128,7 +128,7 @@ export function Shell() {
     window.scrollTo({ top: 0 })
   }, [active])
 
-  const channelName = state?.channelName ?? null
+  const channelName = state?.channelName || launchChannelName
   // On wide screens the queue lives in a right column next to every tab except the queue itself.
   const showSide = active !== 'queue'
 

@@ -12,11 +12,15 @@ export type Permissions = {
   canAdd: boolean
 }
 
+export type ChannelRef = { id: string; name: string }
+
 export type AuthResult = {
   accessToken: string
   session: string
   user: User
   guild: GuildInfo | null
+  /** Voice channel the Activity was launched in (null outside a server voice channel). */
+  channel?: ChannelRef | null
   permissions: Permissions
   locale: string | null
 }
@@ -75,6 +79,9 @@ export type PlayerState = {
   volume: number
   ai: AiState | null
   skipVotes: { current: number; required: number } | null
+  voteSkipEnabled?: boolean
+  /** Server clock (epoch ms) when the state was sent. */
+  serverNow?: number
 }
 
 export type SearchResult = {
@@ -94,7 +101,14 @@ export type GuildSettings = {
   voteSkip: { enabled: boolean; mode: 'count' | 'percent'; value: number }
   maxQueueLength: number
   defaultVolume: number
+  /** Text channels (or a voice channel chat) where music commands work. Empty = every channel. */
+  commandChannels: string[]
+  /** Voice channels where Lynx may play. Empty = every channel. */
+  voiceChannels: string[]
 }
+
+export type GuildChannel = { id: string; name: string; parentName: string | null }
+export type GuildChannels = { text: GuildChannel[]; voice: GuildChannel[] }
 
 export type Member = { id: string; name: string; avatarUrl: string | null }
 
@@ -113,10 +127,13 @@ export type ErrorCode =
   | 'rate_limited'
   | 'bot_unavailable'
   | 'invalid'
+  | 'history_disabled'
+  | 'channel_not_allowed'
+  | 'unavailable'
 
 export type ServerMessage =
   | { type: 'state'; state: PlayerState | null }
-  | { type: 'position'; positionMs: number; positionAt: number }
+  | { type: 'position'; positionMs: number; positionAt: number; serverNow?: number }
   | { type: 'ai'; ai: AiState | null }
   | { type: 'settings'; settings: GuildSettings }
   | { type: 'permissions'; permissions: Permissions }
