@@ -11,6 +11,8 @@
 //   ?pip=1 / ?grid=1 start in picture-in-picture / grid layout (mock SDK; keys `p` / `g` toggle)
 //   ?voice=101|none  voice channel the user starts in (default 100, where the player is)
 //   ?channel_id=100  launch channel (default 200, a text channel: the panel follows your voice channel)
+//   ?custom_id=jam-partyroom1  opened from a jam link: the join prompt of a jam hosted elsewhere
+//   ?jam=host|member a jam already running (you host it, or your channel is a member)
 //   ?tab=queue|lyrics|radio|...  tab the panel opens on (read by the panel itself, mock mode only);
 //                    with ?pip=1 or the `p` key it picks the compact variant
 //   ?ai_track=1      the current song was picked by the AI radio (AI chip, "Selected by AI")
@@ -25,6 +27,8 @@ import type {
   AiPhase,
   AiState,
   GuildSettings,
+  Jam,
+  JamSettings,
   Member,
   Permissions,
   PlayerState,
@@ -41,6 +45,7 @@ type Flags = {
   lyrics: 'synced' | 'plain' | 'none'
   vote: boolean
   voice: string | null
+  jam: 'host' | 'member' | null
   aiTrack: boolean
   radio: 'off' | 'on' | 'job' | null
 }
@@ -57,6 +62,7 @@ function parseFlags(search: string): Flags {
     lyrics: lyrics === 'plain' || lyrics === 'none' ? lyrics : 'synced',
     vote: p.get('vote') === '1',
     voice: p.get('voice') === 'none' ? null : (p.get('voice') ?? '100'),
+    jam: p.get('jam') === 'host' || p.get('jam') === 'member' ? (p.get('jam') as 'host' | 'member') : null,
     aiTrack: p.get('ai_track') === '1',
     radio: ['off', 'on', 'job'].includes(p.get('radio') ?? '') ? (p.get('radio') as 'off' | 'on' | 'job') : null,
   }
@@ -288,8 +294,93 @@ function snapshot(f: Flags): PlayerState | null {
     ai: f.ai ? (f.radio ? mockRadio(f) : s.ai) : null,
     skipVotes: f.vote ? { current: 2, required: 4 } : null,
     voteSkipEnabled: s.settings.voteSkip.enabled,
+    version: ++mockVersion,
+    jam: jamView(f),
     serverNow: Date.now(),
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Jam (same shape as src/api/jam.rs). Ids are 10 lowercase letters or digits.
+
+let mockVersion = 0
+/** The jam linked by `?custom_id=jam-partyroom1`, hosted by a channel of another server. */
+const LINKED_JAM_ID = 'partyroom1'
+type MockJam = { id: string; host: 'me' | 'other'; members: Jam['members']; settings: JamSettings }
+const jams = new Map<string, MockJam>()
+let myJam: string | null = null
+let jamInitialized = false
+
+function otherHost(): Jam['members'][number] {
+  return { guildId: '2', channelId: '500', name: 'Party Room', guildName: 'Night Owls', isHost: true, listening: true, you: false }
+}
+function meMember(host: boolean): Jam['members'][number] {
+  return { guildId: '1', channelId: PLAYER_CHANNEL, name: CHANNEL_NAMES[PLAYER_CHANNEL]!, guildName: 'Galaxy Hangout', isHost: host, listening: true, you: true }
+}
+jams.set(LINKED_JAM_ID, {
+  id: LINKED_JAM_ID,
+  host: 'other',
+  members: [otherHost(), { guildId: '2', channelId: '501', name: 'Chill Corner', guildName: 'Night Owls', isHost: false, listening: false, you: false }],
+  settings: { allowChannels: true, allowServers: true, editableBy: 'everyone', closed: false },
+})
+
+function initJam(f: Flags) {
+  if (jamInitialized) return
+  jamInitialized = true
+  if (f.jam === 'host') {
+    jams.set('myjam00001', {
+      id: 'myjam00001',
+      host: 'me',
+      members: [meMember(true), { guildId: '1', channelId: '101', name: 'Gaming', guildName: 'Galaxy Hangout', isHost: false, listening: true, you: false }],
+      settings: { allowChannels: true, allowServers: false, editableBy: 'everyone', closed: false },
+    })
+    myJam = 'myjam00001'
+  } else if (f.jam === 'member') {
+    const j = jams.get(LINKED_JAM_ID)!
+    j.members.push(meMember(false))
+    myJam = LINKED_JAM_ID
+  }
+}
+
+function toApiJam(j: MockJam, f: Flags): Jam {
+  const host = j.members.find((m) => m.isHost) ?? j.members[0]!
+  const member = j.members.some((m) => m.you) && s.voice === PLAYER_CHANNEL
+  const isHost = member && j.host === 'me'
+  return {
+    id: j.id,
+    hostGuildId: host.guildId,
+    hostChannelId: host.channelId,
+    hostName: host.name,
+    hostGuildName: host.guildName,
+    members: j.members.map((m) => ({ ...m, you: m.you && s.voice === PLAYER_CHANNEL })),
+    maxMembers: 8,
+    settings: j.settings,
+    shareLink: `https://discord.com/activities/000000000000000000?custom_id=jam-${j.id}`,
+    you: {
+      member,
+      isHost,
+      canManage: isHost && permissionsFor(f).canControl,
+      canEdit: member && (j.settings.editableBy === 'everyone' || isHost),
+    },
+  }
+}
+function jamView(f: Flags): Jam | null {
+  initJam(f)
+  const j = myJam ? jams.get(myJam) : undefined
+  return j ? toApiJam(j, f) : null
+}
+function broadcastJam() {
+  for (const [ws, f] of sockets) {
+    send(ws, { type: 'state', state: snapshot(f) })
+    send(ws, { type: 'jam', jam: snapshot(f)?.jam ?? null })
+  }
+}
+function requireHost(f: Flags): MockJam {
+  const j = myJam ? jams.get(myJam) : undefined
+  if (!j) throw new HttpError(404, 'not_in_jam')
+  if (j.host !== 'me') throw new HttpError(403, 'jam_not_host')
+  requireControl(f)
+  return j
 }
 /** `?radio=off|on|job`: fixed radio state for screenshots (instead of the cycling demo job). */
 function mockRadio(f: Flags): AiState | null {
@@ -470,10 +561,106 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
   }
   if (!sessionValid(session)) throw new HttpError(401, 'unauthorized')
 
-  // Like the real API: player, queue, radio and lyrics routes only take the user's voice channel.
-  if (/^\/(player|queue|tracks|ai|lyrics)/.test(path)) {
+  // Like the real API: player, queue, radio, lyrics and jam routes only take the user's voice channel.
+  const jamRoute = path === '/jam' || /^\/jam\/(create|join|leave|settings|kick|close|end)$/.test(path)
+  if (/^\/(player|queue|tracks|ai|lyrics)/.test(path) || jamRoute) {
     const channel = String(body.channelId ?? url.searchParams.get('channelId') ?? '')
     if (!s.voice || channel !== s.voice) throw new HttpError(403, 'not_in_channel')
+  }
+  // The jam's host-only rule for shared-queue edits (volume and stop stay per channel).
+  if (/^\/(player\/(pause|resume|skip|previous|seek|loop|shuffle)|queue\/)/.test(path)) {
+    const jam = snapshot(f)?.jam
+    if (jam?.you.member && !jam.you.canEdit) throw new HttpError(403, 'jam_host_only')
+  }
+  initJam(f)
+  switch (`${method} ${path}`) {
+    case 'GET /jam':
+      return { jam: jamView(f) }
+    case 'POST /jam/create': {
+      if (!snapshot(f)) throw new HttpError(404, 'not_found')
+      if (!myJam) {
+        const id = `mine${String(Date.now()).slice(-6)}`
+        jams.set(id, {
+          id,
+          host: 'me',
+          members: [meMember(true)],
+          settings: { allowChannels: true, allowServers: false, editableBy: 'everyone', closed: false },
+        })
+        myJam = id
+        broadcastJam()
+      }
+      const jam = jamView(f)!
+      return { jamId: jam.id, shareLink: jam.shareLink, jam }
+    }
+    case 'POST /jam/join': {
+      const j = jams.get(String(body.jamId ?? ''))
+      if (!j) throw new HttpError(404, 'jam_ended')
+      if (myJam === j.id) throw new HttpError(409, 'jam_already_in')
+      if (myJam) throw new HttpError(409, 'jam_other')
+      if (j.settings.closed) throw new HttpError(403, 'jam_closed')
+      if (!snapshot(f)) throw new HttpError(503, 'bot_unavailable')
+      await delay(400)
+      j.members = j.members.filter((m) => !m.you).concat(meMember(false))
+      myJam = j.id
+      broadcastJam()
+      return { jam: jamView(f) }
+    }
+    case 'POST /jam/leave': {
+      const j = myJam ? jams.get(myJam) : undefined
+      if (!j) throw new HttpError(404, 'not_in_jam')
+      requireControl(f)
+      j.members = j.members.filter((m) => !m.you)
+      if (j.host === 'me') jams.delete(j.id)
+      myJam = null
+      broadcastJam()
+      return undefined
+    }
+    case 'POST /jam/settings':
+    case 'POST /jam/close': {
+      const j = requireHost(f)
+      const patch = path === '/jam/close' ? { closed: true } : (body as Partial<JamSettings>)
+      for (const k of ['allowChannels', 'allowServers', 'closed'] as const) {
+        if (typeof patch[k] === 'boolean') j.settings[k] = patch[k]
+      }
+      if (patch.editableBy === 'everyone' || patch.editableBy === 'host') j.settings.editableBy = patch.editableBy
+      broadcastJam()
+      return { settings: j.settings }
+    }
+    case 'POST /jam/kick': {
+      const j = requireHost(f)
+      const target = String(body.memberChannelId ?? '')
+      if (j.members.find((m) => m.channelId === target)?.isHost) throw new HttpError(400, 'invalid')
+      const before = j.members.length
+      j.members = j.members.filter((m) => m.channelId !== target)
+      if (j.members.length === before) throw new HttpError(404, 'not_found')
+      broadcastJam()
+      return undefined
+    }
+    case 'POST /jam/end': {
+      const j = requireHost(f)
+      jams.delete(j.id)
+      myJam = null
+      broadcastJam()
+      return undefined
+    }
+  }
+  const jamMatch = /^\/jam\/([a-z0-9-]+)$/.exec(path)
+  if (method === 'GET' && jamMatch) {
+    const id = jamMatch[1]!.replace(/^jam-/, '')
+    const j = jams.get(id)
+    if (!/^[a-z0-9]{10}$/.test(id)) throw new HttpError(400, 'invalid')
+    if (!j) throw new HttpError(404, 'jam_ended')
+    const code = !s.voice
+      ? 'not_in_channel'
+      : myJam === j.id
+        ? 'jam_already_in'
+        : myJam
+          ? 'jam_other'
+          : j.settings.closed
+            ? 'jam_closed'
+            : null
+    await delay(200)
+    return { jam: toApiJam(j, f), join: { allowed: code === null, code } }
   }
 
   switch (`${method} ${path}`) {

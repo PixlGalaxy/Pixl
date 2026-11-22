@@ -87,6 +87,11 @@ fn channel(id: u64) -> String {
     format!("<#{id}>")
 }
 
+/// A jam channel shown by name (it may be in another server, where a mention does not resolve).
+fn jam_name(name: &str) -> String {
+    escape(&truncate(name, 80))
+}
+
 fn user(id: u64) -> String {
     format!("<@{id}>")
 }
@@ -217,8 +222,10 @@ pub fn added_list(v: &AddedList, i18n: &I18n) -> Message {
 pub struct NowPlaying<'a> {
     pub track: TrackCard<'a>,
     pub voice_channel_id: u64,
-    /// Name of the node bot playing it (None on the main bot).
+    /// Discord display name of the extra bot playing it (None on the main bot).
     pub node_name: Option<&'a str>,
+    /// The channel plays a jam.
+    pub jam: Option<&'a JamLine>,
     pub genres: &'a [String],
     pub paused: bool,
     pub ai_enabled: bool,
@@ -226,11 +233,33 @@ pub struct NowPlaying<'a> {
     pub track_tag: &'a str,
 }
 
-fn header(voice_channel_id: u64, node_name: Option<&str>, i18n: &I18n) -> String {
+/// The jam line of the now-playing header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JamLine {
+    /// Name of the host voice channel (may be in another server, so not a mention).
+    pub host_name: String,
+    pub channels: usize,
+    /// This channel is the host.
+    pub hosting: bool,
+}
+
+fn header(voice_channel_id: u64, node_name: Option<&str>, jam: Option<&JamLine>, i18n: &I18n) -> String {
     let mut h = i18n.t("bot.now_playing.title_in", &[("channel", &channel(voice_channel_id))]);
     if let Some(node) = node_name {
         h.push_str(" · ");
         h.push_str(&i18n.t("bot.now_playing.played_by", &[("bot", &escape(node))]));
+    }
+    if let Some(j) = jam {
+        h.push_str(" · ");
+        let count = j.channels.to_string();
+        h.push_str(&if j.hosting {
+            i18n.t("bot.now_playing.jam_host", &[("count", &count)])
+        } else {
+            i18n.t(
+                "bot.now_playing.jam_with",
+                &[("channel", &escape(&truncate(&j.host_name, 80))), ("count", &count)],
+            )
+        });
     }
     format!("-# {h}")
 }
@@ -274,7 +303,7 @@ fn queue_button(vc: u64, tag: &str, i18n: &I18n) -> Button {
 /// The automatic message sent when a track starts (one per player; replaced on every track).
 pub fn now_playing(v: &NowPlaying, i18n: &I18n) -> Message {
     let vc = v.voice_channel_id;
-    let mut texts = vec![header(vc, v.node_name, i18n), format!("### {}", v.track.link(200))];
+    let mut texts = vec![header(vc, v.node_name, v.jam, i18n), format!("### {}", v.track.link(200))];
     if !v.track.artists.is_empty() {
         texts.push(v.track.artists());
     }
@@ -350,6 +379,7 @@ pub struct NowPlayingDetail<'a> {
     pub track: TrackCard<'a>,
     pub voice_channel_id: u64,
     pub node_name: Option<&'a str>,
+    pub jam: Option<&'a JamLine>,
     pub position_ms: u64,
     pub paused: bool,
     pub loop_mode: LoopMode,
@@ -360,7 +390,7 @@ pub struct NowPlayingDetail<'a> {
 /// `/nowplaying`: progress bar, loop and volume.
 pub fn now_playing_detail(v: &NowPlayingDetail, i18n: &I18n) -> Message {
     let vc = v.voice_channel_id;
-    let mut texts = vec![header(vc, v.node_name, i18n), format!("### {}", v.track.link(200))];
+    let mut texts = vec![header(vc, v.node_name, v.jam, i18n), format!("### {}", v.track.link(200))];
     let mut body = String::new();
     if !v.track.artists.is_empty() {
         body.push_str(&v.track.artists());
@@ -527,16 +557,28 @@ pub fn lyrics(track: &TrackCard, body: &str, voice_channel_id: Option<u64>, i18n
     container(Tone::Info, children)
 }
 
-/// Ephemeral reply to "Invite to jam".
-pub fn jam(voice_channel_id: u64, code: &str, i18n: &I18n) -> Message {
-    let url = format!("https://discord.gg/{code}");
+/// Ephemeral reply to "Invite to jam": the jam's Activity link (opens the panel in the clicker's
+/// own voice channel, where they can join) and, when it could be made, a plain invite into this
+/// channel as a fallback.
+pub fn jam(voice_channel_id: u64, share_link: &str, invite_code: Option<&str>, i18n: &I18n) -> Message {
     let ch = channel(voice_channel_id);
-    let texts = vec![
+    // Plain URLs: Discord prints a masked link whose label looks like a URL raw.
+    let mut texts = vec![
         format!("**{}**", i18n.t("bot.jam.title", &[("channel", &ch)])),
-        i18n.t("bot.jam.body", &[("channel", &ch)]),
-        format!("[discord.gg/{code}](<{url}>)"),
+        i18n.t("bot.jam.body", &[]),
+        share_link.to_owned(),
     ];
-    let accessory = Accessory::Button(Button::link(i18n.t("bot.button.open_invite", &[]), url));
+    if let Some(code) = invite_code {
+        texts[2].push_str(&format!(
+            "
+-# {}",
+            i18n.t(
+                "bot.jam.invite",
+                &[("channel", &ch), ("url", &format!("https://discord.gg/{code}"))]
+            )
+        ));
+    }
+    let accessory = Accessory::Button(Button::link(i18n.t("bot.button.open_jam", &[]), share_link));
     container(Tone::Ok, vec![Component::Section { texts, accessory }]).ephemeral(true)
 }
 
@@ -574,6 +616,34 @@ pub enum Notice<'a> {
     Disconnected,
     Stopped {
         by: u64,
+    },
+    /// This channel joined the jam of `host`.
+    JamEntered {
+        host: &'a str,
+    },
+    /// Another channel joined (`count` channels now).
+    JamJoined {
+        channel: &'a str,
+        count: usize,
+    },
+    JamLeft {
+        channel: &'a str,
+        count: usize,
+    },
+    /// The host role moved to `channel` (`own`: to this channel).
+    JamHost {
+        channel: &'a str,
+        own: bool,
+    },
+    /// `restored`: the own queue came back (otherwise the music goes on here).
+    JamEnded {
+        restored: bool,
+    },
+    /// The host removed this channel.
+    JamRemoved,
+    /// This channel left the jam (`restored`: its own queue came back).
+    JamLeftOwn {
+        restored: bool,
     },
 }
 
@@ -701,6 +771,76 @@ pub fn notice(n: &Notice, voice_channel_id: u64, i18n: &I18n) -> Message {
                 i18n.t("bot.notice.stopped.body", &[("channel", &ch), ("user", &user(*by))]),
             ),
         ),
+        Notice::JamEntered { host } => (
+            Tone::Ok,
+            titled(
+                i18n.t("bot.notice.jam_entered.title", &[("host", &jam_name(host))]),
+                i18n.t("bot.notice.jam_entered.body", &[("channel", &ch)]),
+            ),
+        ),
+        Notice::JamJoined { channel, count } => (
+            Tone::Info,
+            titled(
+                i18n.t("bot.notice.jam_joined.title", &[("channel", &jam_name(channel))]),
+                i18n.t("bot.notice.jam_joined.body", &[("count", &count.to_string())]),
+            ),
+        ),
+        Notice::JamLeft { channel, count } => (
+            Tone::Info,
+            titled(
+                i18n.t("bot.notice.jam_left.title", &[("channel", &jam_name(channel))]),
+                i18n.t("bot.notice.jam_left.body", &[("count", &count.to_string())]),
+            ),
+        ),
+        Notice::JamHost { own: true, .. } => (
+            Tone::Info,
+            titled(
+                i18n.t("bot.notice.jam_host.title_own", &[("channel", &ch)]),
+                i18n.t("bot.notice.jam_host.body_own", &[]),
+            ),
+        ),
+        Notice::JamHost { channel, own: false } => (
+            Tone::Info,
+            titled(
+                i18n.t("bot.notice.jam_host.title", &[("channel", &jam_name(channel))]),
+                i18n.t("bot.notice.jam_host.body", &[]),
+            ),
+        ),
+        Notice::JamEnded { restored } => (
+            Tone::Info,
+            titled(
+                i18n.t("bot.notice.jam_ended.title", &[]),
+                i18n.t(
+                    if *restored {
+                        "bot.notice.jam_ended.body_restored"
+                    } else {
+                        "bot.notice.jam_ended.body"
+                    },
+                    &[("channel", &ch)],
+                ),
+            ),
+        ),
+        Notice::JamRemoved => (
+            Tone::Warn,
+            titled(
+                i18n.t("bot.notice.jam_removed.title", &[]),
+                i18n.t("bot.notice.jam_removed.body", &[("channel", &ch)]),
+            ),
+        ),
+        Notice::JamLeftOwn { restored } => (
+            Tone::Info,
+            titled(
+                i18n.t("bot.notice.jam_left_own.title", &[("channel", &ch)]),
+                i18n.t(
+                    if *restored {
+                        "bot.notice.jam_ended.body_restored"
+                    } else {
+                        "bot.notice.jam_ended.body"
+                    },
+                    &[("channel", &ch)],
+                ),
+            ),
+        ),
     };
     container(tone, children)
 }
@@ -791,10 +931,10 @@ pub fn all_busy(busy_channel: Option<u64>, target_channel: u64, invite: Option<(
         (Some(_), None) => i18n.t("bot.busy.body_generic", &[("channel", &target)]),
     };
     let children = match invite {
-        Some((n, url)) => titled_accessory(
+        Some((_, url)) => titled_accessory(
             title,
             body,
-            Button::link(i18n.t("bot.button.invite_node", &[("number", &n.to_string())]), url),
+            Button::link(i18n.t("bot.button.invite_node", &[]), url),
         ),
         None => titled(title, body),
     };
@@ -1065,13 +1205,66 @@ mod tests {
     }
 
     #[test]
+    fn jam_header_and_notices() {
+        let i = i18n();
+        let a = artists();
+        let line = JamLine {
+            host_name: "Lounge *1*".into(),
+            channels: 3,
+            hosting: false,
+        };
+        let mut v = NowPlaying {
+            track: track(&a),
+            voice_channel_id: 77,
+            node_name: None,
+            jam: Some(&line),
+            genres: &[],
+            paused: false,
+            ai_enabled: false,
+            track_tag: "tag",
+        };
+        let text = all_text(&now_playing(&v, &i).to_json());
+        assert!(
+            text.contains(r"Now playing in <#77> · Jam with Lounge \*1\* · 3 channels"),
+            "{text}"
+        );
+        let hosting = JamLine {
+            hosting: true,
+            ..line.clone()
+        };
+        v.jam = Some(&hosting);
+        let text = all_text(&now_playing(&v, &i).to_json());
+        assert!(text.contains("Now playing in <#77> · Hosting a jam · 3 channels"), "{text}");
+
+        // Other channels are named (they may be in another server), this one is a mention.
+        let n = all_text(
+            &notice(
+                &Notice::JamJoined {
+                    channel: "Lounge",
+                    count: 2,
+                },
+                5,
+                &i,
+            )
+            .to_json(),
+        );
+        assert!(n.starts_with("**Lounge joined the jam**"), "{n}");
+        let n = all_text(&notice(&Notice::JamEnded { restored: true }, 5, &i).to_json());
+        assert!(n.contains("<#5> is back to its own queue."), "{n}");
+        let n = all_text(&error_key("jam_host_only", &[("channel", "**Lounge**")], &i).to_json());
+        assert!(n.contains("**Lounge**"), "{n}");
+        check_text(&n);
+    }
+
+    #[test]
     fn now_playing_shape() {
         let a = artists();
         let genres = vec!["synthwave".to_owned(), "electronic".to_owned()];
         let mut v = NowPlaying {
             track: track(&a),
             voice_channel_id: 77,
-            node_name: Some("Lynx Node 1"),
+            node_name: Some("Lynx 2"),
+            jam: None,
             genres: &genres,
             paused: false,
             ai_enabled: true,
@@ -1087,7 +1280,7 @@ mod tests {
         assert_eq!(container["components"][0]["accessory"]["type"], 11);
         let section = all_text(&container["components"][0]);
         assert!(
-            section.contains("Now playing in <#77> · played by Lynx Node 1"),
+            section.contains("Now playing in <#77> · played by Lynx 2"),
             "{section}"
         );
         assert!(section.contains("[Song](<https://youtu.be/x>)"));
@@ -1168,7 +1361,11 @@ mod tests {
         fn walk(v: &Value, out: &mut Vec<String>) {
             match v {
                 Value::Object(m) if m.get("type").and_then(Value::as_u64) == Some(2) => {
-                    out.push(format!("{} {}", m["style"], m["emoji"]["name"].as_str().unwrap_or("-")))
+                    out.push(format!(
+                        "{} {}",
+                        m["style"],
+                        m.get("emoji").and_then(|e| e["name"].as_str()).unwrap_or("-")
+                    ))
                 }
                 Value::Object(m) => m.values().for_each(|x| walk(x, out)),
                 Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
@@ -1188,6 +1385,7 @@ mod tests {
             track: track(&a),
             voice_channel_id: 1,
             node_name: None,
+            jam: None,
             position_ms: 0,
             paused: false,
             loop_mode: LoopMode::Off,
@@ -1242,8 +1440,9 @@ mod tests {
             look(radio_picking(&picking, &i)),
             vec!["4 lynx_cancel_white", "1 lynx_panel_white"]
         );
-        assert_eq!(look(jam(7, "c", &i)), vec!["5 lynx_link_white"]);
-        assert_eq!(look(add_main("https://d", &i)), vec!["5 lynx_link_white"]);
+        // Link buttons carry no icon of ours: Discord draws its own arrow.
+        assert_eq!(look(jam(7, "https://discord.com/activities/1?custom_id=jam-x", Some("c"), &i)), vec!["5 -"]);
+        assert_eq!(look(add_main("https://d", &i)), vec!["5 -"]);
         let added = AddedList {
             name: None,
             url: None,
@@ -1268,6 +1467,7 @@ mod tests {
             track: track(&a),
             voice_channel_id: 1,
             node_name: None,
+            jam: None,
             position_ms: 67_000,
             paused: false,
             loop_mode: LoopMode::Off,
@@ -1433,6 +1633,27 @@ mod tests {
             Notice::TooManyFailures,
             Notice::Disconnected,
             Notice::Stopped { by: 1 },
+            Notice::JamEntered { host: "General" },
+            Notice::JamJoined {
+                channel: "Lounge",
+                count: 3,
+            },
+            Notice::JamLeft {
+                channel: "Lounge",
+                count: 2,
+            },
+            Notice::JamHost {
+                channel: "Lounge",
+                own: false,
+            },
+            Notice::JamHost {
+                channel: "Lounge",
+                own: true,
+            },
+            Notice::JamEnded { restored: true },
+            Notice::JamEnded { restored: false },
+            Notice::JamRemoved,
+            Notice::JamLeftOwn { restored: true },
         ] {
             let json = notice(&n, 5, &i).to_json();
             assert_eq!(json["flags"], FLAG_COMPONENTS_V2, "notices are public");
@@ -1449,17 +1670,24 @@ mod tests {
         let acc = &busy["components"][0]["components"][0]["accessory"];
         assert_eq!(
             (acc["style"].as_u64(), acc["label"].as_str()),
-            (Some(5), Some("Invite Lynx Node 1"))
+            (Some(5), Some("Add another Lynx"))
         );
         check_text(&all_text(&all_busy(None, 2, None, &i).to_json()));
 
-        let j = jam(7, "aB3", &i).to_json();
+        let share = "https://discord.com/activities/42?custom_id=jam-abcdefghij";
+        let j = jam(7, share, Some("aB3"), &i).to_json();
         assert_eq!(j["flags"], FLAG_COMPONENTS_V2 | FLAG_EPHEMERAL);
         assert_eq!(j["components"][0]["accent_color"], COLOR_SUCCESS);
-        assert_eq!(
-            j["components"][0]["components"][0]["accessory"]["url"],
-            "https://discord.gg/aB3"
-        );
+        assert_eq!(j["components"][0]["components"][0]["accessory"]["url"], share);
+        // Links show as plain URLs: a masked link labelled like a URL is printed raw.
+        let jt = all_text(&j);
+        assert!(jt.contains(share), "{jt}");
+        assert!(jt.contains("https://discord.gg/aB3"), "{jt}");
+        assert!(!jt.contains("](<"), "{jt}");
+        check_text(&jt);
+        // Without an invite (no Create Invite permission) only the jam link is there.
+        let jt = all_text(&jam(7, share, None, &i).to_json());
+        assert!(!jt.contains("discord.gg"), "{jt}");
 
         let v = vote("T", "https://x", 2, 3, 7, "tg", &i).to_json();
         assert!(all_text(&v).contains("Vote to skip: 2 of 3"));

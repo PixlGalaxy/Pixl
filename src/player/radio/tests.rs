@@ -89,6 +89,7 @@ fn snapshot_api_carries_ai_and_reasons() {
     );
     let (r, _) = radio(JobKind::Start);
     let snap = PlayerSnapshot {
+        version: 1,
         guild_id: 1,
         channel_id: 2,
         text_channel_id: None,
@@ -107,6 +108,7 @@ fn snapshot_api_carries_ai_and_reasons() {
         vote_skip_enabled: false,
         skip_votes: None,
         ai: Some(r.snapshot()),
+        jam: None,
     };
     let v = serde_json::to_value(snap.to_api(&ApiContext::default())).unwrap();
     assert_eq!(v["ai"]["active"], true);

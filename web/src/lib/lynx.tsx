@@ -14,7 +14,16 @@ type LynxContext = {
   channelId: string | null
   channelName: string | null
   aiEnabled: boolean
+  /**
+   * Permissions for the shared queue: the channel's own ones, minus editing when the channel is in
+   * a jam that only the host channel edits.
+   */
   permissions: Permissions
+  /** The channel's own permissions (volume and stop stay per channel in a jam). */
+  channelPermissions: Permissions
+  /** Jam opened from a link (join prompt), until the user dismisses it or joins. */
+  pendingJamId: string | null
+  clearPendingJam: () => void
   settings: GuildSettings | null
   setSettings: (s: GuildSettings) => void
   state: PlayerState | null
@@ -43,6 +52,8 @@ export function LynxProvider({ conn, children }: { conn: Connection; children: R
   const toast = useToast()
   const [permissions, setPermissions] = useState<Permissions>(conn.auth.permissions)
   const [settings, setSettings] = useState<GuildSettings | null>(null)
+  const [pendingJamId, setPendingJamId] = useState<string | null>(conn.jamId)
+  const clearPendingJam = useCallback(() => setPendingJamId(null), [])
 
   const live = useLivePlayer(conn.channel, { onSettings: setSettings, onPermissions: setPermissions })
 
@@ -82,6 +93,12 @@ export function LynxProvider({ conn, children }: { conn: Connection; children: R
     [toast, errorText, socketOpen, refresh],
   )
 
+  const jamLocked = live.state?.jam?.you.member === true && !live.state.jam.you.canEdit
+  const shared = useMemo<Permissions>(
+    () => (jamLocked ? { ...permissions, canControl: false, canAdd: false } : permissions),
+    [jamLocked, permissions],
+  )
+
   const value = useMemo<LynxContext>(
     () => ({
       config: conn.config,
@@ -90,7 +107,10 @@ export function LynxProvider({ conn, children }: { conn: Connection; children: R
       channelId: live.channel?.id ?? null,
       channelName: live.channel?.name ?? null,
       aiEnabled: conn.config.features?.ai === true,
-      permissions,
+      permissions: shared,
+      channelPermissions: permissions,
+      pendingJamId,
+      clearPendingJam,
       settings,
       setSettings,
       state: live.state,
@@ -103,7 +123,7 @@ export function LynxProvider({ conn, children }: { conn: Connection; children: R
       run,
       errorText,
     }),
-    [conn, permissions, settings, live, run, errorText],
+    [conn, shared, permissions, pendingJamId, clearPendingJam, settings, live, run, errorText],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

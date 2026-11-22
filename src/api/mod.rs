@@ -7,6 +7,7 @@ mod ai;
 mod auth;
 mod error;
 mod follow;
+mod jam;
 mod me;
 mod media;
 mod player;
@@ -167,6 +168,15 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/ai/start", post(ai::start))
         .route("/api/ai/stop", post(ai::stop))
         .route("/api/ai/cancel", post(ai::cancel))
+        .route("/api/jam", get(jam::get))
+        .route("/api/jam/create", post(jam::create))
+        .route("/api/jam/join", post(jam::join))
+        .route("/api/jam/leave", post(jam::leave))
+        .route("/api/jam/settings", post(jam::settings))
+        .route("/api/jam/kick", post(jam::kick))
+        .route("/api/jam/close", post(jam::close))
+        .route("/api/jam/end", post(jam::end))
+        .route("/api/jam/{id}", get(jam::preview))
         .route("/api/search", get(search::search))
         .route("/api/lyrics", get(search::lyrics))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))

@@ -53,7 +53,33 @@ pub struct Allowed {
 
 impl ApiState {
     /// Permission rule first (so a denied user learns nothing more), then the player must exist.
+    /// Shared-queue actions also follow the jam's edit rule.
     pub async fn allowed(
+        &self,
+        m: &Member,
+        channel: u64,
+        action: impl FnOnce(Option<&PlayerSnapshot>) -> Action,
+    ) -> ApiResult<Allowed> {
+        let a = self.allowed_local(m, channel, action).await?;
+        self.jam_edit_check(m.guild_id, channel)?;
+        Ok(a)
+    }
+
+    /// The jam rule for edits of the shared queue (true outside a jam).
+    pub fn jam_edit_check(&self, guild_id: u64, channel: u64) -> ApiResult<()> {
+        let key = crate::store::SessionKey {
+            guild_id,
+            voice_channel_id: channel,
+        };
+        if self.app.players.jams().edit_allowed(key) {
+            Ok(())
+        } else {
+            Err(ApiError::jam_host_only())
+        }
+    }
+
+    /// `allowed` for per-channel actions (volume, stop, feedback): no jam rule.
+    pub async fn allowed_local(
         &self,
         m: &Member,
         channel: u64,
@@ -136,6 +162,10 @@ impl ApiState {
                 .unwrap_or_else(|_| HashMap::new());
         }
         let mut state = snap.to_api(&ctx);
+        if let Some(view) = &snap.jam {
+            let jam = self.api_jam(viewer, guild, Some(snap.channel_id), view).await;
+            state.jam = serde_json::to_value(jam).ok();
+        }
         for t in state
             .current
             .iter_mut()
@@ -165,6 +195,12 @@ pub async fn state(
 async fn control(st: &ApiState, m: &Member, channel_id: &str) -> ApiResult<PlayerHandle> {
     let channel = st.own_channel(m, channel_id)?;
     Ok(st.allowed(m, channel, |_| Action::Control).await?.player)
+}
+
+/// Control of this channel only (volume, stop), whatever the jam rule says.
+async fn control_local(st: &ApiState, m: &Member, channel_id: &str) -> ApiResult<PlayerHandle> {
+    let channel = st.own_channel(m, channel_id)?;
+    Ok(st.allowed_local(m, channel, |_| Action::Control).await?.player)
 }
 
 pub async fn pause(State(st): State<ApiState>, m: Member, Body(b): Body<ChannelBody>) -> ApiResult<StatusCode> {
@@ -231,7 +267,7 @@ pub async fn volume(State(st): State<ApiState>, m: Member, Body(b): Body<VolumeB
     if !(crate::store::MIN_VOLUME..=crate::store::MAX_VOLUME).contains(&b.volume) {
         return Err(ApiError::invalid("volume must be 10-100"));
     }
-    control(&st, &m, &b.channel_id)
+    control_local(&st, &m, &b.channel_id)
         .await?
         .set_volume(b.volume)
         .await
@@ -261,7 +297,7 @@ pub async fn shuffle(State(st): State<ApiState>, m: Member, Body(b): Body<Channe
 }
 
 pub async fn stop(State(st): State<ApiState>, m: Member, Body(b): Body<ChannelBody>) -> ApiResult<StatusCode> {
-    control(&st, &m, &b.channel_id)
+    control_local(&st, &m, &b.channel_id)
         .await?
         .stop(m.user_id(), true)
         .await

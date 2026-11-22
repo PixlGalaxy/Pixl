@@ -98,6 +98,8 @@ struct Conn {
     /// Followed voice channel: the user's current one.
     channel: Option<u64>,
     permissions: Option<Permissions>,
+    /// Jam (id, rev) last sent, so a `jam` message goes out only when it changed.
+    jam: Option<(String, u64)>,
 }
 
 impl Conn {
@@ -106,15 +108,26 @@ impl Conn {
         self.out.try_send(v.to_string()).is_ok()
     }
 
-    async fn state(&self, player: Option<&PlayerHandle>) -> bool {
-        let state = match player {
+    /// Full state, then a `jam` message when the channel's jam changed (joined, left, edited).
+    async fn state(&mut self, player: Option<&PlayerHandle>) -> bool {
+        let (state, jam_key) = match player {
             Some(p) => {
                 let snap = p.snapshot();
-                serde_json::to_value(self.st.api_state(self.user, &snap).await).unwrap_or(Value::Null)
+                let key = snap.jam.as_ref().map(|j| (j.id.to_string(), j.rev));
+                let state = serde_json::to_value(self.st.api_state(self.user, &snap).await).unwrap_or(Value::Null);
+                (state, key)
             }
-            None => Value::Null,
+            None => (Value::Null, None),
         };
-        self.push(json!({ "type": "state", "state": state, "serverNow": epoch_ms() }))
+        let jam = state.get("jam").cloned().unwrap_or(Value::Null);
+        if !self.push(json!({ "type": "state", "state": state, "serverNow": epoch_ms() })) {
+            return false;
+        }
+        if jam_key == self.jam {
+            return true;
+        }
+        self.jam = jam_key;
+        self.push(json!({ "type": "jam", "jam": jam }))
     }
 
     fn channel_message(&self) -> bool {
@@ -177,6 +190,7 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, socket: WebSock
         guild,
         channel,
         permissions: None,
+        jam: None,
     };
     let mut guild_events = st.events.subscribe();
     let mut player = attach(&st, guild, channel);

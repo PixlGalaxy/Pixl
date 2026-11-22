@@ -36,10 +36,11 @@
       "previous": "Anterior",
       "next": "Siguiente",
       "open_invite": "Abrir invitación",
+      "open_jam": "Abrir enlace",
       "replay": "Volver a reproducir",
       "start_radio": "Iniciar radio",
       "vote": "Votar para saltar",
-      "invite_node": "Invitar Lynx Node {number}",
+      "invite_node": "Añadir otro Lynx",
       "invite_main": "Invitar Lynx",
       "cancel": "Cancelar",
       "stop_radio": "Apagar radio"
@@ -47,6 +48,8 @@
     "now_playing": {
       "title_in": "Sonando en {channel}",
       "played_by": "la reproduce {bot}",
+      "jam_with": "Escucha compartida con {channel} · {count} canales",
+      "jam_host": "Anfitrión de una escucha compartida · {count} canales",
       "paused": "En pausa",
       "volume": "Volumen: {volume}%"
     },
@@ -68,8 +71,9 @@
       "footer": "Letra de LRCLIB. El panel la muestra sincronizada con la canción."
     },
     "jam": {
-      "title": "Invitación para escuchar en {channel}",
-      "body": "Comparte este enlace: quien lo abra entra a {channel} y se le abre el panel de Lynx. Funciona durante 24 horas."
+      "title": "Escucha compartida desde {channel}",
+      "body": "Comparte este enlace. Quien lo abra ve el panel de Lynx en su propio canal de voz y puede unirse: todos los canales oyen la misma música a la vez.",
+      "invite": "O trae a la gente directamente a {channel}: {url}"
     },
     "notice": {
       "paused_empty": {
@@ -108,6 +112,36 @@
       "stopped": {
         "title": "Detenida",
         "body": "{user} detuvo la música y salí de {channel}."
+      },
+      "jam_entered": {
+        "title": "Te uniste a la escucha compartida de {host}",
+        "body": "{channel} reproduce ahora la cola compartida. Su propia cola queda guardada y vuelve cuando salga."
+      },
+      "jam_joined": {
+        "title": "{channel} se unió a la escucha compartida",
+        "body": "Ahora {count} canales oyen la misma música."
+      },
+      "jam_left": {
+        "title": "{channel} salió de la escucha compartida",
+        "body": "Quedan {count} canales en la escucha compartida."
+      },
+      "jam_host": {
+        "title": "{channel} es ahora el anfitrión",
+        "body": "El canal anfitrión anterior salió de la escucha compartida.",
+        "title_own": "{channel} es ahora el anfitrión",
+        "body_own": "El canal anfitrión salió, así que ahora los ajustes se deciden aquí."
+      },
+      "jam_ended": {
+        "title": "La escucha compartida terminó",
+        "body": "La música sigue sonando en {channel}.",
+        "body_restored": "{channel} vuelve a su propia cola."
+      },
+      "jam_left_own": {
+        "title": "{channel} salió de la escucha compartida"
+      },
+      "jam_removed": {
+        "title": "Este canal salió de la escucha compartida",
+        "body": "El anfitrión lo quitó. {channel} vuelve a su propia cola."
       }
     },
     "vote": {
@@ -117,13 +151,13 @@
     },
     "busy": {
       "title": "Todos los bots de Lynx están ocupados en este servidor",
-      "body": "Lynx ya está sonando en {busy}. Invita a otro bot de Lynx para que pueda sonar en {channel} a la vez.",
-      "body_generic": "Invita a otro bot de Lynx para que pueda sonar en {channel} a la vez.",
+      "body": "Lynx ya está sonando en {busy}. Añade otro Lynx para que pueda sonar en {channel} a la vez.",
+      "body_generic": "Añade otro Lynx para que pueda sonar en {channel} a la vez.",
       "no_more": "Todos los bots de Lynx ya están sonando en otros canales de voz y no hay más bots para añadir. Inténtalo cuando uno quede libre para sonar en {channel}."
     },
     "add_main": {
-      "title": "Añade el bot principal de Lynx",
-      "body": "Soy un bot ayudante de Lynx: pongo música cuando el bot principal está ocupado en otro canal. Para usar los comandos, este servidor necesita el bot principal de Lynx."
+      "title": "Añade el Lynx principal",
+      "body": "Este Lynx pone música cuando el Lynx principal está ocupado en otro canal. Para usar los comandos, este servidor también necesita el Lynx principal."
     },
     "radio": {
       "mix": {
@@ -214,7 +248,9 @@
       "nothing_to_shuffle": { "title": "No hay nada que mezclar.", "body": "Primero añade más canciones a la cola." },
       "already_paused": { "title": "La música ya está en pausa.", "body": "Usa `/resume` para continuar." },
       "not_paused": { "title": "La música no está en pausa.", "body": "" },
-      "nothing_to_replay": { "title": "Esa cola ya no existe.", "body": "Empieza algo nuevo con `/play`." }
+      "nothing_to_replay": { "title": "Esa cola ya no existe.", "body": "Empieza algo nuevo con `/play`." },
+      "radio_in_jam": { "title": "La radio no funciona en una escucha compartida.", "body": "Sal de la escucha compartida para iniciar una radio en este canal." },
+      "jam_host_only": { "title": "Solo el canal anfitrión puede cambiar la música.", "body": "El anfitrión decidió que solo la gente de {channel} edite la cola compartida." }
     },
     "reply": {
       "paused": "**En pausa.** Usa `/resume` o el botón Reanudar para continuar.",

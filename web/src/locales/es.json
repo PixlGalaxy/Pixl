@@ -19,7 +19,18 @@
     "invalid": "La petición no es válida.",
     "history_disabled": "Activa tu historial de escucha en tu cuenta (arriba a la derecha) para usar esto.",
     "channel_not_allowed": "Lynx no está permitido en este canal.",
-    "unavailable": "Eso no está disponible ahora."
+    "unavailable": "Eso no está disponible ahora.",
+    "in_jam": "La radio no funciona en una escucha compartida. Sal de ella para iniciar una aquí.",
+    "not_in_jam": "Este canal no está en una escucha compartida.",
+    "jam_host_only": "Solo la gente del canal anfitrión puede cambiar la música.",
+    "jam_not_host": "Solo el canal anfitrión gestiona la escucha compartida.",
+    "jam_closed": "Esta escucha compartida no admite más canales.",
+    "jam_full": "Esta escucha compartida está llena.",
+    "jam_already_in": "Tu canal ya está en esta escucha compartida.",
+    "jam_channels_off": "El anfitrión no deja unirse a otros canales del servidor.",
+    "jam_servers_off": "El anfitrión no deja unirse a canales de otros servidores.",
+    "jam_ended": "Esa escucha compartida terminó.",
+    "jam_other": "Tu canal está en otra escucha compartida. Sal de ella primero."
   },
   "login": {
     "title": "Conectando con Lynx",
@@ -351,6 +362,10 @@
       "language": {
         "title": "Idioma",
         "body": "Cámbialo en tu cuenta (arriba a la derecha). Solo cambia el idioma del panel para ti. Los mensajes del bot en el canal siguen en el idioma del servidor."
+      },
+      "jam": {
+        "title": "Escucha compartida",
+        "body": "Invitar a escuchar (en el panel o en el mensaje de lo que suena) comparte un enlace. Quien lo abra ve el panel en su propio canal de voz y puede unirse: todos los canales ponen la misma cola en el mismo punto y el volumen es de cada canal. El canal anfitrión decide quién puede unirse (otros canales del servidor, otros servidores), quién edita la cola compartida, la cierra, quita canales o la termina. Al unirte se guarda la cola de tu canal y vuelve cuando sales o termina. Si el canal anfitrión se vacía, el papel de anfitrión pasa al canal que se unió primero. Las escuchas compartidas no se conservan si Lynx se reinicia: cada canal retoma su propia cola."
       }
     },
     "seekNote": "Ir a un punto de la canción solo se puede aquí, con el slider. No hay comando para eso.",
@@ -551,5 +566,47 @@
       ],
       "kept": "Se conservan tus ajustes del panel (idioma, tema, acento y el interruptor del historial)."
     }
+  },
+  "jam": {
+    "title": "Escucha compartida",
+    "startBody": "Pon la misma música en otros canales de voz a la vez.",
+    "startHint": "Comparte el enlace: quien lo abra ve el panel en su propio canal de voz y puede unirse. Todos los canales oyen la misma canción en el mismo punto; el volumen es de cada canal.",
+    "invite": "Invitar a escuchar",
+    "share": "Compartir enlace",
+    "shareMessage": "Únete a mi escucha compartida de Lynx desde {{channel}}",
+    "hosting": "Eres el anfitrión de una escucha compartida",
+    "withHost": "Escucha compartida con {{name}}",
+    "channels": "{{count}} de {{max}} canales",
+    "host": "Anfitrión",
+    "you": "Tú",
+    "listening": "Hay gente escuchando",
+    "empty": "No hay nadie en este canal",
+    "unnamedChannel": "Canal de voz",
+    "kick": "Quitar {{name}} de la escucha compartida",
+    "kicked": "{{name}} salió de la escucha compartida.",
+    "settingsTitle": "Ajustes del anfitrión",
+    "readOnly": "Solo la gente de {{name}} puede cambiarlos.",
+    "allowChannels": "Otros canales de este servidor",
+    "allowChannelsHint": "Pueden unirse canales de voz del servidor anfitrión.",
+    "allowServers": "Otros servidores",
+    "allowServersHint": "Pueden unirse canales de voz de otros servidores.",
+    "editableBy": "Quién edita la cola",
+    "editableByHint": "El modo DJ de cada servidor sigue aplicando.",
+    "editEveryone": "Todos",
+    "editHost": "Canal anfitrión",
+    "closed": "Cerrada a nuevos canales",
+    "closedHint": "Los canales que ya están se quedan.",
+    "hostOnlyNotice": "Solo la gente de {{name}} puede cambiar la música. El volumen sí lo puedes cambiar aquí.",
+    "end": "Terminar",
+    "endQuestion": "Cada canal vuelve a su propia cola. ¿Terminar?",
+    "leave": "Salir",
+    "leaveQuestion": "Tu canal recupera su propia cola. ¿Salir?",
+    "joinTitle": "¿Unirte a la escucha compartida de {{name}}?",
+    "joinBody": "{{channel}} pondrá la misma música que los demás a la vez. Su propia cola queda guardada y vuelve cuando salga.",
+    "joinFrom": "Desde {{guild}}, con {{count}} canales.",
+    "joinUnavailable": "Esta escucha compartida no está disponible",
+    "join": "Unirse",
+    "notNow": "Ahora no",
+    "addBot": "Añadir otro Lynx"
   }
 }

@@ -10,6 +10,14 @@ use crate::{
     store::{Feedback, LoopMode},
 };
 
+/// Snapshot versions: one counter for every player, so a newer snapshot (also of a new player in the
+/// same channel) always has a higher version. The panel drops states older than the one it shows.
+static VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+pub fn next_version() -> u64 {
+    VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn epoch_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -36,6 +44,8 @@ pub enum PausedReason {
 /// Immutable view of a player at one moment. Cheap to clone (tracks are `Arc`s).
 #[derive(Debug, Clone)]
 pub struct PlayerSnapshot {
+    /// Increases with every published snapshot (see [`next_version`]).
+    pub version: u64,
     pub guild_id: u64,
     pub channel_id: u64,
     pub text_channel_id: Option<u64>,
@@ -59,13 +69,20 @@ pub struct PlayerSnapshot {
     pub skip_votes: Option<(usize, usize)>,
     /// AI radio state (None until a radio was started in this session).
     pub ai: Option<AiSnapshot>,
+    /// The jam this channel is in.
+    pub jam: Option<std::sync::Arc<super::jam::JamView>>,
 }
 
 impl PlayerSnapshot {
     /// Position now, extrapolated while playing.
     pub fn position_now(&self) -> u64 {
+        self.position_now_at(epoch_ms())
+    }
+
+    /// Position at `now_ms` (epoch), extrapolated while playing.
+    pub fn position_now_at(&self, now_ms: i64) -> u64 {
         if self.status == Status::Playing {
-            self.position_ms + (epoch_ms() - self.position_at).max(0) as u64
+            self.position_ms + (now_ms - self.position_at).max(0) as u64
         } else {
             self.position_ms
         }
@@ -130,6 +147,8 @@ pub struct ApiSkipVotes {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiPlayerState {
+    /// Snapshot version: the panel ignores a state older than the one it has.
+    pub version: u64,
     pub guild_id: String,
     pub channel_id: String,
     pub channel_name: String,
@@ -149,6 +168,8 @@ pub struct ApiPlayerState {
     pub ai: Option<serde_json::Value>,
     pub skip_votes: Option<ApiSkipVotes>,
     pub vote_skip_enabled: bool,
+    /// `Jam` of the channel (filled in by the API layer, which knows the viewer).
+    pub jam: Option<serde_json::Value>,
     pub server_now: i64,
 }
 
@@ -194,8 +215,12 @@ impl ApiContext {
 }
 
 impl PlayerSnapshot {
+    /// The panel shape. The position is sampled now (`positionAt` = now), not when the snapshot was
+    /// published: a snapshot can be minutes old while a track plays.
     pub fn to_api(&self, ctx: &ApiContext) -> ApiPlayerState {
+        let now = epoch_ms();
         ApiPlayerState {
+            version: self.version,
             guild_id: self.guild_id.to_string(),
             channel_id: self.channel_id.to_string(),
             channel_name: ctx.channel_name.clone(),
@@ -208,8 +233,8 @@ impl PlayerSnapshot {
             paused_reason: self.paused_reason,
             empty_channel_deadline: self.empty_channel_deadline,
             current: self.current.as_ref().map(|e| ctx.track(e)),
-            position_ms: self.position_ms,
-            position_at: self.position_at,
+            position_ms: self.position_now_at(now),
+            position_at: now,
             upcoming: self.upcoming.iter().map(|e| ctx.track(e)).collect(),
             history: self.history.iter().map(|e| ctx.track(e)).collect(),
             loop_mode: self.loop_mode,
@@ -219,7 +244,8 @@ impl PlayerSnapshot {
                 .skip_votes
                 .map(|(current, required)| ApiSkipVotes { current, required }),
             vote_skip_enabled: self.vote_skip_enabled,
-            server_now: epoch_ms(),
+            jam: None,
+            server_now: now,
         }
     }
 
@@ -261,6 +287,7 @@ mod tests {
         ));
         let next = Arc::new(QueueEntry::new(track("b"), Requester::id_only(8)));
         let snap = PlayerSnapshot {
+            version: 7,
             guild_id: 1,
             channel_id: 2,
             text_channel_id: Some(3),
@@ -279,6 +306,7 @@ mod tests {
             vote_skip_enabled: true,
             skip_votes: Some((1, 2)),
             ai: None,
+            jam: None,
         };
         let mut ctx = ApiContext {
             channel_name: "General".into(),
@@ -311,5 +339,41 @@ mod tests {
         assert!(v["ai"].is_null());
         assert_eq!(snap.track_keys().len(), 2);
         assert_eq!(snap.position_now(), 1500, "paused does not extrapolate");
+        assert_eq!(v["version"], 7);
+        assert_eq!(v["positionMs"], 1500);
+    }
+
+    #[test]
+    fn api_position_is_sampled_when_sent() {
+        // A snapshot published 5 minutes ago while playing (no change since): the panel must get the
+        // position of now, not the one of the publish (it used to cap the age and jump back).
+        let now = epoch_ms();
+        let snap = PlayerSnapshot {
+            version: next_version(),
+            guild_id: 1,
+            channel_id: 2,
+            text_channel_id: None,
+            bot_index: 0,
+            bot_user_id: 1,
+            status: Status::Playing,
+            paused_reason: None,
+            empty_channel_deadline: None,
+            current: Some(Arc::new(QueueEntry::new(track("a"), Requester::id_only(1)))),
+            position_ms: 6_000,
+            position_at: now - 300_000,
+            upcoming: vec![],
+            history: vec![],
+            loop_mode: LoopMode::Off,
+            volume: 100,
+            vote_skip_enabled: false,
+            skip_votes: None,
+            ai: None,
+            jam: None,
+        };
+        let api = snap.to_api(&ApiContext::default());
+        assert!((306_000..306_500).contains(&api.position_ms), "{}", api.position_ms);
+        assert!(api.position_at >= now && api.position_at <= api.server_now);
+        assert_eq!(snap.position_now_at(now - 300_000 + 1_000), 7_000);
+        assert!(next_version() > snap.version, "versions only grow");
     }
 }

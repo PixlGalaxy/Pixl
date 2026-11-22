@@ -17,7 +17,6 @@ use tracing::{debug, warn};
 
 use super::{
     ids::{track_tag, CustomId, NpAction, QUEUE_BUTTONS_TTL_SECS},
-    jam::JamError,
     play::{self, PlayCtx, PlayError, PlayRequest, Played},
     radio::{self as radio_ui, RadioCtx, RadioForm},
     respond::{self, actor},
@@ -29,8 +28,8 @@ use super::{
     Lynx,
 };
 use crate::{
-    perms::{can, Action, Decision, Deny},
-    player::{Entry, PlayerHandle, PlayerSnapshot, QueueEntry, Requester, Restore, SkipOutcome},
+    perms::{can, can_jam, Action, Decision, Deny, JamAction},
+    player::{jam::CreateRefused, Entry, PlayerHandle, PlayerSnapshot, QueueEntry, Requester, Restore, SkipOutcome},
     sources::{SourceError, TrackInfo},
     store::{now_secs, Feedback, GuildSettings, LoopMode},
 };
@@ -132,6 +131,19 @@ impl<'a> Inv<'a> {
     /// Player for an action: the one in the user's voice channel (or, for read-only actions, the
     /// only player of the guild). Checks the permission rule.
     async fn player_for(&self, action: Action) -> Result<(PlayerHandle, GuildSettings, Decision), Message> {
+        self.player_for_in(action, true).await
+    }
+
+    /// `player_for` for per-channel actions (volume, stop): the jam's edit rule does not apply.
+    async fn player_for_local(&self, action: Action) -> Result<(PlayerHandle, GuildSettings, Decision), Message> {
+        self.player_for_in(action, false).await
+    }
+
+    async fn player_for_in(
+        &self,
+        action: Action,
+        shared: bool,
+    ) -> Result<(PlayerHandle, GuildSettings, Decision), Message> {
         let player = match self.user_voice() {
             Some(vc) => self.lynx.players.get(self.guild_id, vc),
             None if action == Action::View => {
@@ -147,13 +159,23 @@ impl<'a> Inv<'a> {
         let Some(player) = player else {
             return Err(self.err("no_player", &[]));
         };
-        self.check(player, action).await
+        self.check_in(player, action, shared).await
     }
 
     async fn check(
         &self,
         player: PlayerHandle,
         action: Action,
+    ) -> Result<(PlayerHandle, GuildSettings, Decision), Message> {
+        self.check_in(player, action, true).await
+    }
+
+    /// The permission rule, plus (`shared`) the jam rule for actions on the shared queue.
+    async fn check_in(
+        &self,
+        player: PlayerHandle,
+        action: Action,
+        shared: bool,
     ) -> Result<(PlayerHandle, GuildSettings, Decision), Message> {
         let settings = self.settings().await;
         let snap = player.snapshot();
@@ -170,7 +192,27 @@ impl<'a> Inv<'a> {
         .await;
         match can(&a, action, &settings) {
             Decision::Deny(d) => Err(self.deny(d)),
-            decision => Ok((player, settings, decision)),
+            decision => {
+                if shared && !matches!(action, Action::View | Action::Feedback) {
+                    self.jam_check(&player)?;
+                }
+                Ok((player, settings, decision))
+            }
+        }
+    }
+
+    /// In a jam that only the host channel edits, other channels may not touch the shared queue.
+    fn jam_check(&self, player: &PlayerHandle) -> Result<(), Message> {
+        let key = player.key();
+        match self.lynx.players.jams().of(key) {
+            Some(j) if !j.view().may_edit(key) => {
+                let host = j.view().host_member().map(|m| m.name.clone()).unwrap_or_default();
+                Err(self.err(
+                    "jam_host_only",
+                    &[("channel", &format!("**{}**", ui::escape(&ui::truncate(&host, 80))))],
+                ))
+            }
+            _ => Ok(()),
         }
     }
 
@@ -616,7 +658,7 @@ async fn skip(inv: &Inv<'_>, button: Option<(PlayerHandle, &str)>) -> Message {
 }
 
 async fn stop(inv: &Inv<'_>, announce: bool) -> Message {
-    let (p, _, _) = match inv.player_for(Action::Control).await {
+    let (p, _, _) = match inv.player_for_local(Action::Control).await {
         Ok(x) => x,
         Err(m) => return m,
     };
@@ -687,11 +729,16 @@ async fn now_playing(inv: &Inv<'_>) -> Message {
     let bot = inv.lynx.bots.bot(snap.bot_index);
     let node_name = bot.filter(|b| !b.is_main()).map(|b| b.name().to_owned());
     let tag = track_tag(&e.uid);
+    let jam = snap
+        .jam
+        .as_ref()
+        .map(|j| crate::player::messages::jam_line(j, p.key()));
     cards::now_playing_detail(
         &cards::NowPlayingDetail {
             track: card(e),
             voice_channel_id: snap.channel_id,
             node_name: node_name.as_deref(),
+            jam: jam.as_ref(),
             position_ms: snap.position_now(),
             paused: snap.status == crate::player::state::Status::Paused,
             loop_mode: snap.loop_mode,
@@ -798,7 +845,7 @@ async fn set_loop(inv: &Inv<'_>, mode: &str) -> Message {
 }
 
 async fn volume(inv: &Inv<'_>, value: i64) -> Message {
-    let (p, _, _) = match inv.player_for(Action::Control).await {
+    let (p, _, _) = match inv.player_for_local(Action::Control).await {
         Ok(x) => x,
         Err(m) => return m,
     };
@@ -929,7 +976,7 @@ async fn np_button(inv: &Inv<'_>, action: NpAction, vc: u64, tag: &str) -> Optio
     let current_tag = player.snapshot().current.as_ref().map(|e| track_tag(&e.uid));
     match action {
         NpAction::Pause | NpAction::Resume | NpAction::Stop => {
-            let (p, _, _) = match inv.check(player, Action::Control).await {
+            let (p, _, _) = match inv.check_in(player, Action::Control, action != NpAction::Stop).await {
                 Ok(x) => x,
                 Err(m) => return Some(m),
             };
@@ -994,28 +1041,58 @@ async fn np_button(inv: &Inv<'_>, action: NpAction, vc: u64, tag: &str) -> Optio
                 inv.t(key, &[("track", &track_link(e))]),
             ))
         }
-        NpAction::Jam => {
-            let main = lynx.bots.main();
-            let can_invite = main
-                .channel_permissions(inv.guild_id, vc)
-                .is_none_or(|p| p.administrator() || p.create_instant_invite());
-            let channel = format!("<#{vc}>");
-            if !can_invite {
-                return Some(inv.err("no_invite_permission", &[("channel", &channel)]));
-            }
-            let app = if main.application_id() != 0 {
-                main.application_id()
-            } else {
-                lynx.config.discord_client_id.parse().unwrap_or(0)
-            };
-            match lynx.jam.get_or_create(&main.http, app, vc).await {
-                Ok(code) => Some(cards::jam(vc, &code, &lynx.i18n)),
-                Err(JamError::NoPermission) => Some(inv.err("no_invite_permission", &[("channel", &channel)])),
-                Err(JamError::Failed) => Some(inv.err("generic", &[])),
-            }
-        }
+        NpAction::Jam => Some(jam_button(inv, player, vc).await),
         NpAction::Panel => None,
     }
+}
+
+/// "Invite to jam": start a jam from this channel (or reuse the one it is in) and answer with its
+/// Activity link: opening it launches the panel in the opener's own voice channel, where they can
+/// join. A plain invite into this channel follows as a fallback when the bot may create one.
+async fn jam_button(inv: &Inv<'_>, player: PlayerHandle, vc: u64) -> Message {
+    let lynx = inv.lynx;
+    let settings = inv.settings().await;
+    let a = actor(
+        &lynx.bots,
+        &lynx.store,
+        inv.guild_id,
+        inv.user_id,
+        inv.permissions,
+        vc,
+        false,
+    )
+    .await;
+    if let Decision::Deny(d) = can_jam(&a, JamAction::Create, &settings) {
+        return inv.deny(d);
+    }
+    let jams = lynx.players.jams();
+    let jam = match jams.of(player.key()) {
+        Some(j) => j,
+        None => match player.jam_create().await {
+            Ok(Ok(j)) => j,
+            Ok(Err(CreateRefused::AlreadyInJam)) => match jams.of(player.key()) {
+                Some(j) => j,
+                None => return inv.err("generic", &[]),
+            },
+            Ok(Err(CreateRefused::TooMany)) | Err(_) => return inv.err("generic", &[]),
+        },
+    };
+    let main = lynx.bots.main();
+    let app = if main.application_id() != 0 {
+        main.application_id()
+    } else {
+        lynx.config.discord_client_id.parse().unwrap_or(0)
+    };
+    let share = jam.view().share_link(&app.to_string());
+    let can_invite = main
+        .channel_permissions(inv.guild_id, vc)
+        .is_none_or(|p| p.administrator() || p.create_instant_invite());
+    let code = if can_invite {
+        lynx.jam.get_or_create(&main.http, app, vc).await.ok()
+    } else {
+        None
+    };
+    cards::jam(vc, &share, code.as_deref(), &lynx.i18n)
 }
 
 /// "Play it again": restart the deleted queue in the user's voice channel.

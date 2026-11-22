@@ -46,7 +46,8 @@ pub fn play_error(e: PlayError) -> ApiError {
         PlayError::Source(e) => ApiError::new(StatusCode::BAD_GATEWAY, "no_results", e.to_string()),
         PlayError::Timeout => ApiError::new(StatusCode::GATEWAY_TIMEOUT, "no_results", "Resolving took too long"),
         PlayError::CannotJoin { .. } => ApiError::bot_unavailable("Lynx can't connect or speak in this channel"),
-        PlayError::Busy { .. } => ApiError::bot_unavailable("Every Lynx bot is busy in another channel"),
+        PlayError::Busy { invite, .. } => ApiError::bot_unavailable("Every Lynx bot is busy in another channel")
+            .with_invite(invite.map(|(_, url)| url)),
         PlayError::ShuttingDown => ApiError::bot_unavailable("Lynx is restarting, try again in a moment"),
         PlayError::JoinFailed => ApiError::bot_unavailable("Could not join the voice channel"),
         PlayError::Denied(d) => ApiError::deny(d),
@@ -84,6 +85,7 @@ pub async fn add(State(st): State<ApiState>, m: Member, Body(b): Body<AddBody>) 
         return Err(ApiError::deny(d));
     }
     st.check_voice_channel(m.guild_id, channel, actor.is_manager).await?;
+    st.jam_edit_check(m.guild_id, channel)?;
     if !st.add_limit.allow(m.user_id()) {
         return Err(ApiError::rate_limited());
     }
@@ -181,7 +183,7 @@ pub async fn feedback(State(st): State<ApiState>, m: Member, Body(b): Body<Feedb
     if !st.app.store.history_enabled(user).await.unwrap_or(true) {
         return Err(ApiError::history_disabled());
     }
-    let a = st.allowed(&m, channel, |_| Action::Feedback).await?;
+    let a = st.allowed_local(&m, channel, |_| Action::Feedback).await?;
     let snap = a.player.snapshot();
     let entry = snap
         .current

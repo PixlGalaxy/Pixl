@@ -20,6 +20,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AddBox } from '../components/AddBox'
 import { AiProgress } from '../components/AiProgress'
+import { JamCard, JamJoinPrompt } from '../components/JamCard'
 import { AiChip, AiTag, TrackReasonLine } from '../components/TrackBits'
 import { Artwork, Avatar, Button, Card, Chip, ConfirmButton, IconButton, Notice, Slider, Tag } from '../components/ui'
 import { api } from '../lib/api'
@@ -99,7 +100,7 @@ function SeekBar({ state }: { state: PlayerState }) {
 
 function VolumeControl({ state }: { state: PlayerState }) {
   const { t } = useTranslation()
-  const { channelId, permissions, run, setState } = useLynx()
+  const { channelId, channelPermissions: permissions, run, setState } = useLynx()
   const [drag, setDrag] = useState<number | null>(null)
   const value = drag ?? state.volume
   const Icon = value <= 10 ? VolumeX : value < 70 ? Volume1 : Volume2
@@ -273,17 +274,19 @@ function NothingPlaying() {
   const { permissions, state } = useLynx()
   return (
     <div className="space-y-5">
+      <JamJoinPrompt />
       <Card title={t('player.nothingTitle')} description={t('player.nothingBody')} icon={<Music size={18} />}>
         {permissions.canAdd ? <AddBox /> : <p className="text-sm text-muted">{t('player.nothingNoAdd')}</p>}
       </Card>
       {state?.ai?.job && <AiProgress />}
+      {state?.jam && <JamCard />}
     </div>
   )
 }
 
 export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
   const { t } = useTranslation()
-  const { state, loaded, aiEnabled, permissions, channelId, run } = useLynx()
+  const { state, loaded, aiEnabled, channelPermissions: permissions, channelId, run } = useLynx()
 
   if (!loaded) {
     return (
@@ -302,6 +305,7 @@ export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
   const status = state.status
   return (
     <div className="space-y-5">
+      <JamJoinPrompt />
       {state.pausedReason === 'empty_channel' && <EmptyChannelBanner deadline={state.emptyChannelDeadline} />}
 
       <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
@@ -380,6 +384,7 @@ export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
         )}
       </section>
 
+      <JamCard />
       {state.ai?.job && <div className="lg:hidden"><AiProgress /></div>}
       <UpNextPreview state={state} onOpenQueue={onOpenQueue} />
     </div>

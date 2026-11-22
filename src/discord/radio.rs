@@ -221,6 +221,7 @@ fn start_error(ctx: &RadioCtx, vc: u64, e: &RadioApiError) -> Message {
             ctx.err("voice_channel", &[("channels", &super::restrict::mentions(allowed))])
         }
         RadioApiError::NotFound | RadioApiError::Unavailable => ctx.err("radio_unavailable", &[]),
+        RadioApiError::InJam => ctx.err("radio_in_jam", &[]),
     }
 }
 

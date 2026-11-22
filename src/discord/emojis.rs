@@ -5,7 +5,8 @@
 //! the missing ones and keeps a name -> id map in memory. Buttons only carry an emoji once its id is
 //! known, so before the sync finishes (or when it fails) they render text-only.
 //!
-//! On grey buttons (secondary and link) the icon is colored; on colored buttons it is white.
+//! On grey buttons the icon is colored; on colored buttons it is white. Link buttons never carry
+//! an icon: Discord already draws its own external-link arrow on them.
 
 use std::{
     collections::HashMap,
@@ -49,7 +50,6 @@ pub const EMOJIS: &[(&str, &[u8])] = &[
     emoji!("lynx_dislike_white"),
     emoji!("lynx_panel_white"),
     emoji!("lynx_cancel_white"),
-    emoji!("lynx_link_white"),
 ];
 
 /// The lucide icon of a button.
@@ -69,7 +69,6 @@ pub enum Icon {
     Replay,
     Radio,
     Cancel,
-    Link,
 }
 
 impl Icon {
@@ -89,7 +88,6 @@ impl Icon {
             Self::Replay => "replay",
             Self::Radio => "radio",
             Self::Cancel => "cancel",
-            Self::Link => "link",
         }
     }
 
@@ -102,15 +100,16 @@ impl Icon {
             Self::Queue => "amber",
             Self::Jam => "violet",
             Self::Previous | Self::Next => "slate",
-            Self::Like | Self::Dislike | Self::Panel | Self::Cancel | Self::Link => "white",
+            Self::Like | Self::Dislike | Self::Panel | Self::Cancel => "white",
         }
     }
 
     /// Emoji name for this icon on a button of `style`; None when no such variant is shipped.
     pub fn emoji_name(self, style: ButtonStyle) -> Option<&'static str> {
         let color = match style {
-            ButtonStyle::Secondary | ButtonStyle::Link => self.tint(),
+            ButtonStyle::Secondary => self.tint(),
             ButtonStyle::Primary | ButtonStyle::Success | ButtonStyle::Danger => "white",
+            ButtonStyle::Link => return None,
         };
         let name = format!("lynx_{}_{color}", self.key());
         EMOJIS.iter().map(|(n, _)| *n).find(|n| *n == name)
@@ -343,7 +342,6 @@ mod tests {
             (Icon::Dislike, Danger, "lynx_dislike_white"),
             (Icon::Panel, Primary, "lynx_panel_white"),
             (Icon::Cancel, Danger, "lynx_cancel_white"),
-            (Icon::Link, Link, "lynx_link_white"),
         ];
         for (icon, style, name) in cases {
             assert_eq!(icon.emoji_name(style), Some(name), "{icon:?} on {style:?}");

@@ -112,6 +112,17 @@ impl Queue {
         }
     }
 
+    /// A copy of another queue's state (a jam member follows the shared queue).
+    pub fn mirror(tracks: Vec<Entry>, index: usize, active: bool, loop_mode: LoopMode) -> Self {
+        let pos = index.min(tracks.len());
+        Self {
+            active: active && pos < tracks.len(),
+            tracks,
+            pos,
+            loop_mode,
+        }
+    }
+
     pub fn is_active(&self) -> bool {
         self.active
     }

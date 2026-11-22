@@ -1177,3 +1177,224 @@ async fn taste_genre_routes_need_ai() {
     assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"));
     assert_eq!(h.state.app.store.history_len(ANA).await.unwrap(), 4);
 }
+
+fn detached_player(h: &Harness, channel: u64, ids: &[&str]) -> crate::player::PlayerHandle {
+    use crate::player::{QueueEntry, Requester, Restore, StartRequest};
+    let tracks = ids
+        .iter()
+        .map(|id| Arc::new(QueueEntry::new(crate::store::test_util::track(id), Requester::id_only(ANA))))
+        .collect();
+    h.state.app.players.start_detached(StartRequest {
+        guild_id: GUILD,
+        voice_channel_id: channel,
+        bot_index: 0,
+        text_channel_id: None,
+        started_by: ANA,
+        // Nobody in the channel for the player: nothing is fetched.
+        humans: HashSet::new(),
+        settings: Default::default(),
+        restore: Some(Restore {
+            tracks,
+            index: 0,
+            loop_mode: Default::default(),
+            volume: 100,
+            position_ms: 0,
+            after_restart: false,
+        }),
+    })
+}
+
+/// Poll a GET until `ok` (jam changes reach the players asynchronously).
+async fn eventually(h: &Harness, path: &str, token: &str, ok: impl Fn(&Value) -> bool) -> Value {
+    for _ in 0..200 {
+        let (s, v) = h.call("GET", path, Some(token), None).await;
+        if s == StatusCode::OK && ok(&v) {
+            return v;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("{path} never matched");
+}
+
+#[tokio::test]
+async fn jam_routes() {
+    let h = harness().await;
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (boss, _) = h.login("boss", Some(LOUNGE)).await;
+    let body = |c: u64| json!({ "channelId": c.to_string() });
+
+    // Not in the channel / nothing playing / no such jam.
+    let (s, v) = h.call("POST", "/api/jam/create", Some(&ana), Some(body(VOICE))).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "not_in_channel"));
+    h.fake.set_voice(ANA, Some(VOICE));
+    h.fake.set_voice(BOSS, Some(LOUNGE));
+    let (s, v) = h.call("POST", "/api/jam/create", Some(&ana), Some(body(VOICE))).await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"));
+    let (s, v) = h
+        .call(
+            "POST",
+            "/api/jam/join",
+            Some(&boss),
+            Some(json!({ "channelId": "101", "jamId": "abcdefghij" })),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "jam_ended"));
+
+    detached_player(&h, VOICE, &["a", "b"]);
+    detached_player(&h, LOUNGE, &["x"]);
+    let (s, v) = h.call("POST", "/api/jam/create", Some(&ana), Some(body(VOICE))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let id = v["jamId"].as_str().unwrap().to_owned();
+    assert_eq!(
+        v["shareLink"],
+        format!("https://discord.com/activities/4242?custom_id=jam-{id}")
+    );
+    assert_eq!(
+        v["jam"]["you"],
+        json!({ "member": true, "isHost": true, "canManage": true, "canEdit": true })
+    );
+    assert_eq!(
+        v["jam"]["settings"],
+        json!({ "allowChannels": true, "allowServers": false, "editableBy": "everyone", "closed": false })
+    );
+    // Creating again returns the same jam.
+    let (_, again) = h.call("POST", "/api/jam/create", Some(&ana), Some(body(VOICE))).await;
+    assert_eq!(again["jamId"], id.as_str());
+
+    // The join prompt of the link, then the join.
+    let (s, v) = h.call("GET", &format!("/api/jam/jam-{id}"), Some(&boss), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["join"], json!({ "allowed": true, "code": null }));
+    assert_eq!(v["jam"]["hostChannelId"], "100");
+    let join = json!({ "channelId": "101", "jamId": id });
+    let (s, v) = h.call("POST", "/api/jam/join", Some(&boss), Some(join.clone())).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["jam"]["members"].as_array().unwrap().len(), 2);
+    assert_eq!(v["jam"]["you"]["member"], true);
+    assert_eq!(v["jam"]["you"]["isHost"], false);
+    let (s, v) = h.call("POST", "/api/jam/join", Some(&boss), Some(join.clone())).await;
+    assert_eq!((s, code(&v)), (StatusCode::CONFLICT, "jam_already_in"));
+    let (_, v) = h.call("GET", &format!("/api/jam/{id}"), Some(&boss), None).await;
+    assert_eq!(v["join"]["code"], "jam_already_in");
+    // The member's player state carries the jam and the shared queue.
+    let state = eventually(&h, "/api/player?channelId=101", &boss, |v| {
+        v["jam"]["members"].as_array().is_some_and(|m| m.len() == 2)
+            && v["upcoming"].as_array().is_some_and(|u| u.len() == 2)
+    })
+    .await;
+    assert_eq!(state["upcoming"][0]["title"], "Song a");
+
+    // Only the host channel manages the jam.
+    let (s, v) = h
+        .call(
+            "POST",
+            "/api/jam/settings",
+            Some(&boss),
+            Some(json!({ "channelId": "101", "closed": true })),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "jam_not_host"));
+    let (s, v) = h
+        .call(
+            "POST",
+            "/api/jam/settings",
+            Some(&ana),
+            Some(json!({ "channelId": "100", "editableBy": "host" })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["settings"]["editableBy"], "host");
+    // Host-only editing: the member cannot change the shared queue, but its volume is its own.
+    let (s, v) = h.call("POST", "/api/queue/clear", Some(&boss), Some(body(LOUNGE))).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "jam_host_only"));
+    let (s, v) = h
+        .call(
+            "POST",
+            "/api/queue/add",
+            Some(&boss),
+            Some(json!({ "channelId": "101", "query": "x" })),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "jam_host_only"));
+    let (s, _) = h
+        .call(
+            "POST",
+            "/api/player/volume",
+            Some(&boss),
+            Some(json!({ "channelId": "101", "volume": 50 })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let v = eventually(&h, "/api/jam?channelId=101", &boss, |v| v["jam"]["you"]["canEdit"] == false).await;
+    assert_eq!(v["jam"]["you"]["canManage"], false);
+
+    // Close, kick, end.
+    let (s, v) = h.call("POST", "/api/jam/close", Some(&ana), Some(body(VOICE))).await;
+    assert_eq!((s, v["settings"]["closed"].clone()), (StatusCode::OK, json!(true)));
+    let kick = |c: u64| json!({ "channelId": "100", "guildId": GUILD.to_string(), "memberChannelId": c.to_string() });
+    let (s, v) = h.call("POST", "/api/jam/kick", Some(&ana), Some(kick(VOICE))).await;
+    assert_eq!((s, code(&v)), (StatusCode::BAD_REQUEST, "invalid"));
+    let (s, _) = h.call("POST", "/api/jam/kick", Some(&ana), Some(kick(LOUNGE))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    // The removed channel has its own queue back.
+    let state = eventually(&h, "/api/player?channelId=101", &boss, |v| v["jam"].is_null()).await;
+    assert_eq!(state["current"]["title"], "Song x", "waits for people, like a restored queue");
+    // Closed: it cannot come back.
+    let (s, v) = h.call("POST", "/api/jam/join", Some(&boss), Some(join)).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "jam_closed"));
+    let (s, v) = h.call("POST", "/api/jam/leave", Some(&boss), Some(body(LOUNGE))).await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_in_jam"));
+
+    let (s, _) = h.call("POST", "/api/jam/end", Some(&ana), Some(body(VOICE))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    eventually(&h, "/api/jam?channelId=100", &ana, |v| v["jam"].is_null()).await;
+    let (s, v) = h.call("GET", &format!("/api/jam/{id}"), Some(&boss), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "jam_ended"));
+    let (s, v) = h.call("GET", "/api/jam/nope", Some(&boss), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::BAD_REQUEST, "invalid"));
+}
+
+#[tokio::test]
+async fn jam_join_needs_a_free_bot_and_members_can_leave() {
+    let h = harness().await;
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (boss, _) = h.login("boss", Some(LOUNGE)).await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    h.fake.set_voice(BOSS, Some(LOUNGE));
+    detached_player(&h, VOICE, &["a"]);
+    let (_, v) = h
+        .call("POST", "/api/jam/create", Some(&ana), Some(json!({ "channelId": "100" })))
+        .await;
+    let id = v["jamId"].as_str().unwrap().to_owned();
+    // No Lynx in the lounge and no free bot: the usual busy error (no invite: no more bots to add).
+    let (s, v) = h
+        .call(
+            "POST",
+            "/api/jam/join",
+            Some(&boss),
+            Some(json!({ "channelId": "101", "jamId": id })),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::SERVICE_UNAVAILABLE, "bot_unavailable"), "{v}");
+    assert!(v["error"].get("invite").is_none());
+
+    // With a player there, join and leave.
+    detached_player(&h, LOUNGE, &["x"]);
+    let (s, _) = h
+        .call(
+            "POST",
+            "/api/jam/join",
+            Some(&boss),
+            Some(json!({ "channelId": "101", "jamId": id })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = h
+        .call("POST", "/api/jam/leave", Some(&boss), Some(json!({ "channelId": "101" })))
+        .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    eventually(&h, "/api/jam?channelId=100", &ana, |v| {
+        v["jam"]["members"].as_array().is_some_and(|m| m.len() == 1)
+    })
+    .await;
+}

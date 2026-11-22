@@ -70,7 +70,7 @@ impl Button {
             label: label.into(),
             target: url.into(),
             disabled: false,
-            icon: Some(Icon::Link),
+            icon: None,
         }
     }
 
@@ -411,7 +411,6 @@ mod tests {
         let ids = |name: &str| match name {
             "lynx_skip_emerald" => Some(11),
             "lynx_panel_white" => Some(22),
-            "lynx_link_white" => Some(33),
             _ => None,
         };
         let row = &msg.to_json_with(&ids)["components"][0]["components"];
@@ -422,7 +421,7 @@ mod tests {
         );
         assert_eq!(row[1]["emoji"], json!({ "id": "22", "name": "lynx_panel_white" }));
         assert!(row[2].get("emoji").is_none(), "no icon, no emoji");
-        assert_eq!(row[3]["emoji"]["name"], "lynx_link_white");
+        assert!(row[3].get("emoji").is_none(), "link buttons keep only Discord's own arrow");
 
         // Without ids (sync not done or failed) the buttons are text-only, exactly as before.
         let none = msg.to_json_with(&|_| None);

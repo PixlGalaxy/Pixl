@@ -11,17 +11,18 @@ use serenity::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
-use super::queue::Entry;
+use super::{jam::JamView, queue::Entry};
 use crate::{
     ai::AiEngine,
     discord::{
         ids::track_tag,
         ui::{
-            cards::{self, Notice, NowPlaying, TrackCard},
+            cards::{self, JamLine, Notice, NowPlaying, TrackCard},
             Message,
         },
     },
     i18n::I18n,
+    store::SessionKey,
 };
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -57,6 +58,28 @@ pub enum OwnedNotice {
     Stopped {
         by: u64,
     },
+    JamEntered {
+        host: String,
+    },
+    JamJoined {
+        channel: String,
+        count: usize,
+    },
+    JamLeft {
+        channel: String,
+        count: usize,
+    },
+    JamHost {
+        channel: String,
+        own: bool,
+    },
+    JamEnded {
+        restored: bool,
+    },
+    JamRemoved,
+    JamLeftOwn {
+        restored: bool,
+    },
 }
 
 impl OwnedNotice {
@@ -83,6 +106,13 @@ impl OwnedNotice {
             Self::TooManyFailures => Notice::TooManyFailures,
             Self::Disconnected => Notice::Disconnected,
             Self::Stopped { by } => Notice::Stopped { by: *by },
+            Self::JamEntered { host } => Notice::JamEntered { host },
+            Self::JamJoined { channel, count } => Notice::JamJoined { channel, count: *count },
+            Self::JamLeft { channel, count } => Notice::JamLeft { channel, count: *count },
+            Self::JamHost { channel, own } => Notice::JamHost { channel, own: *own },
+            Self::JamEnded { restored } => Notice::JamEnded { restored: *restored },
+            Self::JamRemoved => Notice::JamRemoved,
+            Self::JamLeftOwn { restored } => Notice::JamLeftOwn { restored: *restored },
         }
     }
 }
@@ -91,7 +121,17 @@ impl OwnedNotice {
 pub struct NpData {
     pub entry: Entry,
     pub node_name: Option<String>,
+    pub jam: Option<JamLine>,
     pub paused: bool,
+}
+
+/// The now-playing jam line of channel `me`.
+pub fn jam_line(view: &JamView, me: SessionKey) -> JamLine {
+    JamLine {
+        host_name: view.host_member().map(|m| m.name.clone()).unwrap_or_default(),
+        channels: view.members.len(),
+        hosting: view.host == me,
+    }
 }
 
 enum Out {
@@ -254,6 +294,7 @@ async fn now_playing_card(deps: &MessengerDeps, data: &NpData) -> Message {
         },
         voice_channel_id: deps.voice_channel_id,
         node_name: data.node_name.as_deref(),
+        jam: data.jam.as_ref(),
         genres: &genres,
         paused: data.paused,
         ai_enabled: deps.ai_enabled,

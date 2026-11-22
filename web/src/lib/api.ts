@@ -5,6 +5,9 @@ import type {
   GenreTrack,
   GuildChannels,
   GuildSettings,
+  Jam,
+  JamPreview,
+  JamSettings,
   LoopMode,
   Lyrics,
   Member,
@@ -20,11 +23,14 @@ import { isGatewayStatus, reportBackendTrouble } from './health'
 export class ApiError extends Error {
   readonly code: string
   readonly status: number
-  constructor(code: string, message: string, status: number) {
+  /** "Every Lynx bot is busy": invite link of the next bot to add, when there is one. */
+  readonly invite: string | null
+  constructor(code: string, message: string, status: number, invite: string | null = null) {
     super(message)
     this.name = 'ApiError'
     this.code = code
     this.status = status
+    this.invite = invite
   }
 }
 
@@ -114,8 +120,8 @@ export async function request<T>(path: string, method: Method = 'GET', body?: un
     }
   }
   if (!res.ok) {
-    const err = (data as { error?: { code?: string; message?: string } } | null)?.error
-    throw new ApiError(err?.code ?? `http_${res.status}`, err?.message ?? res.statusText, res.status)
+    const err = (data as { error?: { code?: string; message?: string; invite?: string } } | null)?.error
+    throw new ApiError(err?.code ?? `http_${res.status}`, err?.message ?? res.statusText, res.status, err?.invite ?? null)
   }
   return data as T
 }
@@ -157,6 +163,20 @@ export const api = {
     request<void>('/ai/start', 'POST', prompt ? { channelId, prompt } : { channelId }),
   aiStop: (channelId: string) => request<void>('/ai/stop', 'POST', { channelId }),
   aiCancel: (channelId: string, jobId: string) => request<void>('/ai/cancel', 'POST', { channelId, jobId }),
+
+  // Jam
+  jam: (channelId: string) => request<{ jam: Jam | null }>(`/jam?${q({ channelId })}`),
+  jamPreview: (jamId: string) => request<JamPreview>(`/jam/${encodeURIComponent(jamId)}`),
+  jamCreate: (channelId: string) =>
+    request<{ jamId: string; shareLink: string; jam: Jam }>('/jam/create', 'POST', { channelId }),
+  jamJoin: (channelId: string, jamId: string) => request<{ jam: Jam | null }>('/jam/join', 'POST', { channelId, jamId }),
+  jamLeave: (channelId: string) => request<void>('/jam/leave', 'POST', { channelId }),
+  jamSettings: (channelId: string, patch: Partial<JamSettings>) =>
+    request<{ settings: JamSettings }>('/jam/settings', 'POST', { channelId, ...patch }),
+  jamKick: (channelId: string, guildId: string, memberChannelId: string) =>
+    request<void>('/jam/kick', 'POST', { channelId, guildId, memberChannelId }),
+  jamClose: (channelId: string) => request<{ settings: JamSettings }>('/jam/close', 'POST', { channelId }),
+  jamEnd: (channelId: string) => request<void>('/jam/end', 'POST', { channelId }),
 
   // Search and lyrics
   search: (query: string) => request<{ results: SearchResult[] }>(`/search?${q({ q: query })}`),

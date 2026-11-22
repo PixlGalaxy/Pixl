@@ -8,6 +8,7 @@
 pub mod actor;
 pub mod checkpoint;
 pub mod http_seek;
+pub mod jam;
 pub mod lifecycle;
 pub mod messages;
 pub mod playback;
@@ -220,6 +221,20 @@ pub enum Command {
         id: Uuid,
         result: Box<Result<Vec<crate::ai::RadioPick>, crate::ai::RadioError>>,
     },
+    // Jam (see `jam`)
+    /// Start a jam hosted by this channel, seeded with its queue.
+    JamCreate {
+        reply: Reply<Result<jam::JamHandle, jam::CreateRefused>>,
+    },
+    /// Join a jam: the own queue is saved and the shared one followed.
+    JamJoin {
+        jam: jam::JamHandle,
+        reply: Reply<Result<(), jam::JoinRefused>>,
+    },
+    /// Leave the jam (the own queue comes back). False when not in one.
+    JamLeave {
+        reply: Reply<bool>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -400,6 +415,19 @@ impl PlayerHandle {
     pub(crate) async fn end(&self, reason: EndReason) -> Result<(), PlayerError> {
         self.send(Command::End(reason)).await
     }
+
+    /// Host a jam from this channel (or get an error when it already is in one).
+    pub async fn jam_create(&self) -> Result<Result<jam::JamHandle, jam::CreateRefused>, PlayerError> {
+        self.ask(|reply| Command::JamCreate { reply }).await
+    }
+
+    pub async fn jam_join(&self, jam: jam::JamHandle) -> Result<Result<(), jam::JoinRefused>, PlayerError> {
+        self.ask(|reply| Command::JamJoin { jam, reply }).await
+    }
+
+    pub async fn jam_leave(&self) -> Result<bool, PlayerError> {
+        self.ask(|reply| Command::JamLeave { reply }).await
+    }
 }
 
 /// A saved queue to continue (restart resume or "Play it again").
@@ -451,6 +479,7 @@ struct ManagerInner {
     generation: AtomicU64,
     /// Woken whenever a player starts in or moves into a channel (panel sockets waiting for one).
     appeared: Notify,
+    jams: jam::Jams,
 }
 
 impl PlayerManager {
@@ -464,12 +493,18 @@ impl PlayerManager {
                 closing: AtomicBool::new(false),
                 generation: AtomicU64::new(1),
                 appeared: Notify::new(),
+                jams: jam::Jams::new(),
             }),
         }
     }
 
     pub fn deps(&self) -> &Arc<PlayerDeps> {
         &self.inner.deps
+    }
+
+    /// Live jams (in memory only; see `jam`).
+    pub fn jams(&self) -> &jam::Jams {
+        &self.inner.jams
     }
 
     pub fn is_closing(&self) -> bool {
@@ -614,6 +649,50 @@ impl PlayerManager {
         };
         tokio::spawn(actor::run(spawn));
         Ok(handle)
+    }
+
+    /// Tests: a player without a voice connection (a standalone songbird call), registered like a
+    /// real one. With nobody in the channel nothing is fetched or played.
+    #[cfg(test)]
+    pub fn start_detached(&self, req: StartRequest) -> PlayerHandle {
+        let deps = self.inner.deps.clone();
+        let bot = deps.bots.bot(req.bot_index).cloned().expect("bot");
+        let call = Arc::new(Mutex::new(songbird::Call::standalone(
+            GuildId::new(req.guild_id),
+            serenity::all::UserId::new(1),
+        )));
+        let generation = self.inner.generation.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = mpsc::channel(COMMAND_QUEUE);
+        let (events, _) = broadcast::channel(EVENT_QUEUE);
+        let voice_channel = Arc::new(AtomicU64::new(req.voice_channel_id));
+        let snapshot = Arc::new(RwLock::new(Arc::new(actor::initial_snapshot(&req, bot.user_id()))));
+        let handle = PlayerHandle {
+            guild_id: req.guild_id,
+            bot_index: req.bot_index,
+            generation,
+            voice_channel,
+            tx: tx.clone(),
+            events: events.clone(),
+            snapshot: snapshot.clone(),
+        };
+        let key = SessionKey {
+            guild_id: req.guild_id,
+            voice_channel_id: req.voice_channel_id,
+        };
+        self.inner.players.insert(key, handle.clone());
+        self.inner.appeared.notify_waiters();
+        tokio::spawn(actor::run(actor::Spawn {
+            manager: self.clone(),
+            req,
+            call,
+            bot,
+            generation,
+            tx,
+            rx,
+            events,
+            snapshot,
+        }));
+        handle
     }
 
     /// Called by the actor when it ends.
