@@ -10,6 +10,7 @@ pub mod apple;
 pub mod counterpart;
 pub mod detect;
 pub mod fallback;
+pub mod lists;
 pub mod lyrics;
 pub mod matcher;
 pub mod spotify;
@@ -35,6 +36,7 @@ use crate::{
     store::Store,
 };
 use detect::Input;
+pub use lists::{CachedList, ListRef};
 pub use lyrics::Lyrics;
 pub use ytdlp::StreamInfo;
 
@@ -177,6 +179,8 @@ pub type SourceResult<T> = Result<T, SourceError>;
 pub struct Resolved {
     pub tracks: Vec<TrackInfo>,
     pub playlist_name: Option<String>,
+    /// Cover of the list, when the platform gives one.
+    pub image: Option<String>,
 }
 
 /// Everything the player needs to start a track.
@@ -216,6 +220,8 @@ struct Inner {
     apple: apple::Apple,
     lrclib: lyrics::Lrclib,
     music_lookups: Semaphore,
+    /// Shared track lists of playlists / albums (60 min, every user and guild).
+    lists: lists::ListCache,
     /// Original video id -> substitute that played (see `invalidate_stream`).
     substitutes: Mutex<HashMap<String, String>>,
 }
@@ -234,7 +240,7 @@ impl Sources {
         };
         Ok(Self {
             inner: Arc::new(Inner {
-                store,
+                store: store.clone(),
                 ttl: Duration::from_secs(u64::from(config.cache_ttl_days.max(1)) * 24 * 60 * 60),
                 yt: youtube::YouTube::new(http.clone()),
                 ytdlp: ytdlp::Ytdlp::new(
@@ -250,6 +256,7 @@ impl Sources {
                 apple: apple::Apple::new(http.clone()),
                 lrclib: lyrics::Lrclib::new(http.clone()),
                 music_lookups: Semaphore::new(MUSIC_LOOKUPS),
+                lists: lists::ListCache::new(store.clone(), lists::LIST_TTL),
                 substitutes: Mutex::new(HashMap::new()),
                 http,
                 dirs,
@@ -273,12 +280,92 @@ impl Sources {
     /// Turn user input into tracks. Spotify tracks come back unmatched (`youtube_id: None`).
     /// `owner` is used for any yt-dlp process this needs (non-YouTube URLs).
     pub async fn resolve(&self, query: &str, limit: usize, owner: &ProcOwner) -> SourceResult<Resolved> {
-        let limit = limit.max(1);
-        let input = match detect::detect(query) {
-            Input::SpotifyShortLink(url) => self.expand_short_link(&url).await?,
-            other => other,
+        let input = self.detect(query).await?;
+        self.resolve_input(input, limit, owner).await
+    }
+
+    /// Classify input, following Spotify short links.
+    async fn detect(&self, query: &str) -> SourceResult<Input> {
+        match detect::detect(query) {
+            Input::SpotifyShortLink(url) => self.expand_short_link(&url).await,
+            other => Ok(other),
+        }
+    }
+
+    /// The canonical list (playlist, album, artist page) behind user input, if it is one.
+    pub async fn list_ref(&self, query: &str) -> SourceResult<Option<ListRef>> {
+        Ok(lists::list_ref(&self.detect(query).await?))
+    }
+
+    /// [`resolve`](Self::resolve) for `/play`: lists come from the shared list cache (fetched when
+    /// stale) and are returned with their canonical reference, for saving.
+    pub async fn resolve_for_play(
+        &self,
+        query: &str,
+        limit: usize,
+        owner: &ProcOwner,
+    ) -> SourceResult<(Resolved, Option<ListRef>)> {
+        let input = self.detect(query).await?;
+        let Some(list) = lists::list_ref(&input) else {
+            return Ok((self.resolve_input(input, limit, owner).await?, None));
         };
-        let single = |t: TrackInfo| Resolved { tracks: vec![t], playlist_name: None };
+        let c = self.list(&list, false, owner).await?;
+        let mut tracks = c.tracks;
+        tracks.truncate(limit.max(1));
+        Ok((
+            Resolved {
+                tracks,
+                playlist_name: c.name,
+                image: c.image,
+            },
+            Some(list),
+        ))
+    }
+
+    /// Tracks of a list: the shared cache when fresh, else (or with `force`) a new fetch that
+    /// replaces it. Fetches always read up to [`DEFAULT_LIST_LIMIT`] tracks, so one cache entry
+    /// serves every guild's queue limit.
+    pub async fn list(&self, list: &ListRef, force: bool, owner: &ProcOwner) -> SourceResult<CachedList> {
+        self.inner
+            .lists
+            .get_or_fetch(&list.url, force, || async {
+                let input = detect::detect(&list.url);
+                // Apple collections have their own long-lived cache: a fetch here must be fresh.
+                let apple_key = match &input {
+                    Input::AppleAlbum { country, id } => Some(apple::album_key(country, id)),
+                    Input::ApplePlaylist { country, id } => Some(apple::playlist_key(country, id)),
+                    _ => None,
+                };
+                if let Some(key) = apple_key {
+                    let _ = self.inner.store.cache_delete(apple::CACHE_NS, &key).await;
+                }
+                let r = self.resolve_input(input, DEFAULT_LIST_LIMIT, owner).await?;
+                if r.tracks.is_empty() {
+                    return Err(SourceError::NotFound("That list is empty".into()));
+                }
+                let image = r.image.or_else(|| r.tracks.iter().find_map(|t| t.thumbnail.clone()));
+                Ok(CachedList {
+                    name: r.playlist_name,
+                    image,
+                    tracks: r.tracks,
+                    fetched_at: crate::store::now_secs(),
+                })
+            })
+            .await
+    }
+
+    /// The cached tracks of a list if still fresh; never fetches.
+    pub async fn cached_list(&self, list: &ListRef) -> Option<CachedList> {
+        self.inner.lists.peek(&list.url).await
+    }
+
+    async fn resolve_input(&self, input: Input, limit: usize, owner: &ProcOwner) -> SourceResult<Resolved> {
+        let limit = limit.max(1);
+        let single = |t: TrackInfo| Resolved {
+            tracks: vec![t],
+            playlist_name: None,
+            image: None,
+        };
         match input {
             Input::Search(q) if q.is_empty() => Err(SourceError::NotFound("Empty search".into())),
             Input::Search(q) => {
@@ -295,44 +382,44 @@ impl Sources {
                 Err(SourceError::Http(_)) => {
                     let url = format!("https://www.youtube.com/watch?v={id}");
                     let (tracks, _) = self.inner.ytdlp.probe(&url, 1, owner).await?;
-                    Ok(Resolved { tracks, playlist_name: None })
+                    Ok(Resolved { tracks, playlist_name: None, image: None })
                 }
                 Err(e) => Err(e),
             },
             Input::YoutubePlaylist { id, music } => {
                 let p = self.inner.yt.playlist(&id, music, limit).await?;
-                Ok(Resolved { tracks: p.tracks, playlist_name: p.title })
+                Ok(Resolved { tracks: p.tracks, playlist_name: p.title, image: None })
             }
             Input::YoutubeMusicAlbum(id) => {
                 let p = self.inner.yt.music_album(&id, limit).await?;
-                Ok(Resolved { tracks: p.tracks, playlist_name: p.title })
+                Ok(Resolved { tracks: p.tracks, playlist_name: p.title, image: None })
             }
             Input::YoutubeMusicArtist(id) => {
                 let p = self.inner.yt.music_artist(&id, limit).await?;
-                Ok(Resolved { tracks: p.tracks, playlist_name: p.title })
+                Ok(Resolved { tracks: p.tracks, playlist_name: p.title, image: None })
             }
             Input::SpotifyTrack(id) => Ok(single(self.spotify()?.track(&id).await?)),
             Input::SpotifyAlbum(id) => {
                 let c = self.spotify()?.album(&id, limit).await?;
-                Ok(Resolved { tracks: c.tracks, playlist_name: c.name })
+                Ok(Resolved { tracks: c.tracks, playlist_name: c.name, image: c.image })
             }
             Input::SpotifyPlaylist(id) => {
                 let c = self.spotify()?.playlist(&id, limit).await?;
                 if c.tracks.is_empty() {
                     return Err(SourceError::NotFound("That Spotify playlist is empty".into()));
                 }
-                Ok(Resolved { tracks: c.tracks, playlist_name: c.name })
+                Ok(Resolved { tracks: c.tracks, playlist_name: c.name, image: c.image })
             }
             Input::AppleSong { country, id } => {
                 Ok(single(self.inner.apple.song(&self.inner.store, self.inner.ttl, &country, &id).await?))
             }
             Input::AppleAlbum { country, id } => {
                 let c = self.inner.apple.album(&self.inner.store, self.inner.ttl, &country, &id, limit).await?;
-                Ok(Resolved { tracks: c.tracks, playlist_name: c.name })
+                Ok(Resolved { tracks: c.tracks, playlist_name: c.name, image: None })
             }
             Input::ApplePlaylist { country, id } => {
                 let c = self.inner.apple.playlist(&self.inner.store, self.inner.ttl, &country, &id, limit).await?;
-                Ok(Resolved { tracks: c.tracks, playlist_name: c.name })
+                Ok(Resolved { tracks: c.tracks, playlist_name: c.name, image: None })
             }
             Input::AppleUnsupported(_) => Err(SourceError::Unsupported(
                 "Only Apple Music songs, albums and playlists can be played".into(),
@@ -342,7 +429,7 @@ impl Sources {
             )),
             Input::Url(url) => {
                 let (tracks, name) = self.inner.ytdlp.probe(&url, limit, owner).await?;
-                Ok(Resolved { tracks, playlist_name: name })
+                Ok(Resolved { tracks, playlist_name: name, image: None })
             }
         }
     }
@@ -669,6 +756,7 @@ mod tests {
             max_concurrent_extractions: 2,
             stream_cache_max_mb: 100,
             cache_ttl_days: 7,
+            max_stored_playlists: 20,
             landing_url: None,
             terms_url: None,
             privacy_url: None,

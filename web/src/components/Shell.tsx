@@ -8,6 +8,7 @@ import { useLynx } from '../lib/lynx'
 import { HelpScreen } from '../screens/Help'
 import { LyricsScreen } from '../screens/Lyrics'
 import { PlayerScreen } from '../screens/Player'
+import { PlaylistsScreen } from '../screens/Playlists'
 import { QueueScreen, UpNextPanel } from '../screens/Queue'
 import { RadioScreen } from '../screens/Radio'
 import { SettingsScreen } from '../screens/Settings'
@@ -15,11 +16,12 @@ import { AccountButton, AccountPanel, saveAppearance, useAppearance } from './Ac
 import { LynxMark } from './Logo'
 import { NoVoiceCard } from './NoVoice'
 
-export type TabId = 'player' | 'queue' | 'lyrics' | 'radio' | 'settings' | 'help'
+export type TabId = 'player' | 'queue' | 'playlists' | 'lyrics' | 'radio' | 'settings' | 'help'
 
 const TABS: Array<{ id: TabId }> = [
   { id: 'player' },
   { id: 'queue' },
+  { id: 'playlists' },
   { id: 'lyrics' },
   { id: 'radio' },
   { id: 'settings' },
@@ -88,7 +90,7 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
   }, [active])
 
   const channelName = followed ?? state?.channelName ?? null
-  // Not in a voice channel: no player anywhere, only Settings and Help stay useful.
+  // Not in a voice channel: no player anywhere; Playlists (browsing), Settings and Help stay useful.
   const noVoice = !channelId && (active === 'player' || active === 'queue' || active === 'lyrics' || active === 'radio')
   // On wide screens the queue lives in a right column next to every tab except the queue itself.
   const showSide = active !== 'queue' && !!channelId
@@ -141,6 +143,7 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
           {noVoice && <NoVoiceCard />}
           {!noVoice && active === 'player' && <PlayerScreen onOpenQueue={() => setTab('queue')} />}
           {!noVoice && active === 'queue' && <QueueScreen />}
+          {active === 'playlists' && <PlaylistsScreen />}
           {!noVoice && active === 'lyrics' && <LyricsScreen />}
           {!noVoice && active === 'radio' && <RadioScreen />}
           {active === 'settings' && <SettingsScreen />}

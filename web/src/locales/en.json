@@ -30,7 +30,8 @@
     "jam_channels_off": "The host does not let other channels of the server join.",
     "jam_servers_off": "The host does not let channels of other servers join.",
     "jam_ended": "That jam has ended.",
-    "jam_other": "Your channel is in another jam. Leave it first."
+    "jam_other": "Your channel is in another jam. Leave it first.",
+    "refresh_blocked": "Too many refreshes. Please wait 5 minutes."
   },
   "login": {
     "title": "Connecting to Lynx",
@@ -68,6 +69,7 @@
   "tabs": {
     "player": "Now playing",
     "queue": "Queue",
+    "playlists": "Playlists",
     "lyrics": "Lyrics",
     "radio": "Radio",
     "settings": "Settings",
@@ -159,6 +161,41 @@
     "historyHint": "The last songs played in this channel.",
     "emptyHistory": "No songs played yet.",
     "addAgain": "Add {{title}} again"
+  },
+  "playlists": {
+    "title": "Your playlists",
+    "hint": "Playlists and albums you add are saved here, up to {{max}}. Pinned ones stay on top and are never replaced.",
+    "count": "{{count}} of {{max}}",
+    "empty": "No saved playlists yet. Add a playlist or album link with /play or in the Queue tab and it shows up here.",
+    "savingOff": "Your listening history is off, so new playlists are not saved. The saved ones stay until you remove them.",
+    "savingDisabled": "Saving playlists is turned off on this bot.",
+    "full": "Every saved playlist is pinned, so new ones are not saved. Unpin or remove one to make room.",
+    "untitled": "Untitled playlist",
+    "open": "Open {{name}}",
+    "pin": "Pin {{name}}",
+    "unpin": "Unpin {{name}}",
+    "remove": "Remove {{name}}",
+    "removed": "Playlist removed.",
+    "back": "Back to playlists",
+    "songs_one": "{{count}} song, {{duration}}",
+    "songs_other": "{{count}} songs, {{duration}}",
+    "updatedAgo": "updated {{ago}}",
+    "loading": "Loading songs",
+    "noSongs": "This playlist has no songs.",
+    "addAll": "Add all to queue",
+    "addSong": "Add {{title}}",
+    "refresh": "Refresh data from playlist",
+    "refreshed": "Playlist updated.",
+    "refreshTooSoon": "It was just updated. Showing the songs from a moment ago.",
+    "blocked": "Too many refreshes. Please wait 5 minutes ({{time}} left).",
+    "noChannel": "Join a voice channel to add songs to the queue.",
+    "noAdd": "You cannot add songs in this channel right now.",
+    "platforms": {
+      "spotify": "Spotify",
+      "youtube": "YouTube",
+      "youtube_music": "YouTube Music",
+      "apple_music": "Apple Music"
+    }
   },
   "reason": {
     "tag": "Radio",
@@ -295,14 +332,14 @@
     "data": "Your data",
     "dataHint": "Removal is immediate and cannot be undone.",
     "delete": "Delete my data",
-    "deleteHint": "Removes your history, likes, dislikes and taste.",
+    "deleteHint": "Removes your history, likes, dislikes, taste and saved playlists.",
     "deleteHintNoAi": "Removes anything Lynx stored about you.",
     "deleteButton": "Delete",
     "deleteQuestion": "Delete everything?",
     "deleteConfirm": "Delete",
     "deleted": "Your data was deleted.",
     "policy": "Read the privacy policy",
-    "noHistoryNote": "Only your panel language is stored.",
+    "noHistoryNote": "Only your panel settings and your saved playlists are stored.",
     "tasteMoved": "Your taste (top genres and most played songs) is at the bottom of the Radio tab."
   },
   "health": {
@@ -342,6 +379,10 @@
       "queue": {
         "title": "Queue",
         "body": "Paste a link or search to add songs. Drag the handle to reorder, use the cross to remove a song and Clear to empty the queue. History lists the last songs played and lets you add one again."
+      },
+      "playlists": {
+        "title": "Playlists",
+        "body": "Every playlist, album or artist page you add with /play or in the Queue tab is saved here for you, on any server. Open one to see its songs, add them all or one by one. Pin the ones you want to keep on top; when the list is full the oldest unpinned one makes room. Songs are refreshed at most every hour; Refresh data from playlist reads it again now (once every few seconds)."
       },
       "lyrics": {
         "title": "Lyrics",
@@ -529,7 +570,8 @@
       "title": "What is stored",
       "items": [
         "The last 2000 different songs you requested: title, artist, link, how many times you played each one and when you last played it.",
-        "Your Like and Dislike votes."
+        "Your Like and Dislike votes.",
+        "The playlists and albums you add (name, image, platform and link), for the Playlists tab."
       ]
     },
     "used": {
@@ -545,7 +587,8 @@
       "items": [
         "Nothing new is saved.",
         "Like, Dislike and /ai are turned off for you.",
-        "You are left out of other people's recommendations."
+        "You are left out of other people's recommendations.",
+        "New playlists are not saved to your Playlists tab."
       ]
     },
     "links": {
@@ -559,10 +602,12 @@
         "Your listening history (every song, play count and date).",
         "Your Like and Dislike votes.",
         "Your taste profile (genres and radio data).",
-        "Your similarity links with other listeners, in both directions."
+        "Your similarity links with other listeners, in both directions.",
+        "Your saved playlists."
       ],
       "itemsNoAi": [
-        "Anything Lynx stored about your listening."
+        "Anything Lynx stored about your listening.",
+        "Your saved playlists."
       ],
       "kept": "Your panel settings (language, theme, accent and the history switch) are kept."
     }

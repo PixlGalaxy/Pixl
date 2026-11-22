@@ -229,6 +229,7 @@ pub async fn delete_data(State(st): State<ApiState>, Auth(s): Auth) -> ApiResult
         user = s.user_id,
         history = deleted.history,
         feedback = deleted.feedback,
+        playlists = deleted.playlists,
         "user data deleted from the panel"
     );
     let _ = st.events.send(super::GuildEvent::User(s.user_id));

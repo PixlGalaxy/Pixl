@@ -74,6 +74,8 @@ pub struct DeletedUserData {
     pub feedback: u64,
     pub taste: u64,
     pub neighbors: u64,
+    /// Saved playlists (Playlists tab).
+    pub playlists: u64,
 }
 
 impl Store {
@@ -303,12 +305,17 @@ impl Store {
             .bind(uid)
             .execute(&mut *tx)
             .await?;
+        let playlists = sqlx::query("DELETE FROM user_playlists WHERE user_id = ?")
+            .bind(uid)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(DeletedUserData {
             history: history.rows_affected(),
             feedback: feedback.rows_affected(),
             taste: taste.rows_affected(),
             neighbors: neighbors.rows_affected(),
+            playlists: playlists.rows_affected(),
         })
     }
 }
@@ -535,6 +542,14 @@ mod tests {
             .unwrap();
         store.replace_neighbors(1, &[(2, 0.9)]).await.unwrap();
         store.replace_neighbors(2, &[(1, 0.9)]).await.unwrap();
+        let saved = |url| crate::store::NewPlaylist {
+            url,
+            platform: "youtube",
+            name: "List",
+            image_url: None,
+        };
+        store.save_playlist(1, &saved("https://www.youtube.com/playlist?list=PL1"), 20).await.unwrap();
+        store.save_playlist(2, &saved("https://www.youtube.com/playlist?list=PL1"), 20).await.unwrap();
         store
             .update_user_prefs(
                 1,
@@ -554,7 +569,8 @@ mod tests {
                 history: 1,
                 feedback: 1,
                 taste: 1,
-                neighbors: 2
+                neighbors: 2,
+                playlists: 1,
             }
         );
         assert_eq!(store.history_len(1).await.unwrap(), 0);
@@ -563,6 +579,8 @@ mod tests {
         assert!(store.neighbors(2, 10).await.unwrap().is_empty());
         // Other users and prefs untouched.
         assert_eq!(store.history_len(2).await.unwrap(), 1);
+        assert!(store.playlists(1).await.unwrap().is_empty());
+        assert_eq!(store.playlists(2).await.unwrap().len(), 1);
         assert_eq!(store.user_prefs(1).await.unwrap().locale.as_deref(), Some("es"));
     }
 }

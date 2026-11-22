@@ -591,6 +591,7 @@ fn play_ctx(players: &PlayerManager) -> PlayCtx<'_> {
         bots: &deps.bots,
         store: &deps.store,
         sources: &deps.sources,
+        max_playlists: deps.config.max_stored_playlists,
     }
 }
 

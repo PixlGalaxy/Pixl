@@ -30,7 +30,8 @@
     "jam_channels_off": "El anfitrión no deja unirse a otros canales del servidor.",
     "jam_servers_off": "El anfitrión no deja unirse a canales de otros servidores.",
     "jam_ended": "Esa escucha compartida terminó.",
-    "jam_other": "Tu canal está en otra escucha compartida. Sal de ella primero."
+    "jam_other": "Tu canal está en otra escucha compartida. Sal de ella primero.",
+    "refresh_blocked": "Demasiadas actualizaciones. Espera 5 minutos."
   },
   "login": {
     "title": "Conectando con Lynx",
@@ -68,6 +69,7 @@
   "tabs": {
     "player": "Sonando",
     "queue": "Cola",
+    "playlists": "Playlists",
     "lyrics": "Letra",
     "radio": "Radio",
     "settings": "Ajustes",
@@ -159,6 +161,41 @@
     "historyHint": "Las últimas canciones que sonaron en este canal.",
     "emptyHistory": "Todavía no ha sonado nada.",
     "addAgain": "Añadir {{title}} otra vez"
+  },
+  "playlists": {
+    "title": "Tus playlists",
+    "hint": "Las playlists y álbumes que añades se guardan aquí, hasta {{max}}. Las fijadas quedan arriba y nunca se reemplazan.",
+    "count": "{{count}} de {{max}}",
+    "empty": "Aún no tienes playlists guardadas. Añade un enlace de playlist o álbum con /play o en la pestaña Cola y aparecerá aquí.",
+    "savingOff": "Tu historial de escucha está desactivado, así que las playlists nuevas no se guardan. Las guardadas siguen aquí hasta que las quites.",
+    "savingDisabled": "Guardar playlists está desactivado en este bot.",
+    "full": "Todas tus playlists guardadas están fijadas, así que las nuevas no se guardan. Desfija o quita una para hacer sitio.",
+    "untitled": "Playlist sin nombre",
+    "open": "Abrir {{name}}",
+    "pin": "Fijar {{name}}",
+    "unpin": "Desfijar {{name}}",
+    "remove": "Quitar {{name}}",
+    "removed": "Playlist quitada.",
+    "back": "Volver a las playlists",
+    "songs_one": "{{count}} canción, {{duration}}",
+    "songs_other": "{{count}} canciones, {{duration}}",
+    "updatedAgo": "actualizada {{ago}}",
+    "loading": "Cargando canciones",
+    "noSongs": "Esta playlist no tiene canciones.",
+    "addAll": "Añadir todo a la cola",
+    "addSong": "Añadir {{title}}",
+    "refresh": "Actualizar datos de la playlist",
+    "refreshed": "Playlist actualizada.",
+    "refreshTooSoon": "Se acaba de actualizar. Se muestran las canciones de hace un momento.",
+    "blocked": "Demasiadas actualizaciones. Espera 5 minutos (quedan {{time}}).",
+    "noChannel": "Entra en un canal de voz para añadir canciones a la cola.",
+    "noAdd": "Ahora mismo no puedes añadir canciones en este canal.",
+    "platforms": {
+      "spotify": "Spotify",
+      "youtube": "YouTube",
+      "youtube_music": "YouTube Music",
+      "apple_music": "Apple Music"
+    }
   },
   "reason": {
     "tag": "Radio",
@@ -295,14 +332,14 @@
     "data": "Tus datos",
     "dataHint": "Se borran al momento y no se puede deshacer.",
     "delete": "Borrar mis datos",
-    "deleteHint": "Borra tu historial, tus Me gusta, tus No me gusta y tus gustos.",
+    "deleteHint": "Elimina tu historial, Me gusta, No me gusta, tus gustos y tus playlists guardadas.",
     "deleteHintNoAi": "Borra todo lo que Lynx guardó sobre ti.",
     "deleteButton": "Borrar",
     "deleteQuestion": "¿Borrar todo?",
     "deleteConfirm": "Borrar",
     "deleted": "Tus datos se borraron.",
     "policy": "Leer la política de privacidad",
-    "noHistoryNote": "Solo se guarda el idioma de tu panel.",
+    "noHistoryNote": "Solo se guardan tus ajustes del panel y tus playlists guardadas.",
     "tasteMoved": "Tus gustos (géneros principales y canciones más escuchadas) están al final de la pestaña Radio."
   },
   "health": {
@@ -342,6 +379,10 @@
       "queue": {
         "title": "Cola",
         "body": "Pega un enlace o busca para añadir canciones. Arrastra el asa para reordenar, usa la cruz para quitar una canción y Vaciar para borrar la cola. El historial muestra las últimas canciones y deja volver a añadirlas."
+      },
+      "playlists": {
+        "title": "Playlists",
+        "body": "Cada playlist, álbum o página de artista que añades con /play o en la pestaña Cola se guarda aquí para ti, en cualquier servidor. Abre una para ver sus canciones y añadirlas todas o de una en una. Fija las que quieras tener arriba; cuando la lista se llena, la más antigua sin fijar deja su sitio. Las canciones se actualizan como mucho cada hora; Actualizar datos de la playlist la vuelve a leer ahora (una vez cada pocos segundos)."
       },
       "lyrics": {
         "title": "Letra",
@@ -529,7 +570,8 @@
       "title": "Qué se guarda",
       "items": [
         "Las últimas 2000 canciones distintas que pediste: título, artista, enlace, cuántas veces sonó cada una y cuándo sonó por última vez.",
-        "Tus votos de Me gusta y No me gusta."
+        "Tus votos de Me gusta y No me gusta.",
+        "Las playlists y álbumes que añades (nombre, imagen, plataforma y enlace), para la pestaña Playlists."
       ]
     },
     "used": {
@@ -545,7 +587,8 @@
       "items": [
         "No se guarda nada nuevo.",
         "Me gusta, No me gusta y /ai se desactivan para ti.",
-        "Quedas fuera de las recomendaciones de los demás."
+        "Quedas fuera de las recomendaciones de los demás.",
+        "Las playlists nuevas no se guardan en tu pestaña Playlists."
       ]
     },
     "links": {
@@ -559,10 +602,12 @@
         "Tu historial de escucha (cada canción, cuántas veces sonó y cuándo).",
         "Tus votos de Me gusta y No me gusta.",
         "Tu perfil de gustos (géneros y datos de la radio).",
-        "Tus vínculos de similitud con otros oyentes, en ambos sentidos."
+        "Tus vínculos de similitud con otros oyentes, en ambos sentidos.",
+        "Tus playlists guardadas."
       ],
       "itemsNoAi": [
-        "Todo lo que Lynx guardó sobre lo que escuchas."
+        "Todo lo que Lynx guardó sobre lo que escuchas.",
+        "Tus playlists guardadas."
       ],
       "kept": "Se conservan tus ajustes del panel (idioma, tema, acento y el interruptor del historial)."
     }
