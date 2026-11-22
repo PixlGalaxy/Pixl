@@ -6,7 +6,7 @@ use std::{sync::Arc, time::Duration};
 
 use super::registry::{assign, Assignment, BotRegistry};
 use crate::{
-    perms::{can, Action, Actor, Decision, Deny},
+    perms::{can, channel_allowed, Action, Actor, Decision, Deny},
     player::{
         Entry, PlayerHandle, PlayerManager, PushError, PushResult, QueueEntry, Requester, Restore, StartError,
         StartRequest,
@@ -47,6 +47,10 @@ pub enum PlayError {
     ShuttingDown,
     JoinFailed,
     Denied(Deny),
+    /// A manager limited Lynx to other voice channels (the allowed ones).
+    VoiceNotAllowed {
+        allowed: Vec<u64>,
+    },
     QueueFull {
         max: usize,
     },
@@ -79,6 +83,18 @@ fn busy(ctx: PlayCtx<'_>, guild_id: u64, channel: u64, busy_channel: Option<u64>
         busy_channel,
         channel,
         invite: ctx.bots.next_node_invite(guild_id),
+    }
+}
+
+/// Voice channel restriction: managers play anywhere, others only in the allowed channels.
+pub async fn check_voice(ctx: PlayCtx<'_>, guild_id: u64, vc: u64, is_manager: bool) -> Result<(), PlayError> {
+    let rules = ctx.store.channel_rules(guild_id).await.unwrap_or_default();
+    if channel_allowed(&rules.voice_channels, vc, is_manager) {
+        Ok(())
+    } else {
+        Err(PlayError::VoiceNotAllowed {
+            allowed: rules.voice_channels,
+        })
     }
 }
 

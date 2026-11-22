@@ -11,6 +11,7 @@ pub mod jam;
 pub mod play;
 pub mod registry;
 pub mod respond;
+pub mod restrict;
 pub mod resume;
 pub mod ui;
 

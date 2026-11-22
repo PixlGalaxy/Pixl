@@ -139,6 +139,8 @@
       "no_results": { "title": "Nothing found.", "body": "Try another search or paste a link." },
       "cannot_connect": { "title": "I cannot join {channel}.", "body": "I need the View Channel, Connect and Speak permissions there." },
       "join_failed": { "title": "Could not connect to the voice channel.", "body": "Please try again in a moment." },
+      "command_channel": { "title": "Music commands are not allowed in this channel.", "body": "Use them in {channels}." },
+      "voice_channel": { "title": "Lynx can not play in this voice channel.", "body": "A manager limited music to {channels}." },
       "outdated": { "title": "This message is outdated.", "body": "That song is no longer playing." },
       "expired": { "title": "These buttons have expired.", "body": "Use `/queue` again." },
       "invalid_position": { "title": "That position does not exist.", "body": "Pick a position between 1 and {max}." },

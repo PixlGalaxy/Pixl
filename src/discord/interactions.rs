@@ -206,6 +206,9 @@ fn track_link(e: &QueueEntry) -> String {
 // ---------------------------------------------------------------------------
 
 pub async fn handle(lynx: Arc<Lynx>, http: Arc<Http>, interaction: Interaction) {
+    if super::restrict::reject(&lynx, &http, &interaction).await {
+        return;
+    }
     match interaction {
         Interaction::Command(cmd) => command(&lynx, &http, &cmd).await,
         Interaction::Autocomplete(cmd) => autocomplete(&lynx, &http, &cmd).await,
@@ -371,13 +374,25 @@ fn play_error(inv: &Inv, e: PlayError) -> Message {
         PlayError::ShuttingDown => inv.err("restarting", &[]),
         PlayError::JoinFailed => inv.err("join_failed", &[]),
         PlayError::Denied(d) => inv.deny(d),
+        PlayError::VoiceNotAllowed { allowed } => {
+            inv.err("voice_channel", &[("channels", &super::restrict::mentions(&allowed))])
+        }
         PlayError::QueueFull { max } => inv.err("queue_full", &[("max", &max.to_string())]),
         PlayError::Gone => gone(inv),
     }
 }
 
+/// Voice channel restriction (managers are never restricted).
+async fn voice_allowed(inv: &Inv<'_>, vc: u64) -> Result<(), Message> {
+    let manager = respond::is_manager(&inv.lynx.bots, inv.guild_id, inv.user_id, inv.permissions).await;
+    play::check_voice(play_ctx(inv.lynx), inv.guild_id, vc, manager)
+        .await
+        .map_err(|e| play_error(inv, e))
+}
+
 /// Get (or create) the player for the user's voice channel.
 async fn player_for_play(inv: &Inv<'_>, vc: u64, restore: Option<Restore>) -> Result<PlayerHandle, Message> {
+    voice_allowed(inv, vc).await?;
     play::player_for(
         play_ctx(inv.lynx),
         inv.guild_id,
@@ -397,6 +412,9 @@ async fn play(inv: &Inv<'_>, query: &str) -> Message {
     };
     if query.is_empty() {
         return inv.err("no_results", &[]);
+    }
+    if let Err(m) = voice_allowed(inv, vc).await {
+        return m;
     }
     // Fail fast (before resolving) when no bot could play here.
     if let Err(e) = play::precheck(play_ctx(lynx), inv.guild_id, vc) {
