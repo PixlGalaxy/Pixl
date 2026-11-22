@@ -1,27 +1,208 @@
-//! HTTP server: Activity API, WebSocket events, CDN proxy and the built panel (static files).
+//! HTTP server for the Activity panel: REST API, WebSocket events and the media proxies.
+//!
+//! nginx serves the built panel at `/` and proxies `/backend/*` here with the prefix stripped, so
+//! this router only defines `/api/...`, `/ws`, `/cdn/...`, `/img` and `/healthz` (plan/api.md).
 
-use std::{net::SocketAddr, path::PathBuf};
+mod ai;
+mod auth;
+mod error;
+mod me;
+mod media;
+mod player;
+mod queue;
+mod search;
+mod session;
+mod settings;
+mod upstream;
+mod ws;
+
+#[cfg(test)]
+mod tests;
+
+use std::{
+    net::SocketAddr,
+    ops::Deref,
+    sync::{atomic::AtomicBool, Arc},
+    time::Duration,
+};
 
 use anyhow::Result;
-use axum::{routing::get, Router};
-use tower_http::services::{ServeDir, ServeFile};
+use axum::{
+    routing::{delete, get, post},
+    Router,
+};
+use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::AppState;
+use session::{RateLimiter, Sessions, TtlCache};
+use upstream::{Discord, LiveDiscord, Profile};
+
+const SESSION_TTL: Duration = Duration::from_secs(12 * 60 * 60);
+const MAX_SESSIONS: usize = 50_000;
+/// Membership and manager status are re-checked through Discord at most this often per user.
+const MEMBER_TTL: Duration = Duration::from_secs(30);
+const PROFILE_TTL: Duration = Duration::from_secs(60 * 60);
+const GENRE_TTL: Duration = Duration::from_secs(120);
+const SWEEP_EVERY: Duration = Duration::from_secs(5 * 60);
+
+/// Membership of a user in a guild, as last checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemberStatus {
+    pub member: bool,
+    pub manager: bool,
+}
+
+/// Guild-level events fanned out to the open sockets.
+#[derive(Debug, Clone)]
+pub enum GuildEvent {
+    /// The guild and its settings as `GET /api/settings` returns them.
+    Settings(u64, serde_json::Value),
+    /// Something only one user sees changed (their votes, their DJ role): resend state and permissions.
+    User(u64),
+}
+
+pub struct Options {
+    pub session_ttl: Duration,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            session_ttl: SESSION_TTL,
+        }
+    }
+}
+
+pub struct Inner {
+    pub app: AppState,
+    pub discord: Arc<dyn Discord>,
+    pub sessions: Sessions,
+    pub auth_limit: RateLimiter<String>,
+    pub search_limit: RateLimiter<u64>,
+    pub add_limit: RateLimiter<u64>,
+    pub members: TtlCache<(u64, u64), MemberStatus>,
+    pub profiles: TtlCache<u64, Profile>,
+    /// Track key -> genres (cached tags, short TTL so new tags show up soon).
+    pub genres: TtlCache<String, Vec<String>>,
+    /// Profiles being fetched in the background (deduplication).
+    pub profile_pending: dashmap::DashSet<u64>,
+    pub events: broadcast::Sender<GuildEvent>,
+    pub media: reqwest::Client,
+    pub search_refused_logged: AtomicBool,
+}
+
+/// Router state. Cheap to clone.
+#[derive(Clone)]
+pub struct ApiState(Arc<Inner>);
+
+impl Deref for ApiState {
+    type Target = Inner;
+    fn deref(&self) -> &Inner {
+        &self.0
+    }
+}
+
+impl ApiState {
+    pub fn new(app: AppState, discord: Arc<dyn Discord>, opts: Options) -> Result<Self> {
+        let media = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent(crate::sources::USER_AGENT)
+            .build()?;
+        Ok(Self(Arc::new(Inner {
+            app,
+            discord,
+            sessions: Sessions::new(opts.session_ttl, MAX_SESSIONS),
+            auth_limit: RateLimiter::new(10, Duration::from_secs(60), 20_000),
+            search_limit: RateLimiter::new(30, Duration::from_secs(60), 20_000),
+            add_limit: RateLimiter::new(15, Duration::from_secs(60), 20_000),
+            members: TtlCache::new(MEMBER_TTL, 50_000),
+            profiles: TtlCache::new(PROFILE_TTL, 20_000),
+            genres: TtlCache::new(GENRE_TTL, 20_000),
+            profile_pending: dashmap::DashSet::new(),
+            events: broadcast::channel(256).0,
+            media,
+            search_refused_logged: AtomicBool::new(false),
+        })))
+    }
+
+    fn sweep(&self) {
+        let n = self.sessions.sweep();
+        self.auth_limit.sweep();
+        self.search_limit.sweep();
+        self.add_limit.sweep();
+        self.members.sweep();
+        self.profiles.sweep();
+        self.genres.sweep();
+        if n > 0 {
+            tracing::debug!(expired = n, "panel sessions expired");
+        }
+    }
+}
+
+pub fn router(state: ApiState) -> Router {
+    Router::new()
+        .route("/healthz", get(|| async { "ok" }))
+        .route("/api/public", get(auth::public))
+        .route("/api/auth", post(auth::login))
+        .route("/api/player", get(player::state))
+        .route("/api/player/pause", post(player::pause))
+        .route("/api/player/resume", post(player::resume))
+        .route("/api/player/skip", post(player::skip))
+        .route("/api/player/previous", post(player::previous))
+        .route("/api/player/seek", post(player::seek))
+        .route("/api/player/volume", post(player::volume))
+        .route("/api/player/loop", post(player::set_loop))
+        .route("/api/player/shuffle", post(player::shuffle))
+        .route("/api/player/stop", post(player::stop))
+        .route("/api/queue/add", post(queue::add))
+        .route("/api/queue/move", post(queue::move_track))
+        .route("/api/queue/remove", post(queue::remove))
+        .route("/api/queue/clear", post(queue::clear))
+        .route("/api/tracks/feedback", post(queue::feedback))
+        .route("/api/ai/start", post(ai::start))
+        .route("/api/ai/stop", post(ai::stop))
+        .route("/api/ai/cancel", post(ai::cancel))
+        .route("/api/search", get(search::search))
+        .route("/api/lyrics", get(search::lyrics))
+        .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
+        .route("/api/djs", get(settings::list_djs).post(settings::add_dj))
+        .route("/api/djs/{user_id}", delete(settings::remove_dj))
+        .route("/api/members/candidates", get(settings::candidates))
+        .route("/api/guild/channels", get(settings::channels))
+        .route("/api/me/prefs", get(me::get_prefs).put(me::put_prefs))
+        .route("/api/me/taste", get(me::taste))
+        .route("/api/me/data", delete(me::delete_data))
+        .route("/ws", get(ws::upgrade))
+        .route("/cdn/{*path}", get(media::cdn))
+        .route("/img", get(media::img))
+        .fallback(|| async { error::ApiError::not_found("no such route") })
+        .with_state(state)
+}
 
 pub async fn serve(state: AppState) -> Result<()> {
-    let web_dir = std::env::var("WEB_DIR").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("./web/dist"));
-    let static_files = ServeDir::new(&web_dir).fallback(ServeFile::new(web_dir.join("index.html")));
-
-    let app = Router::new()
-        .route("/healthz", get(|| async { "ok" }))
-        .fallback_service(static_files)
-        .with_state(state.clone());
-
+    let discord = Arc::new(LiveDiscord::new(&state.config, state.bots.clone())?);
+    let api = ApiState::new(state.clone(), discord, Options::default())?;
+    {
+        let api = api.clone();
+        let stop = state.shutdown.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(SWEEP_EVERY);
+            loop {
+                tokio::select! {
+                    _ = stop.cancelled() => return,
+                    _ = tick.tick() => api.sweep(),
+                }
+            }
+        });
+    }
+    let app = router(api);
     let addr: SocketAddr = format!("{}:{}", state.config.http_host, state.config.http_port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(%addr, "http listening");
-    axum::serve(listener, app)
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async move { state.shutdown.cancelled().await })
         .await?;
     Ok(())

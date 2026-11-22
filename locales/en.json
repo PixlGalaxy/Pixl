@@ -40,7 +40,9 @@
       "start_radio": "Start radio",
       "vote": "Vote to skip",
       "invite_node": "Invite Lynx Node {number}",
-      "invite_main": "Invite Lynx"
+      "invite_main": "Invite Lynx",
+      "cancel": "Cancel",
+      "stop_radio": "Stop radio"
     },
     "now_playing": {
       "title_in": "Now playing in {channel}",
@@ -123,6 +125,59 @@
       "title": "Add the main Lynx bot",
       "body": "I am a Lynx helper bot: I play music when the main bot is busy in another channel. To use commands, this server needs the main Lynx bot."
     },
+    "radio": {
+      "mix": {
+        "favorites": "Mostly my favorites",
+        "balanced": "Balanced",
+        "discover": "Discover new music"
+      },
+      "modal": {
+        "title": "Start a radio",
+        "prompt_label": "What do you want to hear?",
+        "prompt_description": "Optional. Leave it empty to use only your taste.",
+        "prompt_placeholder": "something calm to study",
+        "mix_label": "Mix",
+        "listeners_label": "Listeners",
+        "blend": "Blend the taste of everyone in the channel"
+      },
+      "picking": {
+        "title": "Radio is picking songs",
+        "basis": "Based on your taste and listeners like you.",
+        "basis_prompt": "Based on your taste, listeners like you and \"{prompt}\".",
+        "first_playing": "The first song is already playing."
+      },
+      "phase": {
+        "queued": "Waiting in line",
+        "loading_model": "Loading model",
+        "reading_taste": "Reading your taste",
+        "finding_songs": "Finding songs",
+        "thinking": "Thinking",
+        "resolving": "Resolving tracks"
+      },
+      "badge": {
+        "done": "Done",
+        "working": "Working",
+        "next": "Next"
+      },
+      "on": {
+        "title": "Radio is on",
+        "body": "Added {count} songs to {channel}. More are added when the queue gets short. Stop it with `/stop` or from the panel.",
+        "body_one": "Added 1 song to {channel}. More are added when the queue gets short. Stop it with `/stop` or from the panel."
+      },
+      "failed": {
+        "title": "The radio could not start.",
+        "no_songs": "I could not find songs for your taste yet. Play a few songs with `/play` first, or tell me what you want to hear.",
+        "body": "Something went wrong while picking songs. Please try again in a moment."
+      },
+      "cancelled": {
+        "title": "Radio cancelled.",
+        "body": "Nothing more will be added to {channel}."
+      },
+      "stopped": {
+        "title": "Radio stopped.",
+        "body": "{user} turned the radio off. The songs already in the queue keep playing."
+      }
+    },
     "history_off": {
       "title": "Your history is turned off",
       "body": "Like, Dislike and the radio use your listening history. Turn it on in the panel, under Privacy."
@@ -139,6 +194,8 @@
       "no_results": { "title": "Nothing found.", "body": "Try another search or paste a link." },
       "cannot_connect": { "title": "I cannot join {channel}.", "body": "I need the View Channel, Connect and Speak permissions there." },
       "join_failed": { "title": "Could not connect to the voice channel.", "body": "Please try again in a moment." },
+      "command_channel": { "title": "Music commands are not allowed in this channel.", "body": "Use them in {channels}." },
+      "voice_channel": { "title": "Lynx can not play in this voice channel.", "body": "A manager limited music to {channels}." },
       "outdated": { "title": "This message is outdated.", "body": "That song is no longer playing." },
       "expired": { "title": "These buttons have expired.", "body": "Use `/queue` again." },
       "invalid_position": { "title": "That position does not exist.", "body": "Pick a position between 1 and {max}." },
@@ -150,7 +207,10 @@
       "lyrics_not_found": { "title": "No lyrics found.", "body": "LRCLIB has no lyrics for that song." },
       "lyrics_nothing": { "title": "Nothing is playing.", "body": "Use `/lyrics` with a song name." },
       "no_invite_permission": { "title": "I cannot create invites here.", "body": "Invite to jam needs the Create Invite permission in {channel}." },
-      "radio_unavailable": { "title": "The radio is not available yet.", "body": "Add songs with `/play` for now." },
+      "radio_unavailable": { "title": "The radio is not available.", "body": "The AI radio is turned off on this bot." },
+      "radio_no_permission": { "title": "You cannot change this radio.", "body": "Only the person who started it, DJs and managers can." },
+      "radio_not_active": { "title": "The radio is not on.", "body": "Start one with `/ai`." },
+      "radio_nothing_to_cancel": { "title": "Nothing to cancel.", "body": "The radio already finished picking songs." },
       "nothing_to_shuffle": { "title": "There is nothing to shuffle.", "body": "Add more songs to the queue first." },
       "already_paused": { "title": "The music is already paused.", "body": "Use `/resume` to continue." },
       "not_paused": { "title": "The music is not paused.", "body": "" },
@@ -173,6 +233,7 @@
       "volume": "**Volume set to {volume}%** (was {previous}%)",
       "liked": "**Saved.** You will hear more songs like {track} on your radio.",
       "disliked": "**Got it.** {track} will not play on your radio again.",
+      "disliked_skipped": "**Got it.** {track} will not play on your radio again, so I skipped it.",
       "feedback_cleared": "**Vote removed** for {track}."
     },
     "cmd": {
@@ -214,6 +275,12 @@
       "lyrics": {
         "description": "Show the lyrics of the current song or of a search",
         "query": "Song name (optional)"
+      },
+      "ai": {
+        "description": "Start a radio based on your taste",
+        "prompt": "What do you want to hear? (optional)",
+        "mix": "Your favorites, a balance or new music (default: balanced)",
+        "blend": "Blend the taste of everyone in the channel (default: on)"
       },
       "panel": { "description": "Open the Lynx panel" },
       "launch": { "description": "Open the Lynx panel" }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use super::queue::Entry;
+use super::{queue::Entry, radio::AiSnapshot};
 use crate::{
     sources::TrackOrigin,
     store::{Feedback, LoopMode},
@@ -57,6 +57,8 @@ pub struct PlayerSnapshot {
     pub volume: u16,
     pub vote_skip_enabled: bool,
     pub skip_votes: Option<(usize, usize)>,
+    /// AI radio state (None until a radio was started in this session).
+    pub ai: Option<AiSnapshot>,
 }
 
 impl PlayerSnapshot {
@@ -143,7 +145,7 @@ pub struct ApiPlayerState {
     #[serde(rename = "loop")]
     pub loop_mode: LoopMode,
     pub volume: u16,
-    /// Filled by the AI phase.
+    /// `AiState` (see `radio::ApiAiState`).
     pub ai: Option<serde_json::Value>,
     pub skip_votes: Option<ApiSkipVotes>,
     pub vote_skip_enabled: bool,
@@ -212,13 +214,18 @@ impl PlayerSnapshot {
             history: self.history.iter().map(|e| ctx.track(e)).collect(),
             loop_mode: self.loop_mode,
             volume: self.volume,
-            ai: None,
+            ai: self.ai_api().and_then(|a| serde_json::to_value(a).ok()),
             skip_votes: self
                 .skip_votes
                 .map(|(current, required)| ApiSkipVotes { current, required }),
             vote_skip_enabled: self.vote_skip_enabled,
             server_now: epoch_ms(),
         }
+    }
+
+    /// `AiState` for the API (`PlayerState.ai` and the WebSocket `ai` message).
+    pub fn ai_api(&self) -> Option<super::radio::ApiAiState> {
+        self.ai.as_ref().map(AiSnapshot::to_api)
     }
 
     /// Every track key in the snapshot (for batch genre / feedback lookups).
@@ -271,6 +278,7 @@ mod tests {
             volume: 100,
             vote_skip_enabled: true,
             skip_votes: Some((1, 2)),
+            ai: None,
         };
         let mut ctx = ApiContext {
             channel_name: "General".into(),

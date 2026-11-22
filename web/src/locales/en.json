@@ -16,7 +16,10 @@
     "no_results": "Nothing found for that search.",
     "rate_limited": "Slow down a little and try again.",
     "bot_unavailable": "No Lynx bot is free for this channel right now.",
-    "invalid": "That request was not valid."
+    "invalid": "That request was not valid.",
+    "history_disabled": "Turn on your listening history in Privacy to use this.",
+    "channel_not_allowed": "Lynx is not allowed in this channel.",
+    "unavailable": "That is not available right now."
   },
   "login": {
     "title": "Connecting to Lynx",
@@ -222,7 +225,19 @@
     "maxQueueHint": "Songs allowed in one queue.",
     "defaultVolume": "Default volume",
     "defaultVolumeHint": "100% plays the audio untouched.",
-    "savedAutomatically": "Changes are saved automatically."
+    "savedAutomatically": "Changes are saved automatically.",
+    "channels": "Channels",
+    "channelsHint": "Leave empty to allow every channel. Managers can always use Lynx anywhere.",
+    "commandChannels": "Command channels",
+    "commandChannelsHint": "Text channels (or a voice channel chat) where music commands and buttons work.",
+    "voiceChannels": "Playback channels",
+    "voiceChannelsHint": "Voice channels where Lynx may play.",
+    "addChannel": "Add a channel",
+    "allChannels": "Every channel",
+    "removeChannel": "Remove {{name}}",
+    "noCategory": "No category",
+    "voiceChat": "{{name}} (voice chat)",
+    "unknownChannel": "Unknown channel"
   },
   "privacy": {
     "title": "Privacy",

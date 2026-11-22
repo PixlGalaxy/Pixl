@@ -10,6 +10,7 @@ pub mod lifecycle;
 pub mod messages;
 pub mod playback;
 pub mod queue;
+pub mod radio;
 pub mod state;
 pub mod votes;
 
@@ -24,7 +25,7 @@ use std::{
 
 use dashmap::DashMap;
 use serenity::all::{ChannelId, GuildId};
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex, OwnedMutexGuard};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex, Notify, OwnedMutexGuard};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -176,6 +177,36 @@ pub enum Command {
     Track {
         handle_id: Uuid,
         signal: TrackSignal,
+    },
+    // AI radio (see `radio`)
+    StartRadio {
+        spec: radio::RadioSpec,
+        reply: Reply<Result<radio::RadioTicket, radio::StartRefused>>,
+    },
+    StopRadio {
+        reply: Reply<bool>,
+    },
+    CancelRadioJob {
+        job_id: Option<Uuid>,
+        reply: Reply<bool>,
+    },
+    /// Someone disliked a track (already stored).
+    RadioDisliked {
+        user: u64,
+        uid: Uuid,
+    },
+    RadioPhase {
+        id: Uuid,
+        phase: crate::ai::AiPhase,
+    },
+    /// The early pick of a start job.
+    RadioPicks {
+        id: Uuid,
+        picks: Vec<crate::ai::RadioPick>,
+    },
+    RadioDone {
+        id: Uuid,
+        result: Box<Result<Vec<crate::ai::RadioPick>, crate::ai::RadioError>>,
     },
 }
 
@@ -404,6 +435,8 @@ struct ManagerInner {
     ended: DashMap<SessionKey, (Instant, Restore)>,
     closing: AtomicBool,
     generation: AtomicU64,
+    /// Woken whenever a player starts in or moves into a channel (panel sockets waiting for one).
+    appeared: Notify,
 }
 
 impl PlayerManager {
@@ -416,6 +449,7 @@ impl PlayerManager {
                 ended: DashMap::new(),
                 closing: AtomicBool::new(false),
                 generation: AtomicU64::new(1),
+                appeared: Notify::new(),
             }),
         }
     }
@@ -465,6 +499,20 @@ impl PlayerManager {
             .players
             .iter()
             .any(|p| p.key().guild_id == guild_id && p.bot_index == bot_index)
+    }
+
+    /// Wait until a player other than generation `not` lives in the channel (panel socket opened
+    /// before anything plays, or after the previous player closed).
+    pub async fn wait_player(&self, guild_id: u64, voice_channel_id: u64, not: Option<u64>) -> PlayerHandle {
+        loop {
+            let appeared = self.inner.appeared.notified();
+            if let Some(p) = self.get(guild_id, voice_channel_id) {
+                if Some(p.generation) != not && !p.is_closed() {
+                    return p;
+                }
+            }
+            appeared.await;
+        }
     }
 
     /// Serializes bot assignment and player creation within one guild.
@@ -532,6 +580,7 @@ impl PlayerManager {
             warn!(?key, "replacing an existing player");
             let _ = old.end(EndReason::GuildGone).await;
         }
+        self.inner.appeared.notify_waiters();
         info!(
             guild = req.guild_id,
             channel = req.voice_channel_id,
@@ -572,6 +621,7 @@ impl PlayerManager {
         if let Some((_, h)) = self.inner.players.remove(&from) {
             h.voice_channel.store(to, Ordering::Release);
             self.inner.players.insert(to_key, h);
+            self.inner.appeared.notify_waiters();
         }
         true
     }

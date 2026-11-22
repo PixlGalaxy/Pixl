@@ -16,7 +16,10 @@
     "no_results": "No se encontró nada con esa búsqueda.",
     "rate_limited": "Ve un poco más despacio y vuelve a intentarlo.",
     "bot_unavailable": "Ahora mismo no hay ningún bot de Lynx libre para este canal.",
-    "invalid": "La petición no es válida."
+    "invalid": "La petición no es válida.",
+    "history_disabled": "Activa tu historial en Privacidad para usar esto.",
+    "channel_not_allowed": "Lynx no está permitido en este canal.",
+    "unavailable": "Eso no está disponible ahora."
   },
   "login": {
     "title": "Conectando con Lynx",
@@ -222,7 +225,19 @@
     "maxQueueHint": "Canciones permitidas en una cola.",
     "defaultVolume": "Volumen por defecto",
     "defaultVolumeHint": "Con 100 % el audio suena sin cambios.",
-    "savedAutomatically": "Los cambios se guardan solos."
+    "savedAutomatically": "Los cambios se guardan solos.",
+    "channels": "Canales",
+    "channelsHint": "Déjalo vacío para permitir todos los canales. Los administradores siempre pueden usar Lynx en cualquier canal.",
+    "commandChannels": "Canales de comandos",
+    "commandChannelsHint": "Canales de texto (o el chat de un canal de voz) donde funcionan los comandos y botones de música.",
+    "voiceChannels": "Canales de reproducción",
+    "voiceChannelsHint": "Canales de voz donde Lynx puede reproducir.",
+    "addChannel": "Añadir un canal",
+    "allChannels": "Todos los canales",
+    "removeChannel": "Quitar {{name}}",
+    "noCategory": "Sin categoría",
+    "voiceChat": "{{name}} (chat de voz)",
+    "unknownChannel": "Canal desconocido"
   },
   "privacy": {
     "title": "Privacidad",

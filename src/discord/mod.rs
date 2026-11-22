@@ -8,9 +8,12 @@ pub mod commands;
 pub mod ids;
 pub mod interactions;
 pub mod jam;
+pub mod play;
 pub mod registry;
 pub mod respond;
+pub mod restrict;
 pub mod resume;
+pub mod radio;
 pub mod ui;
 
 use std::sync::{

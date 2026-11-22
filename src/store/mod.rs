@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 mod catalog;
+mod channels;
 mod djs;
 mod feedback;
 mod history;
@@ -18,6 +19,8 @@ mod taste;
 // Re-exports for callers outside the store (unused until those subsystems land).
 #[allow(unused_imports)]
 pub use catalog::*;
+#[allow(unused_imports)]
+pub use channels::*;
 #[allow(unused_imports)]
 pub use djs::*;
 #[allow(unused_imports)]

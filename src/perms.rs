@@ -100,6 +100,11 @@ pub fn can(actor: &Actor, action: Action, settings: &GuildSettings) -> Decision 
     }
 }
 
+/// Channel restriction rule: an empty list allows every channel; managers are never restricted.
+pub fn channel_allowed(allowed: &[u64], channel: u64, is_manager: bool) -> bool {
+    is_manager || allowed.is_empty() || allowed.contains(&channel)
+}
+
 /// API `Permissions` object (panel API phase).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

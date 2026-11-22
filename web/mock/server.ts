@@ -160,6 +160,8 @@ const s = {
     voteSkip: { enabled: false, mode: 'percent', value: 50 },
     maxQueueLength: 500,
     defaultVolume: 100,
+    commandChannels: [],
+    voiceChannels: [],
   } as GuildSettings,
   djs: [USERS[2]!] as Member[],
   prefs: { locale: null as string | null, historyEnabled: true },
@@ -203,6 +205,8 @@ function snapshot(f: Flags): PlayerState | null {
     volume: s.volume,
     ai: f.ai ? s.ai : null,
     skipVotes: f.vote ? { current: 2, required: 4 } : null,
+    voteSkipEnabled: s.settings.voteSkip.enabled,
+    serverNow: Date.now(),
   }
 }
 function advance() {
@@ -343,6 +347,7 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       session: `mock.${encodeFlags(new URL(req.headers.referer ?? 'http://x/').search)}`,
       user: { id: ME.id, username: 'pixl', globalName: ME.name, avatarUrl: null },
       guild: { id: '1', name: 'Galaxy Hangout', iconUrl: null },
+      channel: { id: '100', name: 'Lounge' },
       permissions: permissionsFor(f),
       locale: new URL(req.headers.referer ?? 'http://x/').searchParams.get('lang') ?? 'en-US',
     }
@@ -401,6 +406,10 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
     case 'POST /queue/add': {
       const query = String(body.query ?? '').trim()
       if (!query || query.toLowerCase() === 'error') throw new HttpError(404, 'no_results')
+      const voice = s.settings.voiceChannels
+      if (!permissionsFor(f).isManager && voice.length > 0 && !voice.includes('100')) {
+        throw new HttpError(403, 'channel_not_allowed')
+      }
       if (s.upcoming.length >= s.settings.maxQueueLength) throw new HttpError(409, 'queue_full')
       const match = /mock(\d+)/.exec(query)
       const seed = (match && CATALOG[Number(match[1])]) || CATALOG[Math.floor(Math.random() * CATALOG.length)]!
@@ -482,6 +491,20 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       s.settings = { ...s.settings, ...(body as Partial<GuildSettings>) }
       for (const ws of sockets.keys()) send(ws, { type: 'settings', settings: s.settings })
       return s.settings
+    case 'GET /guild/channels':
+      if (!permissionsFor(f).isManager) throw new HttpError(403, 'no_permission')
+      return {
+        text: [
+          { id: '200', name: 'general', parentName: 'Text Channels' },
+          { id: '201', name: 'music-requests', parentName: 'Text Channels' },
+          { id: '202', name: 'off-topic', parentName: null },
+        ],
+        voice: [
+          { id: '100', name: 'Lounge', parentName: 'Voice Channels' },
+          { id: '101', name: 'Gaming', parentName: 'Voice Channels' },
+          { id: '102', name: 'Study Room', parentName: 'Quiet' },
+        ],
+      }
     case 'GET /djs':
       return { djs: s.djs }
     case 'POST /djs': {
