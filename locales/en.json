@@ -5,7 +5,8 @@
   "bot": {
     "track": {
       "live": "Live",
-      "requested_by": "Requested by {user}"
+      "requested_by": "Requested by {user}",
+      "selected_by_ai": "Selected by AI"
     },
     "added": {
       "title": "Added to the queue",

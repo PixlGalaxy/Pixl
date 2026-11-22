@@ -291,6 +291,7 @@ async fn now_playing_card(deps: &MessengerDeps, data: &NpData) -> Message {
             duration_ms: info.duration_ms,
             thumbnail: info.thumbnail.as_deref(),
             requester_id: data.entry.requester.id,
+            ai: data.entry.reason.is_some(),
         },
         voice_channel_id: deps.voice_channel_id,
         node_name: data.node_name.as_deref(),

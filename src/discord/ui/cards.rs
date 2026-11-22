@@ -54,6 +54,8 @@ pub struct TrackCard<'a> {
     pub duration_ms: Option<u64>,
     pub thumbnail: Option<&'a str>,
     pub requester_id: u64,
+    /// Picked by the AI radio: the meta line adds "Selected by AI".
+    pub ai: bool,
 }
 
 impl TrackCard<'_> {
@@ -311,6 +313,9 @@ pub fn now_playing(v: &NowPlaying, i18n: &I18n) -> Message {
         v.track.duration(i18n),
         i18n.t("bot.track.requested_by", &[("user", &user(v.track.requester_id))]),
     ];
+    if v.track.ai {
+        meta.push(i18n.t("bot.track.selected_by_ai", &[]));
+    }
     if v.paused {
         meta.push(i18n.t("bot.now_playing.paused", &[]));
     }
@@ -398,11 +403,14 @@ pub fn now_playing_detail(v: &NowPlayingDetail, i18n: &I18n) -> Message {
     }
     body.push_str(&progress_bar(v.position_ms, v.track.duration_ms));
     texts.push(body);
-    let mut meta = vec![
-        i18n.t("bot.track.requested_by", &[("user", &user(v.track.requester_id))]),
+    let mut meta = vec![i18n.t("bot.track.requested_by", &[("user", &user(v.track.requester_id))])];
+    if v.track.ai {
+        meta.push(i18n.t("bot.track.selected_by_ai", &[]));
+    }
+    meta.extend([
         loop_label(v.loop_mode, i18n),
         i18n.t("bot.now_playing.volume", &[("volume", &v.volume.to_string())]),
-    ];
+    ]);
     if v.paused {
         meta.push(i18n.t("bot.now_playing.paused", &[]));
     }
@@ -1153,6 +1161,7 @@ mod tests {
             duration_ms: Some(187_000),
             thumbnail: Some("https://i.ytimg.com/x.jpg"),
             requester_id: 42,
+            ai: false,
         }
     }
 
@@ -1254,6 +1263,28 @@ mod tests {
         let n = all_text(&error_key("jam_host_only", &[("channel", "**Lounge**")], &i).to_json());
         assert!(n.contains("**Lounge**"), "{n}");
         check_text(&n);
+    }
+
+    #[test]
+    fn now_playing_marks_ai_picks() {
+        let a = artists();
+        let mut t = track(&a);
+        let card = |t: &TrackCard| {
+            let v = NowPlaying {
+                track: t.clone(),
+                voice_channel_id: 77,
+                node_name: None,
+                jam: None,
+                genres: &[],
+                paused: false,
+                ai_enabled: true,
+                track_tag: "tag",
+            };
+            all_text(&now_playing(&v, &i18n()).to_json())
+        };
+        assert!(!card(&t).contains("Selected by AI"));
+        t.ai = true;
+        assert!(card(&t).contains("Requested by <@42> · Selected by AI"), "{}", card(&t));
     }
 
     #[test]

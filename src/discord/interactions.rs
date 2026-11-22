@@ -251,6 +251,7 @@ fn card<'e>(e: &'e QueueEntry) -> TrackCard<'e> {
         duration_ms: e.info.duration_ms,
         thumbnail: e.info.thumbnail.as_deref(),
         requester_id: e.requester.id,
+        ai: e.reason.is_some(),
     }
 }
 
@@ -900,6 +901,7 @@ async fn lyrics(inv: &Inv<'_>, query: Option<String>) -> Message {
         duration_ms: track.duration_ms,
         thumbnail: track.thumbnail.as_deref(),
         requester_id: inv.user_id,
+        ai: false,
     };
     cards::lyrics(&c, &body, vc, &lynx.i18n)
 }

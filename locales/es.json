@@ -5,7 +5,8 @@
   "bot": {
     "track": {
       "live": "En directo",
-      "requested_by": "Pedida por {user}"
+      "requested_by": "Pedida por {user}",
+      "selected_by_ai": "Elegida por la IA"
     },
     "added": {
       "title": "Añadida a la cola",
