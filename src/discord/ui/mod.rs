@@ -14,10 +14,10 @@ pub const FLAG_COMPONENTS_V2: u64 = 1 << 15;
 /// Total text Discord accepts across all text displays of one message.
 pub const MAX_TEXT_TOTAL: usize = 4000;
 
-pub const COLOR_INFO: u32 = 0x00AD95;
-pub const COLOR_SUCCESS: u32 = 0x30A46C;
-pub const COLOR_WARNING: u32 = 0xF5A524;
-pub const COLOR_ERROR: u32 = 0xE5484D;
+pub const COLOR_INFO: u32 = 0x0EA5E9;
+pub const COLOR_SUCCESS: u32 = 0x23A55A;
+pub const COLOR_WARNING: u32 = 0xF0B232;
+pub const COLOR_ERROR: u32 = 0xDA373C;
 
 /// Interaction callback types used by the bot.
 pub mod callback {
@@ -325,7 +325,7 @@ mod tests {
                 "allowed_mentions": { "parse": [] },
                 "components": [{
                     "type": 17,
-                    "accent_color": 0x00AD95,
+                    "accent_color": 0x0EA5E9,
                     "components": [
                         {
                             "type": 9,
