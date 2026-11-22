@@ -802,7 +802,7 @@ async fn volume(inv: &Inv<'_>, value: i64) -> Message {
         Ok(x) => x,
         Err(m) => return m,
     };
-    let v = value.clamp(0, 200) as u16;
+    let v = value.clamp(0, i64::from(crate::store::MAX_VOLUME)) as u16;
     match p.set_volume(v).await {
         Ok(prev) => cards::confirm(inv.t(
             "bot.reply.volume",

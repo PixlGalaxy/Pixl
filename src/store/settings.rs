@@ -7,7 +7,8 @@ use super::{now_secs, sf, Store};
 
 pub const DEFAULT_MAX_QUEUE_LENGTH: u32 = 500;
 pub const DEFAULT_VOLUME: u16 = 100;
-pub const MAX_VOLUME: u16 = 200;
+/// 100 = the original audio (Opus passthrough, no re-encoding). Lynx never amplifies above it.
+pub const MAX_VOLUME: u16 = 100;
 pub const MAX_QUEUE_LENGTH_LIMIT: u32 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -140,7 +141,7 @@ impl GuildSettings {
     /// Returns a short reason when a value is out of range.
     pub fn validate(&self) -> std::result::Result<(), &'static str> {
         if self.default_volume > MAX_VOLUME {
-            return Err("defaultVolume must be 0-200");
+            return Err("defaultVolume must be 0-100");
         }
         if self.max_queue_length == 0 || self.max_queue_length > MAX_QUEUE_LENGTH_LIMIT {
             return Err("maxQueueLength must be 1-10000");

@@ -374,7 +374,7 @@
         "example": "/loop mode:queue"
       },
       "volume": {
-        "description": "Sets the volume from 0 to 200. 100 plays the audio untouched.",
+        "description": "Sets the volume from 0 to 100. 100 plays the audio untouched.",
         "example": "/volume level:80"
       },
       "lyrics": {

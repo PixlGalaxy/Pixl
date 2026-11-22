@@ -108,7 +108,7 @@ function VolumeControl({ state }: { state: PlayerState }) {
       <Icon size={16} className="shrink-0 text-muted" />
       <Slider
         value={value}
-        max={200}
+        max={100}
         step={5}
         label={t('player.volume')}
         disabled={!permissions.canControl}
