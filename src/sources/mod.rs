@@ -339,6 +339,7 @@ mod tests {
             spotify_client_secret: std::env::var("SPOTIFY_CLIENT_SECRET").ok().filter(|s| !s.is_empty()),
             lastfm_api_key: None,
             musicbrainz_user_agent: None,
+            ai_enabled: false,
             ollama_url: None,
             ollama_model: None,
             ollama_keep_alive: String::new(),
