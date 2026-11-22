@@ -28,6 +28,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 unicode-normalization = "0.1"
 fastrand = "2"
 getrandom = "0.3"
+sha2 = "0.10"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [dev-dependencies]

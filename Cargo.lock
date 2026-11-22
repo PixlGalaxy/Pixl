@@ -2006,6 +2006,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serenity",
+ "sha2",
  "songbird",
  "sqlx",
  "symphonia",

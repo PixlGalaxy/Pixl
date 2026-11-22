@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use super::{
     auth::Member,
-    error::{snowflake, ApiError, ApiResult, Body},
+    error::{ApiError, ApiResult, Body},
     ApiState,
 };
 use crate::{
@@ -38,7 +38,7 @@ pub struct StartBody {
 }
 
 pub async fn start(State(st): State<ApiState>, m: Member, Body(b): Body<StartBody>) -> ApiResult<StatusCode> {
-    let channel = snowflake(&b.channel_id)?;
+    let channel = st.own_channel(&m, &b.channel_id)?;
     if b.prompt.as_deref().is_some_and(|p| p.len() > 500) {
         return Err(ApiError::invalid("prompt is too long"));
     }
@@ -72,7 +72,7 @@ pub struct StopBody {
 }
 
 pub async fn stop(State(st): State<ApiState>, m: Member, Body(b): Body<StopBody>) -> ApiResult<StatusCode> {
-    let channel = snowflake(&b.channel_id)?;
+    let channel = st.own_channel(&m, &b.channel_id)?;
     radio::stop_radio(&st.app.players, m.guild_id, channel, m.user_id(), None)
         .await
         .map_err(radio_error)?;
@@ -87,7 +87,7 @@ pub struct CancelBody {
 }
 
 pub async fn cancel(State(st): State<ApiState>, m: Member, Body(b): Body<CancelBody>) -> ApiResult<StatusCode> {
-    let channel = snowflake(&b.channel_id)?;
+    let channel = st.own_channel(&m, &b.channel_id)?;
     let job = Uuid::parse_str(b.job_id.trim()).map_err(|_| ApiError::invalid("invalid jobId"))?;
     radio::cancel_radio_job(&st.app.players, m.guild_id, channel, m.user_id(), None, Some(job))
         .await

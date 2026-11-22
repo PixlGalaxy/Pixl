@@ -39,6 +39,7 @@ const LOUNGE: u64 = 101;
 const TEXT: u64 = 200;
 const ANA: u64 = 10;
 const BOSS: u64 = 11;
+const BOBBY: u64 = 13;
 
 /// Discord stand-in: codes map to users, membership / manager / voice state are editable.
 #[derive(Default)]
@@ -357,9 +358,15 @@ async fn auth_flow() {
     );
     assert_eq!(v["locale"], "es-ES", "Discord locale when no panel locale is saved");
 
-    // A channel of another guild is not echoed back.
+    assert_eq!(v["launchChannel"], json!({ "id": "100", "name": "General" }));
+
+    // A channel of another guild is not echoed back as the launch channel.
     let (_, v) = h.login("ana", Some(999)).await;
-    assert!(v["channel"].is_null());
+    assert!(v["launchChannel"].is_null());
+    assert_eq!(
+        v["channel"]["id"], "100",
+        "the followed channel is still her voice channel"
+    );
 
     // The session works; no session or a made-up one does not.
     let (s, _) = h.call("GET", "/api/settings", Some(&session), None).await;
@@ -524,7 +531,8 @@ async fn settings_and_dj_mode() {
     let (s, _) = h.call("DELETE", "/api/djs/10", Some(&boss), None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 
-    // Bad bodies are `invalid`.
+    // Bad bodies are `invalid` (the channel check comes first, so boss joins the channel).
+    h.fake.set_voice(BOSS, Some(VOICE));
     let (s, v) = h
         .call(
             "POST",
@@ -776,6 +784,11 @@ async fn websocket_handshake() {
     let url = format!("ws://{addr}/ws?session={ana}&channelId=100");
     let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
     let v = next(&mut socket).await;
+    assert_eq!(
+        v,
+        json!({ "type": "channel", "channel": { "id": "100", "name": "General" } })
+    );
+    let v = next(&mut socket).await;
     assert_eq!(v["type"], "state");
     assert!(v["state"].is_null());
     assert!(v["serverNow"].as_i64().unwrap() > 0);
@@ -802,4 +815,167 @@ async fn websocket_handshake() {
     // A bad session over a real socket fails the handshake.
     let bad = format!("ws://{addr}/ws?session={}&channelId=100", "0".repeat(64));
     assert!(tokio_tungstenite::connect_async(bad).await.is_err());
+}
+
+#[tokio::test]
+async fn followed_channel_is_the_users_voice_channel() {
+    let h = harness().await;
+
+    // Launched from a text channel while in voice: follows the voice channel.
+    h.fake.set_voice(ANA, Some(VOICE));
+    let (ana, v) = h.login("ana", Some(TEXT)).await;
+    assert_eq!(v["channel"], json!({ "id": "100", "name": "General" }));
+    assert_eq!(v["launchChannel"], json!({ "id": "200", "name": "chat" }));
+    assert_eq!(v["permissions"]["canControl"], true);
+
+    // Launched from another voice channel: still the one she is in.
+    let (_, v) = h.login("ana", Some(LOUNGE)).await;
+    assert_eq!(v["channel"]["id"], "100");
+    assert_eq!(v["launchChannel"]["id"], "101");
+
+    // Not in voice: nothing to follow, wherever it was launched.
+    h.fake.set_voice(ANA, None);
+    let (_, v) = h.login("ana", Some(VOICE)).await;
+    assert!(v["channel"].is_null(), "{v}");
+    assert_eq!(v["launchChannel"]["id"], "100");
+    let (_, v) = h.login("ana", Some(TEXT)).await;
+    assert!(v["channel"].is_null());
+
+    // The polling fallback follows moves.
+    let (s, v) = h.call("GET", "/api/me/channel", Some(&ana), None).await;
+    assert_eq!((s, v), (StatusCode::OK, json!({ "channel": null })));
+    h.fake.set_voice(ANA, Some(LOUNGE));
+    let (_, v) = h.call("GET", "/api/me/channel", Some(&ana), None).await;
+    assert_eq!(v, json!({ "channel": { "id": "101", "name": "Lounge" } }));
+    let (s, _) = h.call("GET", "/api/me/channel", None, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn panel_routes_only_accept_the_users_channel() {
+    let h = harness().await;
+    let (boss, _) = h.login("boss", Some(TEXT)).await;
+    h.fake.set_voice(BOSS, Some(LOUNGE));
+
+    // A manager in another channel cannot see or control the player of VOICE from the panel.
+    let (s, v) = h.call("GET", "/api/player?channelId=100", Some(&boss), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "not_in_channel"));
+    let (s, v) = h.call("GET", "/api/lyrics?channelId=100", Some(&boss), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "not_in_channel"));
+    for (path, body) in [
+        ("/api/player/pause", json!({ "channelId": "100" })),
+        ("/api/player/stop", json!({ "channelId": "100" })),
+        ("/api/queue/add", json!({ "channelId": "100", "query": "song" })),
+        ("/api/queue/clear", json!({ "channelId": "100" })),
+        ("/api/ai/stop", json!({ "channelId": "100" })),
+    ] {
+        let (s, v) = h.call("POST", path, Some(&boss), Some(body)).await;
+        assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "not_in_channel"), "{path}");
+    }
+    // Their own channel passes the check (nothing plays there).
+    let (s, v) = h.call("GET", "/api/player?channelId=101", Some(&boss), None).await;
+    assert_eq!((s, v), (StatusCode::OK, Value::Null));
+    let (s, v) = h
+        .call(
+            "POST",
+            "/api/player/pause",
+            Some(&boss),
+            Some(json!({ "channelId": "101" })),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"));
+
+    // Not in voice at all.
+    h.fake.set_voice(BOSS, None);
+    let (s, v) = h.call("GET", "/api/player?channelId=101", Some(&boss), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "not_in_channel"));
+}
+
+#[tokio::test]
+async fn websocket_follows_voice_moves() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(TEXT)).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = h.app.clone();
+    tokio::spawn(async move { axum::serve(listener, app).await });
+
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws?session={ana}"))
+        .await
+        .unwrap();
+    assert_eq!(next(&mut socket).await["channel"]["id"], "100");
+    assert_eq!(next(&mut socket).await["type"], "state");
+    assert_eq!(next(&mut socket).await["type"], "permissions");
+
+    // Someone else moving changes nothing for her; her own move switches the socket.
+    h.fake.set_voice(BOBBY, Some(LOUNGE));
+    h.state.app.bots.voice_moved(GUILD, BOBBY);
+    h.fake.set_voice(ANA, Some(LOUNGE));
+    h.state.app.bots.voice_moved(GUILD, ANA);
+    let v = next(&mut socket).await;
+    assert_eq!(
+        v,
+        json!({ "type": "channel", "channel": { "id": "101", "name": "Lounge" } })
+    );
+    let v = next(&mut socket).await;
+    assert_eq!(v["type"], "state");
+    assert!(v["state"].is_null());
+    let v = next(&mut socket).await;
+    assert_eq!(v["type"], "permissions");
+    assert_eq!(v["permissions"]["canControl"], true);
+
+    // Disconnecting from voice: `channel: null`.
+    h.fake.set_voice(ANA, None);
+    h.state.app.bots.voice_moved(GUILD, ANA);
+    let v = next(&mut socket).await;
+    assert_eq!(v, json!({ "type": "channel", "channel": null }));
+    assert_eq!(next(&mut socket).await["type"], "state");
+    let v = next(&mut socket).await;
+    assert_eq!(v["type"], "permissions");
+    assert_eq!(v["permissions"]["canControl"], false);
+}
+
+#[tokio::test]
+async fn sessions_survive_a_restart_and_store_only_a_hash() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(TEXT)).await;
+
+    // A fresh API state over the same store (a restart) accepts the token.
+    let restarted = ApiState::new(h.state.app.clone(), h.fake.clone(), Options::default()).unwrap();
+    assert_eq!(restarted.sessions.len(), 0, "nothing in memory yet");
+    let req = Request::builder()
+        .uri("/api/me/channel")
+        .header("authorization", format!("Bearer {ana}"))
+        .body(Body::empty())
+        .unwrap();
+    let res = router(restarted.clone()).oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let s = restarted.sessions.get(&ana).await.unwrap();
+    assert_eq!(
+        (s.user_id, s.guild_id, s.launch_channel_id),
+        (ANA, Some(GUILD), Some(TEXT))
+    );
+    assert_eq!(s.global_name.as_deref(), Some("ANA"));
+
+    // Only the SHA-256 of the token is on disk.
+    type Row = (String, i64, String, Option<String>, Option<String>);
+    let rows: Vec<Row> =
+        sqlx::query_as("SELECT token_hash, user_id, username, global_name, avatar_url FROM panel_sessions")
+            .fetch_all(h.state.app.store.pool())
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, super::session::hash_token(&ana));
+    assert_ne!(rows[0].0, ana);
+    let dump = format!("{rows:?}");
+    assert!(!dump.contains(&ana), "the raw token is never stored");
+
+    // Expired rows are refused and swept.
+    let short = harness_with(Duration::ZERO, true).await;
+    let (dead, _) = short.login("ana", None).await;
+    let restarted = ApiState::new(short.state.app.clone(), short.fake.clone(), Options::default()).unwrap();
+    assert!(restarted.sessions.get(&dead).await.is_none());
+    assert_eq!(short.state.app.store.sweep_panel_sessions().await.unwrap(), 1);
 }
