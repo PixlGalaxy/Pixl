@@ -52,7 +52,6 @@ const EMOJIS = [
   ["dislike", "thumbs-down", "white"],
   ["panel", "panel-top", "white"],
   ["cancel", "x", "white"],
-  ["link", "external-link", "white"],
 ];
 
 function arg(name) {

@@ -217,7 +217,7 @@ pub fn added_list(v: &AddedList, i18n: &I18n) -> Message {
 pub struct NowPlaying<'a> {
     pub track: TrackCard<'a>,
     pub voice_channel_id: u64,
-    /// Name of the node bot playing it (None on the main bot).
+    /// Discord display name of the extra bot playing it (None on the main bot).
     pub node_name: Option<&'a str>,
     pub genres: &'a [String],
     pub paused: bool,
@@ -534,7 +534,8 @@ pub fn jam(voice_channel_id: u64, code: &str, i18n: &I18n) -> Message {
     let texts = vec![
         format!("**{}**", i18n.t("bot.jam.title", &[("channel", &ch)])),
         i18n.t("bot.jam.body", &[("channel", &ch)]),
-        format!("[discord.gg/{code}](<{url}>)"),
+        // Plain URL: Discord refuses to render a masked link whose label looks like a URL.
+        url.clone(),
     ];
     let accessory = Accessory::Button(Button::link(i18n.t("bot.button.open_invite", &[]), url));
     container(Tone::Ok, vec![Component::Section { texts, accessory }]).ephemeral(true)
@@ -791,10 +792,10 @@ pub fn all_busy(busy_channel: Option<u64>, target_channel: u64, invite: Option<(
         (Some(_), None) => i18n.t("bot.busy.body_generic", &[("channel", &target)]),
     };
     let children = match invite {
-        Some((n, url)) => titled_accessory(
+        Some((_, url)) => titled_accessory(
             title,
             body,
-            Button::link(i18n.t("bot.button.invite_node", &[("number", &n.to_string())]), url),
+            Button::link(i18n.t("bot.button.invite_node", &[]), url),
         ),
         None => titled(title, body),
     };
@@ -1071,7 +1072,7 @@ mod tests {
         let mut v = NowPlaying {
             track: track(&a),
             voice_channel_id: 77,
-            node_name: Some("Lynx Node 1"),
+            node_name: Some("Lynx 2"),
             genres: &genres,
             paused: false,
             ai_enabled: true,
@@ -1087,7 +1088,7 @@ mod tests {
         assert_eq!(container["components"][0]["accessory"]["type"], 11);
         let section = all_text(&container["components"][0]);
         assert!(
-            section.contains("Now playing in <#77> · played by Lynx Node 1"),
+            section.contains("Now playing in <#77> · played by Lynx 2"),
             "{section}"
         );
         assert!(section.contains("[Song](<https://youtu.be/x>)"));
@@ -1168,7 +1169,11 @@ mod tests {
         fn walk(v: &Value, out: &mut Vec<String>) {
             match v {
                 Value::Object(m) if m.get("type").and_then(Value::as_u64) == Some(2) => {
-                    out.push(format!("{} {}", m["style"], m["emoji"]["name"].as_str().unwrap_or("-")))
+                    out.push(format!(
+                        "{} {}",
+                        m["style"],
+                        m.get("emoji").and_then(|e| e["name"].as_str()).unwrap_or("-")
+                    ))
                 }
                 Value::Object(m) => m.values().for_each(|x| walk(x, out)),
                 Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
@@ -1242,8 +1247,9 @@ mod tests {
             look(radio_picking(&picking, &i)),
             vec!["4 lynx_cancel_white", "1 lynx_panel_white"]
         );
-        assert_eq!(look(jam(7, "c", &i)), vec!["5 lynx_link_white"]);
-        assert_eq!(look(add_main("https://d", &i)), vec!["5 lynx_link_white"]);
+        // Link buttons carry no icon of ours: Discord draws its own arrow.
+        assert_eq!(look(jam(7, "c", &i)), vec!["5 -"]);
+        assert_eq!(look(add_main("https://d", &i)), vec!["5 -"]);
         let added = AddedList {
             name: None,
             url: None,
@@ -1449,7 +1455,7 @@ mod tests {
         let acc = &busy["components"][0]["components"][0]["accessory"];
         assert_eq!(
             (acc["style"].as_u64(), acc["label"].as_str()),
-            (Some(5), Some("Invite Lynx Node 1"))
+            (Some(5), Some("Add another Lynx"))
         );
         check_text(&all_text(&all_busy(None, 2, None, &i).to_json()));
 
@@ -1460,6 +1466,10 @@ mod tests {
             j["components"][0]["components"][0]["accessory"]["url"],
             "https://discord.gg/aB3"
         );
+        // The invite shows as a plain URL: a masked link labelled like a URL is printed raw.
+        let jt = all_text(&j);
+        assert!(jt.contains("https://discord.gg/aB3"), "{jt}");
+        assert!(!jt.contains("](<"), "{jt}");
 
         let v = vote("T", "https://x", 2, 3, 7, "tg", &i).to_json();
         assert!(all_text(&v).contains("Vote to skip: 2 of 3"));
