@@ -2,6 +2,7 @@ mod api;
 mod config;
 mod discord;
 mod i18n;
+mod perms;
 mod player;
 mod procs;
 mod sources;

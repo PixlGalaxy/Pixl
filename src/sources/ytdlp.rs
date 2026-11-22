@@ -113,6 +113,23 @@ impl Ytdlp {
         a
     }
 
+    /// Command that pipes the audio of `page_url` to stdout (fragmented or live streams), run in
+    /// `work_dir`. Spawn it with `ProcessRegistry::spawn_stream`.
+    pub fn stream_spec(&self, page_url: &str, owner: &ProcOwner, work_dir: &Path, max_duration: Duration) -> ProcSpec {
+        let mut args = self.base_args(work_dir);
+        args.extend([
+            "--quiet".into(),
+            "-f".into(),
+            FORMAT.into(),
+            "-o".into(),
+            "-".into(),
+            page_url.into(),
+        ]);
+        ProcSpec::new(self.binary(), owner.clone(), max_duration)
+            .args(args)
+            .current_dir(work_dir)
+    }
+
     /// Run yt-dlp under the semaphore, in the owner's stream dir. Returns stdout.
     async fn run(&self, owner: &ProcOwner, args: Vec<String>, timeout: Duration) -> SourceResult<Vec<u8>> {
         let _permit = self

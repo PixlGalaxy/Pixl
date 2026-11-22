@@ -25,6 +25,10 @@ dotenvy = "0.15"
 dashmap = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
 unicode-normalization = "0.1"
+fastrand = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
