@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
+    ai::AiEngine,
     config::Config,
     discord::{jam::JamInvites, registry::BotRegistry, Bots, Lynx},
     i18n::I18n,
@@ -41,6 +42,7 @@ pub struct AppState {
     pub sources: Sources,
     pub bots: Arc<BotRegistry>,
     pub players: PlayerManager,
+    pub ai: AiEngine,
     pub shutdown: CancellationToken,
 }
 
@@ -74,6 +76,8 @@ async fn main() -> Result<()> {
         shutdown.clone(),
     );
     tokio::spawn(sources.update_task(shutdown.clone()));
+    let ai = AiEngine::new(&config, store.clone(), sources.clone());
+    let ai_tasks = ai.spawn_background(shutdown.clone());
 
     let bots = Bots::build(&config).await?;
     let players = PlayerManager::new(PlayerDeps {
@@ -84,6 +88,7 @@ async fn main() -> Result<()> {
         procs: procs.clone(),
         sessions: sessions.clone(),
         bots: bots.registry.clone(),
+        ai: ai.clone(),
         http: reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build()?,
     });
     {
@@ -105,6 +110,7 @@ async fn main() -> Result<()> {
         sources: sources.clone(),
         bots: bots.registry.clone(),
         players: players.clone(),
+        ai: ai.clone(),
         shutdown: shutdown.clone(),
     };
     let lynx = Arc::new(Lynx {
@@ -140,6 +146,9 @@ async fn main() -> Result<()> {
         let _ = gateways.await;
         let _ = api.await;
         let _ = maintenance.await;
+        for t in ai_tasks {
+            let _ = t.await;
+        }
     })
     .await;
     drop(state);

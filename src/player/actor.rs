@@ -166,7 +166,7 @@ pub async fn run(s: Spawn) {
         MessengerDeps {
             http: deps.bots.main().http.clone(),
             i18n: deps.i18n.clone(),
-            store: deps.store.clone(),
+            ai: deps.ai.clone(),
             ai_enabled: deps.config.ai_enabled,
             voice_channel_id: s.req.voice_channel_id,
         },
@@ -603,6 +603,8 @@ impl Player {
         self.persist(false);
         self.publish();
         self.messenger.now_playing(self.np_data(&entry));
+        let (ai, info) = (self.deps.ai.clone(), entry.info.clone());
+        tokio::spawn(async move { ai.enqueue_tagging(&info).await });
         if self.back_online {
             self.back_online = false;
             self.messenger.notice(OwnedNotice::BackOnline {
@@ -703,10 +705,13 @@ impl Player {
             return;
         }
         let store = self.deps.store.clone();
+        let ai = self.deps.ai.clone();
         let (user, info) = (p.entry.requester.id, p.entry.info.clone());
         tokio::spawn(async move {
-            if let Err(e) = store.record_play(user, &info).await {
-                debug!(error = %e, "could not record a play");
+            match store.record_play(user, &info).await {
+                Ok(Some(_)) => ai.notify_new_tracks(),
+                Ok(None) => {}
+                Err(e) => debug!(error = %e, "could not record a play"),
             }
         });
     }
@@ -867,7 +872,7 @@ impl Player {
             MessengerDeps {
                 http: self.deps.bots.main().http.clone(),
                 i18n: self.deps.i18n.clone(),
-                store: self.deps.store.clone(),
+                ai: self.deps.ai.clone(),
                 ai_enabled: self.deps.config.ai_enabled,
                 voice_channel_id: to,
             },

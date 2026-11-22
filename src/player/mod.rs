@@ -57,6 +57,7 @@ pub struct PlayerDeps {
     pub procs: ProcessRegistry,
     pub sessions: SessionWriter,
     pub bots: Arc<BotRegistry>,
+    pub ai: crate::ai::AiEngine,
     /// HTTP client for songbird stream reads.
     pub http: reqwest::Client,
 }

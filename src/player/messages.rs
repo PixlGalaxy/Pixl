@@ -13,6 +13,7 @@ use tracing::{debug, warn};
 
 use super::queue::Entry;
 use crate::{
+    ai::AiEngine,
     discord::{
         ids::track_tag,
         ui::{
@@ -21,7 +22,6 @@ use crate::{
         },
     },
     i18n::I18n,
-    store::{track_key, Store},
 };
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -115,7 +115,7 @@ pub struct Messenger {
 pub struct MessengerDeps {
     pub http: Arc<Http>,
     pub i18n: Arc<I18n>,
-    pub store: Store,
+    pub ai: AiEngine,
     pub ai_enabled: bool,
     pub voice_channel_id: u64,
 }
@@ -239,15 +239,9 @@ async fn run(deps: MessengerDeps, channel: Option<u64>, mut rx: mpsc::Receiver<O
 
 async fn now_playing_card(deps: &MessengerDeps, data: &NpData) -> Message {
     let info = &data.entry.info;
-    let genres = match tokio::time::timeout(
-        Duration::from_secs(2),
-        deps.store.track_genres_by_key(&track_key(info), 4),
-    )
-    .await
-    {
-        Ok(Ok(g)) => g,
-        _ => Vec::new(),
-    };
+    let genres = tokio::time::timeout(Duration::from_secs(2), deps.ai.genres_for(info))
+        .await
+        .unwrap_or_default();
     let tag = track_tag(&data.entry.uid);
     let view = NowPlaying {
         track: TrackCard {
