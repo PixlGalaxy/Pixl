@@ -21,7 +21,7 @@ use super::{
     queries, tagger,
     taste::{self, compute_vector},
     taxonomy::{self, GENRES},
-    AiPhase, ApiError, Cancelled, EngineInner, RadioError, RadioMix, RadioPick, RadioRequest, Reason, ReasonKey,
+    AiPhase, ApiError, Cancelled, EngineInner, RadioError, RadioPick, RadioRequest, Reason, ReasonKey,
 };
 use crate::{
     sources::{matcher, text::normalize, TrackInfo, TrackOrigin},

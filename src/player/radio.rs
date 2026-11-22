@@ -455,6 +455,7 @@ pub enum RadioApiError {
     Unavailable,
 }
 
+#[allow(dead_code)] // Used by the panel API.
 impl RadioApiError {
     pub fn code(&self) -> &'static str {
         match self {
@@ -560,6 +561,8 @@ pub struct RadioStartRequest {
 }
 
 pub struct RadioStarted {
+    /// The player the radio runs on (the panel API answers with its state).
+    #[allow(dead_code)]
     pub player: PlayerHandle,
     pub job_id: Uuid,
     /// Phases and counts of the start job (ends on ready / failed / cancelled).

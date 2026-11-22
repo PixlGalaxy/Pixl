@@ -7,7 +7,7 @@ use tokio::{
 
 use super::*;
 use crate::{
-    ai::{test_util::config, AiEngine},
+    ai::{test_util::config, AiEngine, RadioMix},
     procs::ProcessRegistry,
     sources::Sources,
     store::{test_util::track, Feedback, Tag, TagSource, UserPrefsPatch},
