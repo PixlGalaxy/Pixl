@@ -92,10 +92,21 @@ pub struct TrackNotifier {
 
 #[serenity::async_trait]
 impl EventHandler for TrackNotifier {
-    async fn act(&self, _ctx: &EventContext<'_>) -> Option<Event> {
+    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+        // songbird fires End before Error for a track that failed: report it as an error so the
+        // player shows the failure notice and skips instead of treating it as a normal end.
+        let mut signal = self.signal;
+        if let EventContext::Track(tracks) = ctx {
+            for (state, _) in tracks.iter() {
+                if let songbird::tracks::PlayMode::Errored(e) = &state.playing {
+                    tracing::warn!(error = %e, handle = %self.handle_id, "track failed");
+                    signal = TrackSignal::Error;
+                }
+            }
+        }
         let cmd = Command::Track {
             handle_id: self.handle_id,
-            signal: self.signal,
+            signal,
         };
         if tokio::time::timeout(Duration::from_secs(5), self.tx.send(cmd))
             .await
