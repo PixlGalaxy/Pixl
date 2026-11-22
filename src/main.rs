@@ -125,7 +125,17 @@ async fn main() -> Result<()> {
     });
     let gateway_stop = bots.stop.clone();
     let gateways = bots.start(lynx);
-    let api = tokio::spawn(api::serve(state.clone()));
+    let api = {
+        let state = state.clone();
+        tokio::spawn(async move {
+            // Without the HTTP server the panel and health checks are dead: log why and exit so the
+            // container restarts instead of staying half alive.
+            if let Err(e) = api::serve(state).await {
+                tracing::error!(error = %e, "http server failed");
+                std::process::exit(1);
+            }
+        })
+    };
 
     wait_for_signal().await;
     info!("shutdown requested");
