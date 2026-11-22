@@ -35,6 +35,11 @@ pub struct Config {
     pub ollama_model: Option<String>,
     pub ollama_keep_alive: String,
     pub ollama_timeout_secs: u64,
+    /// Acceptable alternates to `ollama_model` (the GPU may be shared): if one of them is already
+    /// loaded it is used instead of loading the preferred model.
+    pub ollama_checked_models: Vec<String>,
+    /// Wait before retrying a model load that failed (usually a busy GPU).
+    pub ollama_load_retry_secs: u64,
 
     pub ytdlp_cookies_file: Option<PathBuf>,
     /// `--limit-rate` for the yt-dlp piped fallback (HLS/live), like PIXL's 300K. Empty = no limit.
@@ -77,6 +82,8 @@ impl Config {
             ollama_model: optional("OLLAMA_MODEL"),
             ollama_keep_alive: optional("OLLAMA_KEEP_ALIVE").unwrap_or_else(|| "30m".into()),
             ollama_timeout_secs: parse_or("OLLAMA_TIMEOUT_SECS", 120)?,
+            ollama_checked_models: list("OLLAMA_CHECKED_MODELS"),
+            ollama_load_retry_secs: parse_or("OLLAMA_LOAD_RETRY_SECS", 30)?,
 
             ytdlp_cookies_file: optional("YTDLP_COOKIES_FILE").map(PathBuf::from),
             ytdlp_limit_rate: Some(optional("YTDLP_LIMIT_RATE").unwrap_or_else(|| "300K".into())),

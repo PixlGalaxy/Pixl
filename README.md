@@ -25,6 +25,21 @@ docker compose up -d --build
 
 All settings are environment variables; see [.env.example](.env.example).
 
+### Ollama on a shared GPU
+
+The AI radio and the genre tagger use Ollama only when a model is usable, so the GPU can be shared with other workloads:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OLLAMA_URL` | empty | Ollama server. Empty: no LLM, the radio uses only the recommendation algorithm. |
+| `OLLAMA_MODEL` | required with `OLLAMA_URL` | Preferred model. |
+| `OLLAMA_CHECKED_MODELS` | empty | Comma-separated alternates that are also acceptable, in order of preference. |
+| `OLLAMA_LOAD_RETRY_SECS` | `30` | Wait before retrying a failed load of the preferred model. |
+| `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the preferred model loaded after use. |
+| `OLLAMA_TIMEOUT_SECS` | `120` | Timeout of each model load and chat request. |
+
+Before each use Lynx asks Ollama which models are loaded (`/api/ps`, cached for 30 seconds). If the preferred model is loaded it is used; otherwise, if any checked model is loaded, that one is used and nothing is loaded. Only when no acceptable model is in memory does Lynx load the preferred one. If that fails (for example, not enough GPU memory), it checks again for a checked model, waits `OLLAMA_LOAD_RETRY_SECS` (the radio shows "waiting in line"), checks once more and retries the load once. If that fails too, the radio continues with the algorithm alone. The tagger never waits: it uses a model only if one is already loaded or loads right away, and otherwise leaves the track for later. Lynx never unloads other models, and does not change the keep-alive of an alternate model it borrows.
+
 On startup the main bot uploads its own button icons as application emojis of its Discord application (16 small PNGs from [assets/emojis/](assets/emojis/), only the missing ones; nothing is ever deleted). If that fails, the buttons simply show text only. To change the icons, edit and run `scripts/gen-emojis.mjs`; emojis are matched by name, so delete the old one in the Developer Portal (Emojis tab) for a redrawn icon to be uploaded again.
 
 ## Development
