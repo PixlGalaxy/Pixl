@@ -17,6 +17,8 @@ pub struct ApiError {
     pub status: StatusCode,
     pub code: &'static str,
     pub message: String,
+    /// "Every Lynx bot is busy": the invite link of the next bot to add (`error.invite`).
+    pub invite: Option<String>,
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
@@ -27,7 +29,22 @@ impl ApiError {
             status,
             code,
             message: message.into(),
+            invite: None,
         }
+    }
+
+    pub fn with_invite(mut self, invite: Option<String>) -> Self {
+        self.invite = invite;
+        self
+    }
+
+    /// The jam's "only the host channel edits the shared queue" rule.
+    pub fn jam_host_only() -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "jam_host_only",
+            "Only the jam host channel can change the shared queue",
+        )
     }
 
     pub fn invalid(message: impl Into<String>) -> Self {
@@ -106,11 +123,11 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(json!({ "error": { "code": self.code, "message": self.message } })),
-        )
-            .into_response()
+        let mut error = json!({ "code": self.code, "message": self.message });
+        if let Some(invite) = self.invite {
+            error["invite"] = json!(invite);
+        }
+        (self.status, Json(json!({ "error": error }))).into_response()
     }
 }
 
