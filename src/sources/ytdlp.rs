@@ -47,6 +47,9 @@ pub struct StreamInfo {
     /// yt-dlp itself instead of a direct HTTP read.
     pub needs_ytdlp: bool,
     pub duration_ms: Option<u64>,
+    /// Unix seconds before which googlevideo answers 403 (and then rejects the URL for good).
+    /// yt-dlp reports it as `available_at`; the URL must not be requested earlier.
+    pub available_at: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -160,9 +163,10 @@ impl Ytdlp {
     /// Resolve the direct audio URL. `cache_key` is the YouTube video id (or the URL for others).
     pub async fn resolve_stream(&self, url: &str, cache_key: &str, owner: &ProcOwner) -> SourceResult<StreamInfo> {
         if let Some(hit) = self.cached(cache_key) {
+            wait_until_available(&hit).await;
             return Ok(hit);
         }
-        let template = "%(.{id,url,http_headers,acodec,ext,format_id,protocol,duration,is_live})j";
+        let template = "%(.{id,url,http_headers,acodec,ext,format_id,protocol,duration,is_live,available_at})j";
         let args = vec![
             "--no-playlist".into(),
             "-f".into(),
@@ -179,6 +183,7 @@ impl Ytdlp {
             serde_json::from_str(line).map_err(|_| SourceError::Other("yt-dlp returned no stream info".into()))?;
         let info = parse_stream(&v, now_secs()).ok_or_else(|| SourceError::Unavailable("No audio stream".into()))?;
         self.store(cache_key, info.clone());
+        wait_until_available(&info).await;
         Ok(info)
     }
 
@@ -420,7 +425,21 @@ pub(crate) fn parse_stream(v: &Value, now: i64) -> Option<StreamInfo> {
         is_opus,
         needs_ytdlp,
         duration_ms: v["duration"].as_f64().map(|d| (d * 1000.0) as u64),
+        available_at: v["available_at"].as_i64().or_else(|| v["available_at"].as_f64().map(|f| f.ceil() as i64)),
     })
+}
+
+/// Longest wait for a stream to become available (YouTube asks for a few seconds).
+const MAX_AVAILABILITY_WAIT: Duration = Duration::from_secs(20);
+
+/// Sleep until the stream's `available_at` (plus a margin), so the first request is not refused.
+async fn wait_until_available(info: &StreamInfo) {
+    let Some(at) = info.available_at else { return };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    let wait_ms = (at * 1000 + 750) - now;
+    if wait_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(wait_ms as u64).min(MAX_AVAILABILITY_WAIT)).await;
+    }
 }
 
 fn thumb_of(v: &Value) -> Option<String> {
