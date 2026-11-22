@@ -1915,7 +1915,10 @@ impl Player {
         } else {
             (self.queue.current().cloned(), self.queue.upcoming().to_vec())
         };
+        // A jam track waiting for the shared start time shows as loading, not paused.
+        let jam_hold = self.jam.as_ref().is_some_and(|j| j.hold) && !self.user_paused && !self.empty.is_waiting();
         let status = match &self.playing {
+            Some(_) if jam_hold => Status::Loading,
             Some(_) if self.paused() => Status::Paused,
             Some(_) => Status::Playing,
             None if self.loading.is_some() => Status::Loading,
