@@ -80,6 +80,10 @@ pub enum OwnedNotice {
     JamLeftOwn {
         restored: bool,
     },
+    JamEmpty {
+        deadline_secs: i64,
+    },
+    JamBack,
 }
 
 impl OwnedNotice {
@@ -113,6 +117,10 @@ impl OwnedNotice {
             Self::JamEnded { restored } => Notice::JamEnded { restored: *restored },
             Self::JamRemoved => Notice::JamRemoved,
             Self::JamLeftOwn { restored } => Notice::JamLeftOwn { restored: *restored },
+            Self::JamEmpty { deadline_secs } => Notice::JamEmpty {
+                deadline_secs: *deadline_secs,
+            },
+            Self::JamBack => Notice::JamBack,
         }
     }
 }

@@ -366,7 +366,13 @@ impl Player {
     }
 
     fn paused(&self) -> bool {
-        self.user_paused || self.empty.is_waiting() || self.jam.as_ref().is_some_and(|j| j.hold)
+        self.user_paused || self.empty_paused() || self.jam.as_ref().is_some_and(|j| j.hold)
+    }
+
+    /// The empty-channel wait pauses the music, except in a jam: there the channel keeps following
+    /// the shared timeline (in sync if someone comes back) until it leaves at the deadline.
+    fn empty_paused(&self) -> bool {
+        self.empty.is_waiting() && self.jam.is_none()
     }
 
     async fn boot(&mut self, restore: Option<Restore>) {
@@ -1369,15 +1375,28 @@ impl Player {
         {
             EmptyAction::Nothing => {}
             EmptyAction::Pause { deadline } => {
-                info!(
-                    guild = self.guild_id,
-                    channel = self.voice_channel_id,
-                    "channel empty, pausing"
-                );
                 self.apply_pause();
-                self.messenger.notice(OwnedNotice::PausedEmpty {
-                    deadline_secs: deadline_epoch_ms(deadline) / 1000,
-                });
+                let deadline_secs = deadline_epoch_ms(deadline) / 1000;
+                if self.jam.is_some() {
+                    info!(
+                        guild = self.guild_id,
+                        channel = self.voice_channel_id,
+                        "channel empty, leaving the jam at the deadline"
+                    );
+                    self.messenger.notice(OwnedNotice::JamEmpty { deadline_secs });
+                } else {
+                    info!(
+                        guild = self.guild_id,
+                        channel = self.voice_channel_id,
+                        "channel empty, pausing"
+                    );
+                    self.messenger.notice(OwnedNotice::PausedEmpty { deadline_secs });
+                }
+            }
+            EmptyAction::Resume { .. } if self.jam.is_some() => {
+                // The music never stopped here: just replace the "leaving" warning.
+                self.messenger.notice(OwnedNotice::JamBack);
+                self.apply_pause();
             }
             EmptyAction::Resume { play } => {
                 if self.waiting_start && play {
@@ -1931,7 +1950,7 @@ impl Player {
             (self.queue.current().cloned(), self.queue.upcoming().to_vec())
         };
         // A jam track waiting for the shared start time shows as loading, not paused.
-        let jam_hold = self.jam.as_ref().is_some_and(|j| j.hold) && !self.user_paused && !self.empty.is_waiting();
+        let jam_hold = self.jam.as_ref().is_some_and(|j| j.hold) && !self.user_paused && !self.empty_paused();
         let status = match &self.playing {
             Some(_) if jam_hold => Status::Loading,
             Some(_) if self.paused() => Status::Paused,
@@ -1941,7 +1960,7 @@ impl Player {
             None => Status::Idle,
         };
         let paused_reason = (status == Status::Paused).then(|| {
-            if self.empty.is_waiting() {
+            if self.empty_paused() {
                 PausedReason::EmptyChannel
             } else {
                 PausedReason::User
@@ -2393,6 +2412,86 @@ mod tests {
         member.send(Command::End(EndReason::Shutdown)).await.unwrap();
     }
 
+    /// Host and member with empty queues, both with someone in the channel, in one jam.
+    async fn jam_pair(
+        manager: &PlayerManager,
+        bot: &Arc<BotInfo>,
+    ) -> ((mpsc::Sender<Command>, Slot), (mpsc::Sender<Command>, Slot), JamHandle) {
+        let (host, host_slot) = spawn_on(manager, bot, VOICE, None);
+        let (member, member_slot) = spawn_on(manager, bot, VOICE + 1, None);
+        for tx in [&host, &member] {
+            tx.send(Command::Humans(HashSet::from([5]))).await.unwrap();
+        }
+        until_snap(&host_slot, |s| s.empty_channel_deadline.is_none()).await;
+        until_snap(&member_slot, |s| s.empty_channel_deadline.is_none()).await;
+        let jam = ask(&host, |reply| Command::JamCreate { reply }).await.unwrap();
+        ask(&member, |reply| Command::JamJoin { jam: jam.clone(), reply })
+            .await
+            .unwrap();
+        until_snap(&host_slot, |s| s.jam.as_ref().is_some_and(|j| j.members.len() == 2)).await;
+        ((host, host_slot), (member, member_slot), jam)
+    }
+
+    async fn until_closed(tx: &mpsc::Sender<Command>) {
+        tokio::time::timeout(Duration::from_secs(5), tx.closed())
+            .await
+            .expect("player ended");
+    }
+
+    /// Everyone leaves a member channel: its own timer starts (the host's does not), and at the
+    /// deadline (1 s in tests) it leaves the jam and its player ends.
+    #[tokio::test]
+    async fn empty_jam_member_leaves_the_jam_at_the_deadline() {
+        let (manager, bot) = test_manager().await;
+        let ((host, host_slot), (member, member_slot), jam) = jam_pair(&manager, &bot).await;
+        member.send(Command::Humans(HashSet::new())).await.unwrap();
+        until_snap(&member_slot, |s| s.empty_channel_deadline.is_some()).await;
+        assert!(host_slot.read().unwrap().empty_channel_deadline.is_none());
+        until_snap(&host_slot, |s| s.jam.as_ref().is_some_and(|j| j.members.len() == 1)).await;
+        until_closed(&member).await;
+        assert!(!jam.view().ended);
+        assert!(host_slot.read().unwrap().empty_channel_deadline.is_none());
+        host.send(Command::End(EndReason::Shutdown)).await.unwrap();
+    }
+
+    /// Someone comes back before the deadline: the timer is cancelled and the channel stays.
+    #[tokio::test]
+    async fn jam_member_stays_when_someone_returns() {
+        let (manager, bot) = test_manager().await;
+        let ((host, host_slot), (member, member_slot), _jam) = jam_pair(&manager, &bot).await;
+        member.send(Command::Humans(HashSet::new())).await.unwrap();
+        until_snap(&member_slot, |s| s.empty_channel_deadline.is_some()).await;
+        member.send(Command::Humans(HashSet::from([6]))).await.unwrap();
+        until_snap(&member_slot, |s| s.empty_channel_deadline.is_none()).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(!member.is_closed());
+        assert_eq!(host_slot.read().unwrap().jam.as_ref().map(|j| j.members.len()), Some(2));
+        for tx in [&member, &host] {
+            tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
+        }
+    }
+
+    /// The host channel empties: at the deadline the host role passes to the member with people.
+    #[tokio::test]
+    async fn empty_jam_host_passes_the_host_role() {
+        let (manager, bot) = test_manager().await;
+        let ((host, _host_slot), (member, member_slot), jam) = jam_pair(&manager, &bot).await;
+        let member_key = SessionKey {
+            guild_id: GUILD,
+            voice_channel_id: VOICE + 1,
+        };
+        host.send(Command::Humans(HashSet::new())).await.unwrap();
+        until_snap(&member_slot, |s| {
+            s.jam
+                .as_ref()
+                .is_some_and(|j| j.members.len() == 1 && j.host == member_key)
+        })
+        .await;
+        until_closed(&host).await;
+        assert!(!jam.view().ended);
+        assert!(member_slot.read().unwrap().empty_channel_deadline.is_none());
+        member.send(Command::End(EndReason::Shutdown)).await.unwrap();
+    }
 
     fn version(slot: &Arc<RwLock<Arc<PlayerSnapshot>>>) -> u64 {
         slot.read().unwrap().version

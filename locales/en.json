@@ -140,6 +140,14 @@
       "jam_left_own": {
         "title": "{channel} left the jam"
       },
+      "jam_empty": {
+        "title": "Nobody is listening here",
+        "body": "Everyone left {channel}. Lynx will leave the jam and disconnect {time} if nobody joins."
+      },
+      "jam_back": {
+        "title": "Still in the jam",
+        "body": "Someone joined {channel}, so it stays in the jam."
+      },
       "jam_removed": {
         "title": "This channel was removed from the jam",
         "body": "{channel} is back to its own queue."
