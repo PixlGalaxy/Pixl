@@ -81,6 +81,8 @@ fn request(owner: u64) -> RadioRequest {
         prompt: None,
         recent_keys: vec!["nb1".into(), "own0".into()],
         batch_size: 10,
+        mix: RadioMix::Balanced,
+        blend: true,
     }
 }
 
@@ -122,6 +124,23 @@ async fn algorithmic_radio_respects_filters_and_mix() {
     assert!(all.iter().any(|p| p.reason.key == ReasonKey::SimilarListeners));
     assert!(all.iter().any(|p| p.reason.key == ReasonKey::YourFavorite));
     assert!(all.iter().all(|p| p.genres == vec!["rock".to_string()]));
+}
+
+#[tokio::test]
+async fn without_blend_listener_dislikes_still_filter() {
+    let store = fixture().await;
+    let engine = engine_with(&store, |_| {}).await;
+    let mut req = request(1);
+    req.blend = false;
+    req.mix = RadioMix::Favorites;
+    let mut job = engine.start_radio(req);
+    let first = job.first_pick().await.expect("early pick");
+    let mut all = vec![first];
+    all.extend(job.result().await.unwrap());
+    assert!(!all.iter().any(|p| key(p) == "nb0"), "listener 3's dislike is excluded");
+    // Favorites mix: the owner's own tracks dominate.
+    let own = all.iter().filter(|p| p.reason.key == ReasonKey::YourFavorite).count();
+    assert!(own * 2 >= all.len(), "{own} of {}", all.len());
 }
 
 #[tokio::test]
