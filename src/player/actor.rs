@@ -37,7 +37,9 @@ use crate::{
 };
 
 /// Prefetch the next track this long before the current one ends.
-const PREFETCH_BEFORE: Duration = Duration::from_secs(30);
+/// The next track is prepared shortly after the current one starts (stream URLs last hours), so
+/// skips and track changes start at once instead of waiting for yt-dlp and YouTube's `available_at`.
+const PREFETCH_AFTER_START: Duration = Duration::from_secs(3);
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_FAILURES: u32 = 3;
 const POSITION_TICK: Duration = Duration::from_secs(10);
@@ -1138,9 +1140,7 @@ impl Player {
     fn schedule_prefetch(&mut self) {
         self.prefetch_at = self.playing.as_ref().and_then(|p| {
             p.since?;
-            let duration = p.entry.info.duration_ms.filter(|d| *d > 0)?;
-            let left = Duration::from_millis(duration.saturating_sub(p.position_ms()));
-            Some(Instant::now() + left.saturating_sub(PREFETCH_BEFORE))
+            Some(Instant::now() + PREFETCH_AFTER_START)
         });
     }
 
@@ -1171,6 +1171,10 @@ impl Player {
         }
         if self.prefetching.is_some() && self.prefetching != next {
             self.prefetching = None;
+        }
+        // Queue edits (add, move, remove, skip) can change the next track: prepare it soon.
+        if next.is_some() && self.prefetched.is_none() && self.prefetching.is_none() && self.prefetch_at.is_none() {
+            self.schedule_prefetch();
         }
         self.schedule_prefetch();
     }

@@ -9,7 +9,7 @@
     },
     "added": {
       "title": "Added to the queue",
-      "playing_now": "Starting now",
+      "playing_now": "Starting in a few seconds",
       "position": "Position {position} in the queue",
       "eta": "Plays in about {minutes} minutes",
       "list_title": "Added a playlist",

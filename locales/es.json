@@ -9,7 +9,7 @@
     },
     "added": {
       "title": "Añadida a la cola",
-      "playing_now": "Empieza ahora",
+      "playing_now": "Empieza en unos segundos",
       "position": "Posición {position} en la cola",
       "eta": "Suena en unos {minutes} minutos",
       "list_title": "Se añadió una playlist",
