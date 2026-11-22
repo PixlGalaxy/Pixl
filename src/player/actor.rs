@@ -26,7 +26,7 @@ use super::{
     radio::{self, Job, JobKind, Radio, RadioSpec, RadioTicket, StartRefused},
     state::{epoch_ms, PausedReason, PlayerEvent, PlayerSnapshot, Status},
     votes::{required_votes, VoteResult, Votes},
-    Command, EndReason, PlayerDeps, PlayerManager, Restore, SkipOutcome, StartRequest,
+    Command, EndReason, PlayerDeps, PlayerManager, Restore, SeekOutcome, SkipOutcome, StartRequest,
 };
 use crate::{
     ai::{RadioPick, RadioRequest},
@@ -42,6 +42,7 @@ const PREPARE_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_FAILURES: u32 = 3;
 const POSITION_TICK: Duration = Duration::from_secs(10);
 const VOICE_TIMEOUT: Duration = Duration::from_secs(5);
+const SEEK_TIMEOUT: Duration = Duration::from_secs(10);
 const HISTORY_LEN: usize = 20;
 /// A play counts for the history after this much listening (or half the track).
 const PLAY_COUNTS_AFTER: Duration = Duration::from_secs(30);
@@ -88,6 +89,8 @@ pub fn initial_snapshot(req: &StartRequest, bot_user_id: u64) -> PlayerSnapshot 
 /// The track in songbird and its clock.
 struct Playing {
     entry: Entry,
+    /// What the input was built from (a failed seek plays it again from the target).
+    playable: Playable,
     handle: TrackHandle,
     /// Position when `since` started.
     base_ms: u64,
@@ -354,8 +357,8 @@ impl Player {
             }
             Command::Stop { by, announce } => self.ending = Some(EndReason::Stopped { by, announce }),
             Command::Seek { position_ms, reply } => {
-                let ok = self.seek(position_ms).await;
-                let _ = reply.send(ok);
+                let outcome = self.seek(position_ms).await;
+                let _ = reply.send(outcome);
             }
             Command::Volume { volume, reply } => {
                 let prev = self.volume;
@@ -745,47 +748,14 @@ impl Player {
     }
 
     async fn begin(&mut self, entry: Entry, playable: Playable) {
-        let input = if playable.ytdlp_fallback {
-            match ytdlp_input(
-                &self.deps.sources,
-                &self.deps.procs,
-                &playable,
-                &self.owner(Some(entry.uid)),
-            )
-            .await
-            {
-                Ok(i) => i,
-                Err(e) => return self.failed(entry, &e.to_string()).await,
-            }
-        } else {
-            http_input(self.deps.http.clone(), &playable.stream)
+        let handle = match self.start_input(&entry, &playable).await {
+            Ok(h) => h,
+            Err(reason) => return self.failed(entry, &reason).await,
         };
-        let call = self.call.clone();
-        let locked = tokio::time::timeout(VOICE_TIMEOUT, call.lock()).await;
-        let handle = match locked {
-            Ok(mut call) => call.play_only_input(input),
-            Err(_) => return self.failed(entry, "voice connection is busy").await,
-        };
-        let handle_id = handle.uuid();
-        for (event, signal) in track_events() {
-            let notifier = TrackNotifier {
-                tx: self.tx.clone(),
-                handle_id,
-                signal,
-            };
-            if handle.add_event(Event::Track(event), notifier).is_err() {
-                warn!("could not attach a track event");
-            }
-        }
-        if self.volume != 100 {
-            let _ = handle.set_volume(f32::from(self.volume) / 100.0);
-        }
         let paused = self.paused();
-        if paused {
-            let _ = handle.pause();
-        }
         self.playing = Some(Playing {
             entry: entry.clone(),
+            playable,
             handle,
             base_ms: 0,
             since: (!paused).then(Instant::now),
@@ -806,6 +776,46 @@ impl Player {
                 total: self.queue.all().len(),
             });
         }
+    }
+
+    /// Build the songbird input of `playable` and play it, with the track events, volume and pause
+    /// state attached.
+    async fn start_input(&mut self, entry: &Entry, playable: &Playable) -> Result<TrackHandle, String> {
+        let input = if playable.ytdlp_fallback {
+            ytdlp_input(
+                &self.deps.sources,
+                &self.deps.procs,
+                playable,
+                &self.owner(Some(entry.uid)),
+            )
+            .await
+            .map_err(|e| e.to_string())?
+        } else {
+            http_input(self.deps.http.clone(), &playable.stream)
+        };
+        let call = self.call.clone();
+        let handle = match tokio::time::timeout(VOICE_TIMEOUT, call.lock()).await {
+            Ok(mut call) => call.play_only_input(input),
+            Err(_) => return Err("voice connection is busy".to_owned()),
+        };
+        let handle_id = handle.uuid();
+        for (event, signal) in track_events() {
+            let notifier = TrackNotifier {
+                tx: self.tx.clone(),
+                handle_id,
+                signal,
+            };
+            if handle.add_event(Event::Track(event), notifier).is_err() {
+                warn!("could not attach a track event");
+            }
+        }
+        if self.volume != 100 {
+            let _ = handle.set_volume(f32::from(self.volume) / 100.0);
+        }
+        if self.paused() {
+            let _ = handle.pause();
+        }
+        Ok(handle)
     }
 
     fn np_data(&self, entry: &Entry) -> NpData {
@@ -939,37 +949,82 @@ impl Player {
         }
     }
 
-    async fn seek(&mut self, position_ms: u64) -> bool {
-        let Some(p) = &mut self.playing else { return false };
-        let target = p
-            .entry
-            .info
-            .duration_ms
+    async fn seek(&mut self, position_ms: u64) -> SeekOutcome {
+        let Some(p) = &mut self.playing else {
+            return SeekOutcome::NothingPlaying;
+        };
+        let duration = p.entry.info.duration_ms.filter(|d| *d > 0);
+        if duration.is_some_and(|d| position_ms > d) {
+            return SeekOutcome::OutOfRange;
+        }
+        let target = duration
             .map(|d| position_ms.min(d.saturating_sub(1000)))
             .unwrap_or(position_ms);
-        match tokio::time::timeout(
-            Duration::from_secs(10),
-            p.handle.seek_async(Duration::from_millis(target)),
-        )
-        .await
+        let seeked = match tokio::time::timeout(SEEK_TIMEOUT, p.handle.seek_async(Duration::from_millis(target))).await
         {
+            Ok(Ok(_)) => true,
+            Ok(Err(e)) => {
+                warn!(guild = self.guild_id, track = %p.entry.info.url, target, error = %e, "seek failed; restarting the track there");
+                false
+            }
+            Err(_) => {
+                warn!(guild = self.guild_id, track = %p.entry.info.url, target, "seek timed out; restarting the track there");
+                false
+            }
+        };
+        if !seeked && !self.restart_at(target).await {
+            return SeekOutcome::Failed;
+        }
+        let Some(p) = &mut self.playing else {
+            return SeekOutcome::Failed;
+        };
+        let running = p.since.is_some();
+        p.stop_clock();
+        p.base_ms = target;
+        if running {
+            p.start_clock();
+        }
+        let pos = p.position_ms();
+        self.schedule_prefetch();
+        self.publish();
+        let _ = self.events.send(PlayerEvent::Position {
+            position_ms: pos,
+            position_at: epoch_ms(),
+        });
+        SeekOutcome::Done
+    }
+
+    /// songbird ends a track whose seek failed: play the same stream again and seek the fresh input
+    /// to `target`, so the track goes on instead of being skipped. Events of the old handle are
+    /// ignored from here on (they no longer match the current handle).
+    async fn restart_at(&mut self, target: u64) -> bool {
+        let Some(p) = &self.playing else { return false };
+        let (entry, playable) = (p.entry.clone(), p.playable.clone());
+        let _ = p.handle.stop();
+        let handle = match self.start_input(&entry, &playable).await {
+            Ok(h) => h,
+            Err(reason) => {
+                self.failed(entry, &reason).await;
+                return false;
+            }
+        };
+        if let Some(p) = &mut self.playing {
+            p.handle = handle.clone();
+        }
+        match tokio::time::timeout(SEEK_TIMEOUT, handle.seek_async(Duration::from_millis(target))).await {
             Ok(Ok(_)) => {
-                let running = p.since.is_some();
-                p.stop_clock();
-                p.base_ms = target;
-                if running {
-                    p.start_clock();
-                }
-                let pos = p.position_ms();
-                self.schedule_prefetch();
-                self.publish();
-                let _ = self.events.send(PlayerEvent::Position {
-                    position_ms: pos,
-                    position_at: epoch_ms(),
-                });
+                info!(guild = self.guild_id, track = %entry.info.url, target, "track restarted at the seek target");
                 true
             }
-            _ => false,
+            // If the fresh input is really broken, its own error event skips the track.
+            Ok(Err(e)) => {
+                warn!(guild = self.guild_id, track = %entry.info.url, target, error = %e, "seek failed after restarting the track");
+                false
+            }
+            Err(_) => {
+                warn!(guild = self.guild_id, track = %entry.info.url, target, "seek timed out after restarting the track");
+                false
+            }
         }
     }
 
