@@ -1,8 +1,15 @@
 //! The text messages of one player, always sent by the MAIN bot. A small task per player keeps one
 //! "now playing" message and one status notice; each new one replaces (deletes) the previous.
 //! Sending never blocks the player: the queue is bounded and overflow is dropped.
+//!
+//! Messages go to the guild's music channel when a manager set one (read on every send, so a change
+//! applies at once, also to restored sessions); otherwise, or when Lynx can not post there, to the
+//! player's text channel (where the last command was used, or the voice channel's chat).
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use serenity::{
     all::{ChannelId, MessageId},
@@ -22,11 +29,13 @@ use crate::{
         },
     },
     i18n::I18n,
-    store::SessionKey,
+    store::{SessionKey, Store},
 };
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const QUEUE: usize = 32;
+/// After failing to post in the music channel, use the fallback for this long before trying again.
+const MUSIC_RETRY: Duration = Duration::from_secs(10 * 60);
 
 /// Owned version of `cards::Notice`.
 #[derive(Debug, Clone)]
@@ -166,6 +175,9 @@ pub struct MessengerDeps {
     pub ai: AiEngine,
     pub ai_enabled: bool,
     pub voice_channel_id: u64,
+    pub guild_id: u64,
+    /// Source of the guild's music channel.
+    pub store: Store,
 }
 
 impl Messenger {
@@ -220,14 +232,68 @@ impl Messenger {
 }
 
 struct Slots {
+    /// Fallback text channel (last command / voice chat).
     channel: Option<u64>,
+    /// Music channel that refused a message, and when.
+    music_failed: Option<(u64, Instant)>,
     now_playing: Option<(u64, u64)>,
     status: Option<(u64, u64)>,
+}
+
+/// The music channel to try first, unless it refused a message less than [`MUSIC_RETRY`] ago.
+fn music_target(music: Option<u64>, failed: Option<(u64, Instant)>, now: Instant) -> Option<u64> {
+    let m = music?;
+    match failed {
+        Some((f, at)) if f == m && now.duration_since(at) < MUSIC_RETRY => None,
+        _ => Some(m),
+    }
+}
+
+impl Slots {
+    /// Post to the music channel, falling back to the player's text channel. Returns the message.
+    async fn post(&mut self, deps: &MessengerDeps, msg: &Message) -> Option<(u64, u64)> {
+        let music = match deps.store.music_channel(deps.guild_id).await {
+            Ok(m) => m,
+            Err(e) => {
+                warn!(guild = deps.guild_id, error = %e, "could not read the music channel");
+                None
+            }
+        };
+        if let Some(m) = music_target(music, self.music_failed, Instant::now()) {
+            match send(&deps.http, m, msg).await {
+                Sent::Ok(id) => {
+                    self.music_failed = None;
+                    return Some((m, id));
+                }
+                Sent::Gone => {
+                    warn!(
+                        guild = deps.guild_id,
+                        channel = m,
+                        "can not post in the music channel, using the player text channel"
+                    );
+                    self.music_failed = Some((m, Instant::now()));
+                }
+                // Not retried elsewhere: the message may have gone through.
+                Sent::Failed => return None,
+            }
+        }
+        let ch = self.channel?;
+        match send(&deps.http, ch, msg).await {
+            Sent::Ok(id) => Some((ch, id)),
+            Sent::Gone => {
+                debug!(channel = ch, "text channel unusable, notices disabled");
+                self.channel = None;
+                None
+            }
+            Sent::Failed => None,
+        }
+    }
 }
 
 async fn run(deps: MessengerDeps, channel: Option<u64>, mut rx: mpsc::Receiver<Out>) {
     let mut s = Slots {
         channel,
+        music_failed: None,
         now_playing: None,
         status: None,
     };
@@ -239,9 +305,7 @@ async fn run(deps: MessengerDeps, channel: Option<u64>, mut rx: mpsc::Receiver<O
                     delete(&deps.http, old).await;
                 }
                 let msg = now_playing_card(&deps, &data).await;
-                if let Some(ch) = s.channel {
-                    s.now_playing = post(&deps.http, ch, &msg, &mut s.channel).await.map(|id| (ch, id));
-                }
+                s.now_playing = s.post(&deps, &msg).await;
             }
             Out::RefreshNowPlaying(data) => {
                 if let Some((ch, id)) = s.now_playing {
@@ -265,9 +329,7 @@ async fn run(deps: MessengerDeps, channel: Option<u64>, mut rx: mpsc::Receiver<O
                     delete(&deps.http, old).await;
                 }
                 let msg = cards::notice(&n.card(deps.ai_enabled), deps.voice_channel_id, &deps.i18n);
-                if let Some(ch) = s.channel {
-                    s.status = post(&deps.http, ch, &msg, &mut s.channel).await.map(|id| (ch, id));
-                }
+                s.status = s.post(&deps, &msg).await;
             }
             Out::Close {
                 delete_now_playing,
@@ -322,28 +384,32 @@ pub fn discord_error_code(e: &serenity::Error) -> Option<isize> {
     }
 }
 
-/// Send a message to a text channel; on "channel gone / no access" the channel is dropped so the
-/// player stops trying (the next /play sets a new one).
-async fn post(http: &Http, channel: u64, msg: &Message, slot: &mut Option<u64>) -> Option<u64> {
+enum Sent {
+    Ok(u64),
+    /// The channel is gone or Lynx may not post there.
+    Gone,
+    Failed,
+}
+
+async fn send(http: &Http, channel: u64, msg: &Message) -> Sent {
     match tokio::time::timeout(
         HTTP_TIMEOUT,
         http.send_message(ChannelId::new(channel), vec![], &msg.to_json()),
     )
     .await
     {
-        Ok(Ok(m)) => Some(m.id.get()),
+        Ok(Ok(m)) => Sent::Ok(m.id.get()),
         Ok(Err(e)) => {
             if discord_error_code(&e).is_some_and(|c| CHANNEL_GONE.contains(&c)) {
-                debug!(channel, "text channel unusable, notices disabled");
-                *slot = None;
+                Sent::Gone
             } else {
                 warn!(channel, error = %e, "could not send a player message");
+                Sent::Failed
             }
-            None
         }
         Err(_) => {
             warn!(channel, "sending a player message timed out");
-            None
+            Sent::Failed
         }
     }
 }
@@ -354,4 +420,28 @@ async fn delete(http: &Http, (channel, message): (u64, u64)) {
         http.delete_message(ChannelId::new(channel), MessageId::new(message), None),
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn music_channel_overrides_and_backs_off() {
+        let now = Instant::now();
+        assert_eq!(music_target(None, None, now), None, "off: the text channel is used");
+        assert_eq!(music_target(Some(40), None, now), Some(40));
+        let failed = Some((40, now));
+        assert_eq!(music_target(Some(40), failed, now + Duration::from_secs(5)), None);
+        assert_eq!(
+            music_target(Some(40), failed, now + MUSIC_RETRY),
+            Some(40),
+            "tried again later"
+        );
+        assert_eq!(
+            music_target(Some(41), failed, now + Duration::from_secs(5)),
+            Some(41),
+            "a new music channel is tried at once"
+        );
+    }
 }

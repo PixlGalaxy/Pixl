@@ -309,6 +309,8 @@ pub async fn run(s: Spawn) {
             ai: deps.ai.clone(),
             ai_enabled: deps.config.ai_enabled,
             voice_channel_id: s.req.voice_channel_id,
+            guild_id: s.req.guild_id,
+            store: deps.store.clone(),
         },
         s.req.text_channel_id,
     );
@@ -1571,6 +1573,8 @@ impl Player {
                 ai: self.deps.ai.clone(),
                 ai_enabled: self.deps.config.ai_enabled,
                 voice_channel_id: to,
+                guild_id: self.guild_id,
+                store: self.deps.store.clone(),
             },
             self.text_channel,
         );

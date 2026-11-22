@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 
 use super::registry::{assign, Assignment, BotRegistry};
 use crate::{
-    perms::{can, channel_allowed, Action, Actor, Decision, Deny},
+    perms::{can, Action, Actor, Decision, Deny},
     player::{
         Entry, PlayerHandle, PlayerManager, PushError, PushResult, QueueEntry, Requester, Restore, StartError,
         StartRequest,
@@ -93,10 +93,10 @@ fn busy(ctx: PlayCtx<'_>, guild_id: u64, channel: u64, busy_channel: Option<u64>
     }
 }
 
-/// Voice channel restriction: managers play anywhere, others only in the allowed channels.
+/// Voice channel restriction: exempt managers play anywhere, others only in the allowed channels.
 pub async fn check_voice(ctx: PlayCtx<'_>, guild_id: u64, vc: u64, is_manager: bool) -> Result<(), PlayError> {
     let rules = ctx.store.channel_rules(guild_id).await.unwrap_or_default();
-    if channel_allowed(&rules.voice_channels, vc, is_manager) {
+    if rules.voice_allowed_for(vc, is_manager) {
         Ok(())
     } else {
         Err(PlayError::VoiceNotAllowed {

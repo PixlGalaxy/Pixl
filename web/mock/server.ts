@@ -203,6 +203,8 @@ const s = {
     defaultVolume: 100,
     commandChannels: [],
     voiceChannels: [],
+    musicChannel: null,
+    managersExempt: true,
   } as GuildSettings,
   djs: [USERS[2]!] as Member[],
   prefs: {
@@ -815,7 +817,7 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       const query = String(body.query ?? '').trim()
       if (!query || query.toLowerCase() === 'error') throw new HttpError(404, 'no_results')
       const voice = s.settings.voiceChannels
-      if (!permissionsFor(f).isManager && voice.length > 0 && !voice.includes('100')) {
+      if (!(permissionsFor(f).isManager && s.settings.managersExempt) && voice.length > 0 && !voice.includes('100')) {
         throw new HttpError(403, 'channel_not_allowed')
       }
       if (s.upcoming.length >= s.settings.maxQueueLength) throw new HttpError(409, 'queue_full')
@@ -898,6 +900,7 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
     case 'PUT /settings':
       if (!permissionsFor(f).isManager) throw new HttpError(403, 'no_permission')
       s.settings = { ...s.settings, ...(body as Partial<GuildSettings>) }
+      if (s.settings.musicChannel === '') s.settings.musicChannel = null
       for (const ws of sockets.keys()) send(ws, { type: 'settings', settings: s.settings })
       return s.settings
     case 'GET /guild/channels':
@@ -987,7 +990,7 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
         const channel = String(body.channelId ?? '')
         if (!s.voice || channel !== s.voice) throw new HttpError(403, 'not_in_channel')
         const voice = s.settings.voiceChannels
-        if (!permissionsFor(f).isManager && voice.length > 0 && !voice.includes('100')) {
+        if (!(permissionsFor(f).isManager && s.settings.managersExempt) && voice.length > 0 && !voice.includes('100')) {
           throw new HttpError(403, 'channel_not_allowed')
         }
         const all = playlistSongs(p)
