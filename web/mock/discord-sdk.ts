@@ -20,8 +20,10 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'p') setLayout(layoutMode === 1 ? 0 : 1)
   else if (e.key === 'g') setLayout(layoutMode === 2 ? 0 : 2)
   // `v`: move to the next voice channel (100 -> 101 -> none). `x`: expire every session.
+  // `o`: take the fake backend offline / bring it back (502 everywhere, sockets dropped).
   else if (e.key === 'v') void fetch('/backend/api/mock/voice', { method: 'POST' })
   else if (e.key === 'x') void fetch('/backend/api/mock/expire', { method: 'POST' })
+  else if (e.key === 'o') void fetch('/backend/mock-offline', { method: 'POST' })
 })
 
 export class DiscordSDK {

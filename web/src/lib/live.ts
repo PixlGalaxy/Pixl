@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, BACKEND, getSession } from './api'
+import { onBackendRecovered, reportBackendTrouble } from './health'
 import { useLayoutMode } from './layout'
 import type { AiState, ChannelRef, GuildSettings, Permissions, PlayerState, ServerMessage } from './types'
 
@@ -134,6 +135,8 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
       ws.onclose = () => {
         setSocketOpen(false)
         clearInterval(ping)
+        // Not closed by us: maybe the backend went away (the health check decides).
+        reportBackendTrouble()
         // The handshake failed (the browser hides the status): a plain request finds out whether the
         // session was refused and renews it, so the next attempt carries the new one.
         if (!opened) void refresh()
@@ -147,7 +150,18 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
     }
 
     open()
+    // Backend back after an outage: fresh state first (a refused session signs in again silently
+    // there), then a new socket right away instead of waiting for the backoff.
+    const offRecovered = onBackendRecovered(() => {
+      void refresh().then(() => {
+        if (closed || (ws && ws.readyState !== WebSocket.CLOSED)) return
+        clearTimeout(retry)
+        attempts = 0
+        open()
+      })
+    })
     return () => {
+      offRecovered()
       closed = true
       clearInterval(ping)
       clearTimeout(retry)

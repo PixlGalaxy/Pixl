@@ -14,6 +14,7 @@ import type {
   Taste,
   UserPrefs,
 } from './types'
+import { isGatewayStatus, reportBackendTrouble } from './health'
 
 /** Error returned by the backend as `{ error: { code, message } }`, or a network failure (`code: 'network'`). */
 export class ApiError extends Error {
@@ -93,8 +94,10 @@ export async function request<T>(path: string, method: Method = 'GET', body?: un
       body: body === undefined ? undefined : JSON.stringify(body),
     })
   } catch (error) {
+    reportBackendTrouble()
     throw new ApiError('network', error instanceof Error ? error.message : String(error), 0)
   }
+  if (isGatewayStatus(res.status)) reportBackendTrouble()
 
   if (res.status === 401 && session && path !== '/auth' && !retried) {
     if (await renewSession()) return request<T>(path, method, body, true)

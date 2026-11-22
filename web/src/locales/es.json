@@ -280,6 +280,12 @@
     "noHistoryNote": "Solo se guarda el idioma de tu panel.",
     "tasteMoved": "Tus gustos (géneros principales y canciones más escuchadas) están al final de la pestaña Radio."
   },
+  "health": {
+    "title": "Reconectando con Lynx",
+    "body": "El servidor no responde. Esta página volverá sola.",
+    "compact": "Reconectando",
+    "statusBefore": "Consulta el estado en"
+  },
   "taste": {
     "genresHint": "Pulsa un género para ver sus canciones de tu historial.",
     "noGenres": "Todavía no hay géneros. Aparecen cuando tus canciones tienen etiquetas.",

@@ -12,7 +12,8 @@
 //   ?voice=101|none  voice channel the user starts in (default 100, where the player is)
 //   ?channel_id=100  launch channel (default 200, a text channel: the panel follows your voice channel)
 // Keys in the browser (mock SDK): `v` moves you 100 -> 101 -> no voice -> 100 (socket `channel`
-// message + new state), `x` expires every session (the panel signs in again silently).
+// message + new state), `x` expires every session (the panel signs in again silently), `o` takes
+// the backend offline and back (/healthz and /api answer 502, sockets are dropped and refused).
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, ViteDevServer } from 'vite'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -54,6 +55,8 @@ function parseFlags(search: string): Flags {
 }
 // Sessions are `mock.<epoch>.<flags>`; `x` bumps the epoch so every older session gets 401.
 let sessionEpoch = 1
+/** `o` key: pretend the Rust backend is down (what nginx answers then: 502). */
+let backendOffline = false
 let voiceInitialized = false
 const encodeFlags = (search: string) => `mock.${sessionEpoch}.${Buffer.from(search || '?').toString('base64url')}`
 function sessionValid(session: string | null | undefined) {
@@ -705,6 +708,25 @@ export function mockApi(): Plugin {
         next()
       })
 
+      server.middlewares.use((req, res, next) => {
+        const path = new URL(req.url ?? '/', 'http://localhost').pathname
+        if (path === '/mock-offline' && req.method === 'POST') {
+          backendOffline = !backendOffline
+          if (backendOffline) for (const ws of sockets.keys()) ws.terminate()
+          console.log(`[mock] backend ${backendOffline ? 'offline' : 'online'}`)
+          return sendJson(res, 200, { offline: backendOffline })
+        }
+        if (path === '/healthz') {
+          res.statusCode = backendOffline ? 502 : 200
+          return res.end(backendOffline ? 'Bad Gateway' : 'ok')
+        }
+        if (backendOffline && path.startsWith('/api/')) {
+          res.statusCode = 502
+          return res.end('Bad Gateway')
+        }
+        next()
+      })
+
       server.middlewares.use('/mock/art', (req, res) => {
         const index = Number(/(\d+)/.exec(req.url ?? '')?.[1] ?? 0)
         res.setHeader('Content-Type', 'image/svg+xml')
@@ -734,6 +756,11 @@ export function mockApi(): Plugin {
         const url = new URL(req.url ?? '/', 'http://localhost')
         if (url.pathname !== '/backend/ws') return
         const session = url.searchParams.get('session')
+        if (backendOffline) {
+          socket.write('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n')
+          socket.destroy()
+          return
+        }
         if (!sessionValid(session)) {
           socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
           socket.destroy()

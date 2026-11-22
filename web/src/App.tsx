@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PipView } from './components/PipView'
+import { ReconnectingOverlay } from './components/Reconnecting'
 import { readTab, Shell, type TabId } from './components/Shell'
 import { api, setReauthHandler, setUnauthorizedHandler } from './lib/api'
 import { applySaved } from './lib/appearance'
 import { connect, isInsideDiscord, LoginError, reauthenticate, type Connection, type LoginStep } from './lib/discord'
 import { errorMessage } from './lib/format'
+import { useBackendHealth } from './lib/health'
 import i18n, { DEFAULT_LANGUAGE, matchLanguage, setDocumentLanguage } from './lib/i18n'
 import { useCompactLayout } from './lib/layout'
 import { LynxProvider } from './lib/lynx'
@@ -36,7 +38,13 @@ async function applyInitialPrefs(conn: Connection) {
 function Panel() {
   const compact = useCompactLayout()
   const [tab, setTab] = useState<TabId>(readTab)
-  return compact ? <PipView /> : <Shell tab={tab} onTab={setTab} />
+  const { online } = useBackendHealth()
+  return (
+    <>
+      <div inert={!online}>{compact ? <PipView /> : <Shell tab={tab} onTab={setTab} />}</div>
+      {!online && <ReconnectingOverlay compact={compact} />}
+    </>
+  )
 }
 
 export default function App() {

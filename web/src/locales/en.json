@@ -280,6 +280,12 @@
     "noHistoryNote": "Only your panel language is stored.",
     "tasteMoved": "Your taste (top genres and most played songs) is at the bottom of the Radio tab."
   },
+  "health": {
+    "title": "Reconnecting to Lynx",
+    "body": "The server is not responding. This page will come back on its own.",
+    "compact": "Reconnecting",
+    "statusBefore": "Check the status on"
+  },
   "taste": {
     "genresHint": "Click a genre to see its songs from your history.",
     "noGenres": "No genres yet. They show up once your songs are tagged.",
