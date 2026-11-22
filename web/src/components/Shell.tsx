@@ -26,16 +26,14 @@ const TABS: Array<{ id: TabId }> = [
   { id: 'help' },
 ]
 
-/** Initial tab: `#hash` deep link, then the last tab of this session. */
+/**
+ * Initial tab. A fresh open always lands on Now playing: the tab is not saved across page loads.
+ * Mock mode only (`pnpm dev:mock`): `?tab=queue|lyrics|radio|...` opens another tab, for screenshots.
+ */
 export function readTab(): TabId {
-  // `#queue`, `#lyrics`... deep-link to a tab.
-  const hash = location.hash.slice(1) as TabId
-  if (TABS.some((t) => t.id === hash)) return hash
-  try {
-    const v = sessionStorage.getItem('lynx:tab') as TabId | null
-    if (v && TABS.some((t) => t.id === v)) return v
-  } catch {
-    // storage blocked
+  if (import.meta.env.MODE === 'mock') {
+    const wanted = new URLSearchParams(location.search).get('tab') as TabId | null
+    if (wanted && TABS.some((t) => t.id === wanted)) return wanted
   }
   return 'player'
 }
@@ -62,15 +60,6 @@ function ThemeToggle() {
   )
 }
 
-/** Saves the tab so a reload (or a trip through picture-in-picture) comes back to it. */
-export function saveTab(id: TabId) {
-  try {
-    sessionStorage.setItem('lynx:tab', id)
-  } catch {
-    // storage blocked
-  }
-}
-
 /** Full panel. The tab lives in the parent so it survives the compact (PiP) view replacing the shell. */
 export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }) {
   const { t } = useTranslation()
@@ -81,10 +70,7 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
   )
   const active: TabId = tabs.some((x) => x.id === tab) ? tab : 'player'
 
-  const setTab = (id: TabId) => {
-    onTab(id)
-    saveTab(id)
-  }
+  const setTab = onTab
 
   const [accountOpen, setAccountOpen] = useState(false)
   const closeAccount = useCallback(() => setAccountOpen(false), [])
