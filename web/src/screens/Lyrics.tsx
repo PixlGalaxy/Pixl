@@ -103,9 +103,11 @@ function SyncedLyrics({ lines }: { lines: LyricLine[] }) {
   )
 }
 
-export function LyricsScreen() {
-  const { t } = useTranslation()
-  const { state, channelId, loaded } = useLynx()
+export type TrackLyrics = { pending: boolean; failed: boolean; lyrics: Lyrics | null; synced: LyricLine[] | null }
+
+/** Lyrics of the current song, fetched again whenever the song changes (full tab and compact view). */
+export function useTrackLyrics(): TrackLyrics {
+  const { state, channelId } = useLynx()
   const uid = state?.current?.uid ?? null
   const [load, setLoad] = useState<Load | null>(null)
 
@@ -121,6 +123,18 @@ export function LyricsScreen() {
     }
   }, [uid, channelId])
 
+  const pending = !load || load.uid !== uid
+  const lyrics = !pending && !('error' in load) ? load.lyrics : null
+  const failed = !pending && 'error' in load
+  const synced = lyrics?.synced && lyrics.synced.length > 0 ? lyrics.synced : null
+  return { pending, failed, lyrics, synced }
+}
+
+export function LyricsScreen() {
+  const { t } = useTranslation()
+  const { state, loaded } = useLynx()
+  const { pending, failed, lyrics, synced } = useTrackLyrics()
+
   if (!loaded) return <PageSpinner />
   const track = state?.current
   if (!track) {
@@ -130,11 +144,6 @@ export function LyricsScreen() {
       </Card>
     )
   }
-
-  const pending = !load || load.uid !== uid
-  const lyrics = !pending && !('error' in load) ? load.lyrics : null
-  const failed = !pending && 'error' in load
-  const synced = lyrics?.synced && lyrics.synced.length > 0 ? lyrics.synced : null
 
   return (
     <Card
