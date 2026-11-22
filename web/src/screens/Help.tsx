@@ -123,7 +123,14 @@ export function HelpScreen() {
         <span className="px-2">|</span>
         <span className="font-mono">v{__APP_VERSION__}</span>
         <span className="px-2">|</span>
-        {t('help.developedBy')} <span className="font-medium text-fg/80">PixlGalaxy</span>
+        {t('help.developedBy')}{' '}
+        <button
+          type="button"
+          onClick={() => void openExternal('https://github.com/PixlGalaxy')}
+          className="cursor-pointer font-medium text-fg/80 underline-offset-2 transition-colors hover:text-accent-500 hover:underline"
+        >
+          PixlGalaxy
+        </button>
       </footer>
     </div>
   )
