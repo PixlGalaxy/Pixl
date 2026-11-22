@@ -64,6 +64,7 @@ pub struct Spawn {
 
 pub fn initial_snapshot(req: &StartRequest, bot_user_id: u64) -> PlayerSnapshot {
     PlayerSnapshot {
+        version: super::state::next_version(),
         guild_id: req.guild_id,
         channel_id: req.voice_channel_id,
         text_channel_id: req.text_channel_id,
@@ -89,12 +90,9 @@ pub fn initial_snapshot(req: &StartRequest, bot_user_id: u64) -> PlayerSnapshot 
     }
 }
 
-/// The track in songbird and its clock.
-struct Playing {
-    entry: Entry,
-    /// What the input was built from (a failed seek plays it again from the target).
-    playable: Playable,
-    handle: TrackHandle,
+/// Position of the playing track: a base position plus the time it has been running since.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TrackClock {
     /// Position when `since` started.
     base_ms: u64,
     /// Running since (None while paused).
@@ -103,7 +101,19 @@ struct Playing {
     listened: Duration,
 }
 
-impl Playing {
+impl TrackClock {
+    fn new(running: bool) -> Self {
+        Self {
+            base_ms: 0,
+            since: running.then(Instant::now),
+            listened: Duration::ZERO,
+        }
+    }
+
+    fn running(&self) -> bool {
+        self.since.is_some()
+    }
+
     fn position_ms(&self) -> u64 {
         self.base_ms + self.since.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0)
     }
@@ -112,17 +122,58 @@ impl Playing {
         self.listened + self.since.map(|s| s.elapsed()).unwrap_or_default()
     }
 
-    fn stop_clock(&mut self) {
+    fn stop(&mut self) {
         if let Some(s) = self.since.take() {
             self.base_ms += s.elapsed().as_millis() as u64;
             self.listened += s.elapsed();
         }
     }
 
-    fn start_clock(&mut self) {
+    fn start(&mut self) {
         if self.since.is_none() {
             self.since = Some(Instant::now());
         }
+    }
+
+    /// Jump to `position_ms` (seek, restart), keeping the running / paused state.
+    fn set_position(&mut self, position_ms: u64) {
+        let running = self.running();
+        self.stop();
+        self.base_ms = position_ms;
+        if running {
+            self.start();
+        }
+    }
+}
+
+/// The track in songbird and its clock.
+struct Playing {
+    entry: Entry,
+    /// What the input was built from (a failed seek plays it again from the target).
+    playable: Playable,
+    handle: TrackHandle,
+    clock: TrackClock,
+}
+
+impl Playing {
+    fn running(&self) -> bool {
+        self.clock.running()
+    }
+
+    fn position_ms(&self) -> u64 {
+        self.clock.position_ms()
+    }
+
+    fn listened(&self) -> Duration {
+        self.clock.listened()
+    }
+
+    fn stop_clock(&mut self) {
+        self.clock.stop();
+    }
+
+    fn start_clock(&mut self) {
+        self.clock.start();
     }
 }
 
@@ -311,13 +362,13 @@ impl Player {
                 return reason;
             }
             self.maybe_refill();
-            let tick = (self.events.receiver_count() > 0 && self.playing.as_ref().is_some_and(|p| p.since.is_some()))
+            let tick = (self.events.receiver_count() > 0 && self.playing.as_ref().is_some_and(|p| p.running()))
                 .then_some(self.next_tick);
             // Idle and paused players have no checkpoint timer.
             let checkpoint = self
                 .playing
                 .as_ref()
-                .is_some_and(|p| p.since.is_some())
+                .is_some_and(|p| p.running())
                 .then_some(self.checkpoint_at);
             tokio::select! {
                 cmd = rx.recv() => match cmd {
@@ -805,9 +856,7 @@ impl Player {
             entry: entry.clone(),
             playable,
             handle,
-            base_ms: 0,
-            since: (!paused).then(Instant::now),
-            listened: Duration::ZERO,
+            clock: TrackClock::new(!paused),
         });
         self.schedule_prefetch();
         self.persist(false);
@@ -984,10 +1033,10 @@ impl Player {
     fn apply_pause(&mut self) {
         let want = self.paused();
         if let Some(p) = &mut self.playing {
-            if want && p.since.is_some() {
+            if want && p.running() {
                 let _ = p.handle.pause();
                 p.stop_clock();
-            } else if !want && p.since.is_none() {
+            } else if !want && !p.running() {
                 let _ = p.handle.play();
                 p.start_clock();
             }
@@ -1029,12 +1078,7 @@ impl Player {
         let Some(p) = &mut self.playing else {
             return SeekOutcome::Failed;
         };
-        let running = p.since.is_some();
-        p.stop_clock();
-        p.base_ms = target;
-        if running {
-            p.start_clock();
-        }
+        p.clock.set_position(target);
         let pos = p.position_ms();
         self.schedule_prefetch();
         self.persist(false);
@@ -1091,12 +1135,7 @@ impl Player {
             Ok(handle) => {
                 if let Some(p) = &mut self.playing {
                     p.handle = handle;
-                    let running = p.since.is_some();
-                    p.stop_clock();
-                    p.base_ms = 0;
-                    if running {
-                        p.start_clock();
-                    }
+                    p.clock.set_position(0);
                 }
                 self.publish();
             }
@@ -1253,8 +1292,7 @@ impl Player {
 
     fn schedule_prefetch(&mut self) {
         self.prefetch_at = self.playing.as_ref().and_then(|p| {
-            p.since?;
-            Some(Instant::now() + PREFETCH_AFTER_START)
+            p.running().then(|| Instant::now() + PREFETCH_AFTER_START)
         });
     }
 
@@ -1318,6 +1356,7 @@ impl Player {
         });
         let rule = self.settings.vote_skip;
         PlayerSnapshot {
+            version: super::state::next_version(),
             guild_id: self.guild_id,
             channel_id: self.voice_channel_id,
             text_channel_id: self.text_channel,
@@ -1461,6 +1500,7 @@ impl Player {
 mod tests {
     use serenity::{all::UserId, cache::Cache, http::Http};
     use songbird::Songbird;
+    use tokio::sync::oneshot;
 
     use super::*;
     use crate::{
@@ -1557,6 +1597,125 @@ mod tests {
             .expect("shutdown keeps the session");
         assert_eq!(saved.tracks.len(), 3);
         (saved.session.current_index, saved.session.position_ms)
+    }
+
+    /// A real actor with nobody in the channel and an empty queue (nothing is fetched).
+    async fn idle_actor() -> (mpsc::Sender<Command>, Arc<RwLock<Arc<PlayerSnapshot>>>) {
+        let dir = std::env::temp_dir().join(format!("lynx-actor-test-{}", Uuid::new_v4()));
+        let config = Arc::new(crate::ai::test_util::config(dir));
+        let store = Store::open_in_memory().await.unwrap();
+        let procs = ProcessRegistry::new();
+        let sources = Sources::new(&config, store.clone(), procs.clone()).unwrap();
+        let (sessions, _task) = SessionWriter::spawn_with_interval(store.clone(), Duration::from_secs(3600));
+        let bot = Arc::new(BotInfo::new(
+            0,
+            Arc::new(Http::new("x")),
+            Arc::new(Cache::new()),
+            Songbird::serenity(),
+        ));
+        let bots = Arc::new(BotRegistry::new(vec![bot.clone()]));
+        let ai = AiEngine::new(&config, store.clone(), sources.clone());
+        let manager = PlayerManager::new(PlayerDeps {
+            config: config.clone(),
+            i18n: Arc::new(I18n::load("en").unwrap()),
+            store: store.clone(),
+            sources,
+            procs,
+            sessions,
+            bots,
+            ai,
+            http: reqwest::Client::new(),
+        });
+        let req = StartRequest {
+            guild_id: GUILD,
+            voice_channel_id: VOICE,
+            bot_index: 0,
+            text_channel_id: None,
+            started_by: 1,
+            humans: HashSet::new(),
+            settings: GuildSettings::default(),
+            restore: None,
+        };
+        let (tx, rx) = mpsc::channel(64);
+        let (events, _) = broadcast::channel(16);
+        let snapshot = Arc::new(RwLock::new(Arc::new(initial_snapshot(&req, 0))));
+        let call = Arc::new(Mutex::new(Call::standalone(GuildId::new(GUILD), UserId::new(99))));
+        tokio::spawn(run(Spawn {
+            manager,
+            req,
+            call,
+            bot,
+            generation: 1,
+            tx: tx.clone(),
+            rx,
+            events,
+            snapshot: snapshot.clone(),
+        }));
+        (tx, snapshot)
+    }
+
+    fn version(slot: &Arc<RwLock<Arc<PlayerSnapshot>>>) -> u64 {
+        slot.read().unwrap().version
+    }
+
+    #[tokio::test]
+    async fn every_change_publishes_a_newer_snapshot() {
+        let (tx, slot) = idle_actor().await;
+        let mut last = version(&slot);
+        let mut check = |what: &str| {
+            let v = version(&slot);
+            assert!(v > last, "{what}: {v} <= {last}");
+            last = v;
+        };
+        let (r, rx) = oneshot::channel();
+        tx.send(Command::Volume { volume: 50, reply: r }).await.unwrap();
+        rx.await.unwrap();
+        check("volume");
+        let (r, rx) = oneshot::channel();
+        tx.send(Command::Loop {
+            mode: LoopMode::Queue,
+            reply: r,
+        })
+        .await
+        .unwrap();
+        rx.await.unwrap();
+        check("loop");
+        let (r, rx) = oneshot::channel();
+        tx.send(Command::Shuffle { reply: r }).await.unwrap();
+        rx.await.unwrap();
+        check("shuffle");
+        let (r, rx) = oneshot::channel();
+        tx.send(Command::Clear { reply: r }).await.unwrap();
+        rx.await.unwrap();
+        check("clear");
+        assert_eq!(slot.read().unwrap().volume, 50);
+        tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn track_clock_across_pause_resume_and_seek() {
+        let mut c = TrackClock::new(true);
+        tokio::time::advance(Duration::from_millis(10_000)).await;
+        assert_eq!(c.position_ms(), 10_000);
+        c.stop();
+        tokio::time::advance(Duration::from_millis(5_000)).await;
+        assert_eq!(c.position_ms(), 10_000, "paused time does not count");
+        assert!(!c.running());
+        c.set_position(60_000);
+        assert!(!c.running(), "a seek keeps the pause");
+        assert_eq!(c.position_ms(), 60_000);
+        c.start();
+        tokio::time::advance(Duration::from_millis(2_000)).await;
+        assert_eq!(c.position_ms(), 62_000);
+        c.set_position(1_000);
+        assert!(c.running(), "a seek keeps it running");
+        tokio::time::advance(Duration::from_millis(500)).await;
+        assert_eq!(c.position_ms(), 1_500);
+        assert_eq!(c.listened(), Duration::from_millis(12_500));
+        // A track created paused stays at 0.
+        let p = TrackClock::new(false);
+        tokio::time::advance(Duration::from_millis(3_000)).await;
+        assert_eq!(p.position_ms(), 0);
     }
 
     #[tokio::test]

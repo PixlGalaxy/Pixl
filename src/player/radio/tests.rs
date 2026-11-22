@@ -89,6 +89,7 @@ fn snapshot_api_carries_ai_and_reasons() {
     );
     let (r, _) = radio(JobKind::Start);
     let snap = PlayerSnapshot {
+        version: 1,
         guild_id: 1,
         channel_id: 2,
         text_channel_id: None,

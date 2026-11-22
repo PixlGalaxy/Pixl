@@ -69,6 +69,8 @@ export type LoopMode = 'off' | 'track' | 'queue'
 export type PlayerStatus = 'playing' | 'paused' | 'loading' | 'idle'
 
 export type PlayerState = {
+  /** Snapshot version; grows on every change (across players). Older states are ignored. */
+  version?: number
   guildId: string
   channelId: string
   channelName: string

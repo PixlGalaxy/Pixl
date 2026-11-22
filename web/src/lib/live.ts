@@ -2,32 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, BACKEND, getSession } from './api'
 import { onBackendRecovered, reportBackendTrouble } from './health'
 import { useLayoutMode } from './layout'
+import { acceptState, anchorFrom as anchorAt, freshFetch, shouldPoll, type PositionAnchor } from './sync'
 import type { AiState, ChannelRef, GuildSettings, Permissions, PlayerState, ServerMessage } from './types'
+
+export type { PositionAnchor } from './sync'
 
 const PING_MS = 25_000
 const POLL_MS = 5_000
-/** Cap for the age of a sample measured with the local clock (client/server skew can't run the bar away). */
-const MAX_LOCAL_AGE_MS = 5_000
-/** Cap for the age measured on the server clock (`serverNow - positionAt`, no skew involved). */
-const MAX_SERVER_AGE_MS = 60_000
 
-/**
- * The one position sample everything derives from: `positionMs` at `at` (`performance.now()`, a
- * monotonic clock that keeps counting while the panel is hidden or in picture-in-picture). The
- * position is always `positionMs + (performance.now() - at)` while playing, never accumulated ticks.
- */
-export type PositionAnchor = { positionMs: number; at: number }
-
-/**
- * Anchor from a server sample. The sample's age comes from the server's own clock (`serverNow`) when
- * the message has it, so a skewed client clock does not matter; otherwise from the local clock, capped.
- */
+/** Anchor from a server sample, taken now (see `sync.anchorFrom`). */
 export function anchorFrom(positionMs: number, positionAt: number, serverNow?: number): PositionAnchor {
-  const age =
-    serverNow != null
-      ? Math.min(Math.max(serverNow - positionAt, 0), MAX_SERVER_AGE_MS)
-      : Math.min(Math.max(Date.now() - positionAt, 0), MAX_LOCAL_AGE_MS)
-  return { positionMs: positionMs + age, at: performance.now() }
+  return anchorAt(positionMs, positionAt, serverNow, performance.now())
 }
 
 /** Anchor for a position the user just picked (seek), before the server confirms it. */
@@ -55,10 +40,17 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
   const [socketOpen, setSocketOpen] = useState(false)
   const handlersRef = useRef(handlers)
   handlersRef.current = handlers
+  // The state shown (for the version check), the socket's health and how many states it delivered
+  // (a GET that raced a socket state is older than it and is dropped).
+  const shownRef = useRef<PlayerState | null>(null)
+  const socketOpenRef = useRef(false)
+  const socketStatesRef = useRef(0)
 
   const applyState = useCallback((next: PlayerState | null, serverNow?: number) => {
-    setState(next)
     setLoaded(true)
+    if (!acceptState(shownRef.current, next)) return
+    shownRef.current = next
+    setState(next)
     if (next) setAnchor(anchorFrom(next.positionMs, next.positionAt, serverNow ?? next.serverNow))
   }, [])
 
@@ -67,10 +59,16 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
   }, [])
 
   const refresh = useCallback(async () => {
+    const started = socketStatesRef.current
     try {
       const { channel: now } = await api.meChannel()
+      const next = now ? await api.player(now.id) : null
+      if (!freshFetch(socketOpenRef.current, started, socketStatesRef.current)) {
+        setLoaded(true)
+        return
+      }
       applyChannel(now)
-      applyState(now ? await api.player(now.id) : null)
+      applyState(next)
     } catch (error) {
       console.warn('[lynx] player refresh failed', error)
       setLoaded(true)
@@ -100,6 +98,7 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
       ws.onopen = () => {
         opened = true
         attempts = 0
+        socketOpenRef.current = true
         setSocketOpen(true)
         ping = setInterval(() => ws?.readyState === WebSocket.OPEN && ws.send('{"type":"ping"}'), PING_MS)
       }
@@ -112,9 +111,13 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
         }
         switch (msg.type) {
           case 'channel':
+            socketStatesRef.current += 1
             applyChannel(msg.channel)
             break
           case 'state':
+            socketStatesRef.current += 1
+            // The socket switches channels in order: a channel change resets the version check.
+            if (msg.state && shownRef.current && msg.state.channelId !== shownRef.current.channelId) shownRef.current = null
             applyState(msg.state, msg.serverNow)
             break
           case 'position':
@@ -133,6 +136,7 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
         }
       }
       ws.onclose = () => {
+        socketOpenRef.current = false
         setSocketOpen(false)
         clearInterval(ping)
         // Not closed by us: maybe the backend went away (the health check decides).
@@ -169,6 +173,7 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
         ws.onclose = null
         ws.close()
       }
+      socketOpenRef.current = false
       setSocketOpen(false)
     }
   }, [applyChannel, applyState, refresh])
@@ -190,7 +195,7 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
   useEffect(() => {
     if (socketOpen) return
     const id = setInterval(() => {
-      if (document.visibilityState === 'visible') void refresh()
+      if (shouldPoll(socketOpenRef.current, document.visibilityState === 'visible')) void refresh()
     }, POLL_MS)
     return () => clearInterval(id)
   }, [socketOpen, refresh])
