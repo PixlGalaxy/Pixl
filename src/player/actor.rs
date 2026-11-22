@@ -158,6 +158,8 @@ struct Playing {
     playable: Playable,
     handle: TrackHandle,
     clock: TrackClock,
+    /// songbird built the input (audio was reachable). An error before that gets one fresh resolve.
+    became_playable: bool,
 }
 
 impl Playing {
@@ -275,6 +277,8 @@ struct Player {
     humans: HashSet<u64>,
     votes: Votes,
     failures: u32,
+    /// Track already re-resolved once after failing before it could play (stale or refused URL).
+    stream_retry: Option<Uuid>,
     rng: fastrand::Rng,
     ending: Option<EndReason>,
     radio: Option<Radio>,
@@ -326,6 +330,7 @@ pub async fn run(s: Spawn) {
         humans: s.req.humans,
         votes: Votes::default(),
         failures: 0,
+        stream_retry: None,
         rng: fastrand::Rng::new(),
         ending: None,
         radio: None,
@@ -647,17 +652,6 @@ impl Player {
                 }
                 let _ = reply.send(done);
             }
-            Command::RadioDisliked { user, uid } => {
-                let current = self.queue.current().map(|e| e.uid);
-                if self
-                    .radio
-                    .as_ref()
-                    .is_some_and(|r| r.owner_dislike_skips(user, true, uid, current))
-                {
-                    self.next_track(true).await;
-                    self.publish();
-                }
-            }
             Command::RadioPhase { id, phase } => {
                 // Final phases are applied by RadioDone, after the last picks are queued.
                 if phase.is_final() {
@@ -946,6 +940,7 @@ impl Player {
             playable,
             handle,
             clock: TrackClock::new(!paused),
+            became_playable: false,
         });
         self.schedule_prefetch();
         self.persist(false);
@@ -1096,10 +1091,30 @@ impl Player {
         match signal {
             TrackSignal::Playable => {
                 self.failures = 0;
+                if let Some(p) = self.playing.as_mut() {
+                    p.became_playable = true;
+                }
                 self.apply_resume().await;
             }
             TrackSignal::End => self.next_track(false).await,
             TrackSignal::Error => {
+                // The stream URL was refused before any audio (e.g. a 403 on a prefetched URL):
+                // resolve it again once instead of failing the track.
+                let retry = self
+                    .playing
+                    .as_ref()
+                    .filter(|p| !p.became_playable && self.stream_retry != Some(p.entry.uid))
+                    .map(|p| p.entry.clone());
+                if let Some(entry) = retry {
+                    warn!(guild = self.guild_id, track = %entry.info.url, "stream refused before playing; resolving it again");
+                    self.stream_retry = Some(entry.uid);
+                    self.deps.sources.invalidate_stream(&entry.info);
+                    self.end_track();
+                    self.loading = Some(entry.uid);
+                    self.spawn_prepare(&entry, false);
+                    self.publish();
+                    return;
+                }
                 let entry = self.playing.as_ref().map(|p| p.entry.clone());
                 if let Some(entry) = entry {
                     self.failed(entry, "the stream stopped with an error").await;
