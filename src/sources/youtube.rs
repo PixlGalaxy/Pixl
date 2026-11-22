@@ -3,7 +3,7 @@
 
 use serde_json::{json, Value};
 
-use super::{text::parse_clock, SourceError, SourceResult, TrackInfo, TrackOrigin};
+use super::{text::parse_clock, MusicMeta, SourceError, SourceResult, TrackInfo, TrackOrigin};
 
 /// InnerTube client identities. Bump the versions here when YouTube starts rejecting them.
 pub mod clients {
@@ -47,6 +47,66 @@ impl Client {
 pub struct Playlist {
     pub title: Option<String>,
     pub tracks: Vec<TrackInfo>,
+}
+
+/// YouTube Music classification of a video (`musicVideoType`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MusicVideoType {
+    /// Audio track ("Artist - Topic"): the song itself.
+    Atv,
+    /// Official music video.
+    Omv,
+    /// User upload.
+    Ugc,
+    /// Official upload that is not a music video (live sessions, lyric videos...).
+    OfficialSource,
+    Podcast,
+    Other,
+}
+
+impl MusicVideoType {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "MUSIC_VIDEO_TYPE_ATV" => Self::Atv,
+            "MUSIC_VIDEO_TYPE_OMV" => Self::Omv,
+            "MUSIC_VIDEO_TYPE_UGC" => Self::Ugc,
+            "MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC" => Self::OfficialSource,
+            "MUSIC_VIDEO_TYPE_PODCAST_EPISODE" => Self::Podcast,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// One entry of the YouTube Music watch panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PanelVideo {
+    pub id: String,
+    pub title: String,
+    /// Artist-page links (or the plain byline when there are none).
+    pub artists: Vec<String>,
+    pub album: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub video_type: Option<MusicVideoType>,
+}
+
+impl PanelVideo {
+    pub fn to_meta(&self) -> MusicMeta {
+        MusicMeta {
+            youtube_id: self.id.clone(),
+            title: self.title.clone(),
+            artists: self.artists.clone(),
+            album: self.album.clone(),
+            isrc: None,
+        }
+    }
+}
+
+/// What YouTube Music knows about a video: the video itself and, when YouTube links one, its
+/// audio/video counterpart (the "Song" / "Video" switch).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MusicWatch {
+    pub video: PanelVideo,
+    pub counterpart: Option<PanelVideo>,
 }
 
 #[derive(Clone)]
@@ -151,6 +211,15 @@ impl YouTube {
         let mut out = parse_web_search(&v);
         out.truncate(limit);
         Ok(out)
+    }
+
+    /// YouTube Music view of a video (type, clean title/artists, linked counterpart).
+    /// `Ok(None)` when YouTube Music does not list it.
+    pub async fn music_watch(&self, id: &str) -> SourceResult<Option<MusicWatch>> {
+        let v = self
+            .call(Client::Remix, "next", json!({ "videoId": id, "isAudioOnly": true }))
+            .await?;
+        Ok(parse_music_watch(&v, id))
     }
 
     /// YouTube Music search restricted to songs. Also used with an ISRC as the query.
@@ -258,6 +327,7 @@ fn web_track(
         youtube_id: Some(id.to_owned()),
         spotify_id: None,
         isrc: None,
+        music: None,
     }
 }
 
@@ -389,53 +459,25 @@ fn parse_music_item(it: &Value) -> Option<TrackInfo> {
                 .as_str()
         })?;
 
-    // Second column: "Artist & Artist • Album • 3:45", split on the bullet separators.
+    // Second column: "Artist & Artist • Album • 3:45".
     let runs = col(1)["runs"].as_array().cloned().unwrap_or_default();
-    let mut groups: Vec<Vec<&Value>> = vec![Vec::new()];
-    for r in &runs {
-        if r["text"].as_str().is_some_and(|t| t.trim() == "\u{2022}") {
-            groups.push(Vec::new());
-        } else {
-            groups.last_mut().unwrap().push(r);
-        }
-    }
-    let page_type = |r: &Value| {
-        r["navigationEndpoint"]["browseEndpoint"]["browseEndpointContextSupportedConfigs"]
-            ["browseEndpointContextMusicConfig"]["pageType"]
+    let Byline { artists, album, groups } = split_byline(&runs);
+    let duration = groups.iter().rev().find_map(|g| parse_clock(g)).or_else(|| {
+        it["fixedColumns"][0]["musicResponsiveListItemFixedColumnRenderer"]["text"]["runs"][0]["text"]
             .as_str()
-            .map(str::to_owned)
-    };
-    let mut artists: Vec<String> = runs
-        .iter()
-        .filter(|r| page_type(r).as_deref() == Some("MUSIC_PAGE_TYPE_ARTIST"))
-        .filter_map(|r| r["text"].as_str().map(str::to_owned))
-        .collect();
-    if artists.is_empty() {
-        // Artists without a channel page are plain text in the first group: "A, B & C".
-        if let Some(g) = groups.first() {
-            let s: String = g.iter().filter_map(|r| r["text"].as_str()).collect();
-            artists = s
-                .split([',', '&'])
-                .map(|a| a.trim().to_owned())
-                .filter(|a| !a.is_empty() && a != "Song" && a != "Video")
-                .collect();
-        }
-    }
-    let duration = groups
-        .iter()
-        .rev()
-        .find_map(|g| {
-            let s: String = g.iter().filter_map(|r| r["text"].as_str()).collect();
-            parse_clock(&s)
-        })
-        .or_else(|| {
-            it["fixedColumns"][0]["musicResponsiveListItemFixedColumnRenderer"]["text"]["runs"][0]["text"]
-                .as_str()
-                .and_then(parse_clock)
-        });
+            .and_then(parse_clock)
+    });
     let thumb = best_thumb(&it["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"])
         .map(|u| upscale_music_thumb(&u));
 
+    // Song search results are audio tracks: their metadata is the clean one.
+    let music = MusicMeta {
+        youtube_id: id.to_owned(),
+        title: title.clone(),
+        artists: artists.clone(),
+        album,
+        isrc: None,
+    };
     Some(TrackInfo {
         title,
         artists,
@@ -446,6 +488,107 @@ fn parse_music_item(it: &Value) -> Option<TrackInfo> {
         youtube_id: Some(id.to_owned()),
         spotify_id: None,
         isrc: None,
+        music: Some(music),
+    })
+}
+
+struct Byline {
+    artists: Vec<String>,
+    album: Option<String>,
+    /// Text of each " • " separated group.
+    groups: Vec<String>,
+}
+
+fn music_page_type(r: &Value) -> Option<&str> {
+    r["navigationEndpoint"]["browseEndpoint"]["browseEndpointContextSupportedConfigs"]
+        ["browseEndpointContextMusicConfig"]["pageType"]
+        .as_str()
+}
+
+/// YouTube Music byline runs: "Artist & Artist • Album • 3:45" (or "... • 1.2B views • 5M likes").
+fn split_byline(runs: &[Value]) -> Byline {
+    let mut groups: Vec<String> = vec![String::new()];
+    for r in runs {
+        let t = r["text"].as_str().unwrap_or("");
+        if t.trim() == "\u{2022}" {
+            groups.push(String::new());
+        } else {
+            groups.last_mut().unwrap().push_str(t);
+        }
+    }
+    let mut artists: Vec<String> = runs
+        .iter()
+        .filter(|r| music_page_type(r) == Some("MUSIC_PAGE_TYPE_ARTIST"))
+        .filter_map(|r| r["text"].as_str().map(str::to_owned))
+        .collect();
+    if artists.is_empty() {
+        // Artists without a channel page are plain text in the first group: "A, B & C".
+        artists = groups[0]
+            .split([',', '&'])
+            .map(|a| a.trim().to_owned())
+            .filter(|a| !a.is_empty() && a != "Song" && a != "Video")
+            .collect();
+    }
+    let album = runs
+        .iter()
+        .find(|r| music_page_type(r) == Some("MUSIC_PAGE_TYPE_ALBUM"))
+        .and_then(|r| r["text"].as_str().map(str::to_owned));
+    Byline { artists, album, groups }
+}
+
+fn parse_panel_video(r: &Value) -> Option<PanelVideo> {
+    let id = r["videoId"]
+        .as_str()
+        .or_else(|| r["navigationEndpoint"]["watchEndpoint"]["videoId"].as_str())?;
+    let title = text_of(&r["title"])?;
+    let runs = r["longBylineText"]["runs"]
+        .as_array()
+        .or_else(|| r["shortBylineText"]["runs"].as_array())
+        .cloned()
+        .unwrap_or_default();
+    let Byline { artists, album, .. } = split_byline(&runs);
+    let video_type = r["navigationEndpoint"]["watchEndpoint"]["watchEndpointMusicSupportedConfigs"]
+        ["watchEndpointMusicConfig"]["musicVideoType"]
+        .as_str()
+        .map(MusicVideoType::parse);
+    Some(PanelVideo {
+        id: id.to_owned(),
+        title,
+        artists,
+        album,
+        duration_ms: text_of(&r["lengthText"]).and_then(|t| parse_clock(&t)),
+        video_type,
+    })
+}
+
+/// The panel entry for `id` from a WEB_REMIX `next` response, with its counterpart when the
+/// response has the audio/video switch (`playlistPanelVideoWrapperRenderer`).
+pub(crate) fn parse_music_watch(v: &Value, id: &str) -> Option<MusicWatch> {
+    let mut wrappers = Vec::new();
+    find_all(v, "playlistPanelVideoWrapperRenderer", &mut wrappers);
+    for w in wrappers {
+        let primary = &w["primaryRenderer"]["playlistPanelVideoRenderer"];
+        if primary["videoId"].as_str() != Some(id) {
+            continue;
+        }
+        let video = parse_panel_video(primary)?;
+        let counterpart = w["counterpart"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| parse_panel_video(&c["counterpartRenderer"]["playlistPanelVideoRenderer"]))
+            .find(|c| c.id != id);
+        return Some(MusicWatch { video, counterpart });
+    }
+    let mut items = Vec::new();
+    find_all(v, "playlistPanelVideoRenderer", &mut items);
+    let video = items
+        .into_iter()
+        .find(|r| r["videoId"].as_str() == Some(id))
+        .and_then(parse_panel_video)?;
+    Some(MusicWatch {
+        video,
+        counterpart: None,
     })
 }
 
@@ -581,6 +724,95 @@ mod tests {
         assert_eq!(t.artists, vec!["Rick Astley"]);
         assert_eq!(t.thumbnail.as_deref(), Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"));
         assert!(parse_video_details(&json!({}), false).is_none());
+    }
+
+    fn panel_video(id: &str, title: &str, kind: &str, byline: Vec<Value>, len: &str) -> Value {
+        json!({ "videoId": id, "title": { "runs": [ { "text": title } ] },
+            "longBylineText": { "runs": byline }, "lengthText": { "runs": [ { "text": len } ] },
+            "navigationEndpoint": { "watchEndpoint": { "videoId": id,
+                "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": kind } } } } })
+    }
+
+    fn album_run(name: &str) -> Value {
+        json!({ "text": name, "navigationEndpoint": { "browseEndpoint": { "browseId": "MPREb_x",
+            "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ALBUM" } } } } })
+    }
+
+    fn next_response(contents: Vec<Value>) -> Value {
+        json!({ "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
+            "watchNextTabbedResultsRenderer": { "tabs": [ { "tabRenderer": { "content": { "musicQueueRenderer": {
+                "content": { "playlistPanelRenderer": { "contents": contents } } } } } } ] } } } } })
+    }
+
+    #[test]
+    fn parses_music_watch_omv_without_counterpart() {
+        // Trimmed from a real anonymous WEB_REMIX `next` response for an official music video.
+        let sep = json!({ "text": " \u{2022} " });
+        let v = next_response(vec![
+            json!({ "playlistPanelVideoRenderer": panel_video("kJQP7kiw5Fk", "Despacito", "MUSIC_VIDEO_TYPE_OMV",
+                vec![artist_run("Luis Fonsi"), json!({ "text": " & " }), artist_run("Daddy Yankee"), sep.clone(),
+                     json!({ "text": "9.1B views" }), sep.clone(), json!({ "text": "56M likes" })], "4:42") }),
+            json!({ "playlistPanelVideoRenderer": panel_video("other000000", "Other", "MUSIC_VIDEO_TYPE_OMV", vec![], "3:00") }),
+        ]);
+        let w = parse_music_watch(&v, "kJQP7kiw5Fk").unwrap();
+        assert_eq!(w.video.video_type, Some(MusicVideoType::Omv));
+        assert_eq!(w.video.title, "Despacito");
+        assert_eq!(w.video.artists, vec!["Luis Fonsi", "Daddy Yankee"]);
+        assert_eq!(w.video.album, None);
+        assert_eq!(w.video.duration_ms, Some(282_000));
+        assert!(w.counterpart.is_none());
+        assert!(parse_music_watch(&v, "missing0000").is_none());
+    }
+
+    #[test]
+    fn parses_music_watch_with_counterpart_and_album() {
+        let sep = json!({ "text": " \u{2022} " });
+        let omv = panel_video(
+            "omv00000000",
+            "Song",
+            "MUSIC_VIDEO_TYPE_OMV",
+            vec![artist_run("Artist")],
+            "3:40",
+        );
+        let atv = panel_video(
+            "atv00000000",
+            "Song",
+            "MUSIC_VIDEO_TYPE_ATV",
+            vec![
+                artist_run("Artist"),
+                json!({ "text": " & " }),
+                artist_run("Guest"),
+                sep.clone(),
+                album_run("The Album"),
+                sep,
+                json!({ "text": "2021" }),
+            ],
+            "3:21",
+        );
+        let v = next_response(vec![json!({ "playlistPanelVideoWrapperRenderer": {
+            "primaryRenderer": { "playlistPanelVideoRenderer": omv },
+            "counterpart": [ { "counterpartRenderer": { "playlistPanelVideoRenderer": atv } } ] } })]);
+        let w = parse_music_watch(&v, "omv00000000").unwrap();
+        assert_eq!(w.video.video_type, Some(MusicVideoType::Omv));
+        let c = w.counterpart.unwrap();
+        assert_eq!(c.id, "atv00000000");
+        assert_eq!(c.video_type, Some(MusicVideoType::Atv));
+        assert_eq!(c.artists, vec!["Artist", "Guest"]);
+        assert_eq!(c.album.as_deref(), Some("The Album"));
+        assert_eq!(c.to_meta().youtube_id, "atv00000000");
+    }
+
+    #[test]
+    fn song_results_carry_music_meta_with_album() {
+        let v = json!({ "contents": [ music_item("juRFjpB5Ppg", "Tití Me Preguntó", vec![
+            artist_run("Bad Bunny"), json!({"text": " \u{2022} "}), album_run("Un Verano Sin Ti"),
+            json!({"text": " \u{2022} "}), json!({"text": "4:04"}) ]) ] });
+        let r = parse_music_search(&v);
+        let m = r[0].music.as_ref().unwrap();
+        assert_eq!(m.youtube_id, "juRFjpB5Ppg");
+        assert_eq!(m.album.as_deref(), Some("Un Verano Sin Ti"));
+        assert!(r[0].is_music_song());
+        assert_eq!(r[0].duration_ms, Some(244_000));
     }
 
     #[test]

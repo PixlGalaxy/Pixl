@@ -229,6 +229,7 @@ pub(crate) fn parse_track(v: &Value, album_cover: Option<&str>) -> Option<TrackI
         youtube_id: None,
         spotify_id: Some(id.to_owned()),
         isrc: v["external_ids"]["isrc"].as_str().map(|s| s.to_ascii_uppercase()),
+        music: None,
     })
 }
 

@@ -772,6 +772,7 @@ async fn resolve_one(
         youtube_id: None,
         spotify_id: None,
         isrc: None,
+        music: None,
     };
     let results = sources.search(&matcher::query_for(&src), 8).await.ok()?;
     let cands: Vec<matcher::Candidate> = results.into_iter().map(matcher::Candidate::new).collect();

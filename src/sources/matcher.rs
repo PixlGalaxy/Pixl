@@ -124,6 +124,25 @@ fn dice(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
     2.0 * common / (a.len() + b.len()) as f64
 }
 
+/// 0..1 similarity of the cleaned titles. Artist names in the candidate title ("Artist - Song")
+/// are ignored unless the source title contains them too.
+pub fn title_similarity(src: &TrackInfo, cand: &TrackInfo) -> f64 {
+    let src_clean: HashSet<String> = clean_title(&src.title).split(' ').filter(|t| !t.is_empty()).map(str::to_owned).collect();
+    let artist_tokens: HashSet<String> = src.artists.iter().flat_map(|a| tokens(a)).collect();
+    let cand_clean: HashSet<String> = clean_title(&cand.title)
+        .split(' ')
+        .filter(|t| !t.is_empty())
+        .filter(|t| src_clean.contains(*t) || !artist_tokens.contains(*t))
+        .map(str::to_owned)
+        .collect();
+    dice(&src_clean, &cand_clean)
+}
+
+/// Both titles mark the same kind of recording (no live/cover/remix/... on only one side).
+pub fn same_variants(a: &str, b: &str) -> bool {
+    variants_in(&normalize(a)) == variants_in(&normalize(b))
+}
+
 /// Score one candidate. Higher is better; see `ACCEPT`.
 pub fn score(src: &TrackInfo, cand: &Candidate) -> i32 {
     let c = &cand.track;
@@ -161,17 +180,7 @@ pub fn score(src: &TrackInfo, cand: &Candidate) -> i32 {
         s += 10;
     }
 
-    // Title similarity on cleaned tokens. Artist names in the candidate title ("Artist - Song")
-    // are ignored unless the source title contains them too.
-    let src_clean: HashSet<String> = clean_title(&src.title).split(' ').filter(|t| !t.is_empty()).map(str::to_owned).collect();
-    let artist_tokens: HashSet<String> = src_artists.iter().flat_map(|a| a.split(' ').map(str::to_owned)).collect();
-    let cand_clean: HashSet<String> = clean_title(&c.title)
-        .split(' ')
-        .filter(|t| !t.is_empty())
-        .filter(|t| src_clean.contains(*t) || !artist_tokens.contains(*t))
-        .map(str::to_owned)
-        .collect();
-    let sim = dice(&src_clean, &cand_clean);
+    let sim = title_similarity(src, c);
     s += (sim * 40.0).round() as i32;
     if sim < 0.3 {
         s -= 20;
@@ -299,6 +308,7 @@ mod tests {
             youtube_id: None,
             spotify_id: Some("sp".into()),
             isrc: None,
+            music: None,
         }
     }
 

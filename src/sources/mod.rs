@@ -6,7 +6,9 @@
 
 #![allow(dead_code)]
 
+pub mod counterpart;
 pub mod detect;
+pub mod fallback;
 pub mod lyrics;
 pub mod matcher;
 pub mod spotify;
@@ -14,10 +16,17 @@ pub mod text;
 pub mod youtube;
 pub mod ytdlp;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 use crate::{
     config::Config,
@@ -33,6 +42,12 @@ pub const USER_AGENT: &str = "Lynx (https://github.com/pixlgalaxy)";
 /// Default cap for playlists, albums and yt-dlp sets.
 pub const DEFAULT_LIST_LIMIT: usize = 1000;
 const SEARCH_CACHE_NS: &str = "search";
+/// Parallel YouTube Music counterpart lookups (InnerTube is cheap, but be polite).
+const MUSIC_LOOKUPS: usize = 4;
+/// A slow counterpart lookup never holds up playback longer than this.
+const MUSIC_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// In-memory original -> substitute ids kept for stream invalidation.
+const SUBSTITUTES_MAX: usize = 2048;
 
 /// Where a track was originally requested from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +73,57 @@ pub struct TrackInfo {
     pub youtube_id: Option<String>,
     pub spotify_id: Option<String>,
     pub isrc: Option<String>,
+    /// Clean YouTube Music metadata for this recording (the "Artist - Topic" audio track that
+    /// matches a pasted music video, or the song itself). Playback still uses `youtube_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub music: Option<MusicMeta>,
+}
+
+/// YouTube Music song entry (`MUSIC_VIDEO_TYPE_ATV`) a track corresponds to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MusicMeta {
+    /// Video id of the audio track (equal to `TrackInfo::youtube_id` when the track is the song).
+    pub youtube_id: String,
+    pub title: String,
+    pub artists: Vec<String>,
+    #[serde(default)]
+    pub album: Option<String>,
+    #[serde(default)]
+    pub isrc: Option<String>,
+}
+
+impl TrackInfo {
+    /// Title to show and index: the clean song title when known.
+    pub fn display_title(&self) -> &str {
+        self.music
+            .as_ref()
+            .map(|m| m.title.as_str())
+            .filter(|t| !t.is_empty())
+            .unwrap_or(&self.title)
+    }
+
+    /// Artists to show and index: the song's artist list when known.
+    pub fn display_artists(&self) -> &[String] {
+        match &self.music {
+            Some(m) if !m.artists.is_empty() => &m.artists,
+            _ => &self.artists,
+        }
+    }
+
+    /// ISRC of the track or of its YouTube Music song.
+    pub fn any_isrc(&self) -> Option<&str> {
+        self.isrc
+            .as_deref()
+            .or_else(|| self.music.as_ref().and_then(|m| m.isrc.as_deref()))
+            .filter(|s| !s.is_empty())
+    }
+
+    /// The track is a YouTube Music song itself (not a video with a song counterpart).
+    pub fn is_music_song(&self) -> bool {
+        self.music
+            .as_ref()
+            .is_some_and(|m| self.youtube_id.as_deref() == Some(m.youtube_id.as_str()))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -117,6 +183,12 @@ pub struct Playable {
     pub page_url: String,
     /// Per-track temp dir (`streams/{guild}/{channel}/{track}`), when the owner has a track.
     pub work_dir: Option<PathBuf>,
+    /// The video that actually plays. Differs from `track.youtube_id` when the original was
+    /// unavailable and an alternative upload of the same recording is played instead
+    /// (`track` keeps the original id for history and the catalog). `None` for non-YouTube URLs.
+    pub played_youtube_id: Option<String>,
+    /// Why an alternative plays, for logging.
+    pub fallback_reason: Option<String>,
 }
 
 #[derive(Clone)]
@@ -133,6 +205,9 @@ struct Inner {
     ytdlp: ytdlp::Ytdlp,
     spotify: Option<spotify::Spotify>,
     lrclib: lyrics::Lrclib,
+    music_lookups: Semaphore,
+    /// Original video id -> substitute that played (see `invalidate_stream`).
+    substitutes: Mutex<HashMap<String, String>>,
 }
 
 impl Sources {
@@ -163,6 +238,8 @@ impl Sources {
                 .with_limit_rate(config.ytdlp_limit_rate.clone()),
                 spotify,
                 lrclib: lyrics::Lrclib::new(http.clone()),
+                music_lookups: Semaphore::new(MUSIC_LOOKUPS),
+                substitutes: Mutex::new(HashMap::new()),
                 http,
                 dirs,
             }),
@@ -202,7 +279,7 @@ impl Sources {
                 found.map(single).ok_or_else(|| SourceError::NotFound(format!("No results for \"{q}\"")))
             }
             Input::YoutubeVideo { id, music } => match self.inner.yt.video(&id, music).await {
-                Ok(t) => Ok(single(t)),
+                Ok(t) => Ok(single(self.with_music_meta(t).await)),
                 // InnerTube hiccup: let yt-dlp read the metadata instead.
                 Err(SourceError::Http(_)) => {
                     let url = format!("https://www.youtube.com/watch?v={id}");
@@ -266,22 +343,131 @@ impl Sources {
         matcher::find(&self.inner.yt, &self.inner.store, self.inner.ttl, track).await
     }
 
-    /// Everything needed to start playing `track` now: lazy Spotify match + stream URL.
-    pub async fn prepare(&self, track: &TrackInfo, owner: &ProcOwner) -> SourceResult<Playable> {
-        let track = self.ensure_youtube(track).await?;
-        let (page_url, key) = match &track.youtube_id {
-            Some(id) => (format!("https://www.youtube.com/watch?v={id}"), id.clone()),
-            None => (track.url.clone(), track.url.clone()),
-        };
-        let stream = self.inner.ytdlp.resolve_stream(&page_url, &key, owner).await?;
-        let work_dir = owner.track_uid.map(|t| self.inner.dirs.track_path(owner.guild_id, owner.voice_channel_id, t));
-        Ok(Playable { ytdlp_fallback: stream.needs_ytdlp, track, stream, page_url, work_dir })
+    /// Attach the YouTube Music song metadata of a YouTube track (cached, negative results too).
+    /// Never fails: on any error the track comes back unchanged.
+    pub async fn with_music_meta(&self, mut track: TrackInfo) -> TrackInfo {
+        let youtube = matches!(track.origin, TrackOrigin::Youtube | TrackOrigin::YoutubeMusic);
+        if track.music.is_none() && youtube && track.youtube_id.is_some() {
+            track.music = self.music_meta(&track).await;
+        }
+        track
     }
 
-    /// Forget a cached stream URL (e.g. after the CDN answered 403).
+    async fn music_meta(&self, track: &TrackInfo) -> Option<MusicMeta> {
+        let inner = &self.inner;
+        let lookup = async {
+            let _permit = inner.music_lookups.acquire().await.ok()?;
+            match counterpart::lookup(&inner.yt, &inner.store, inner.ttl, track).await {
+                Ok(m) => m,
+                Err(e) => {
+                    debug!(error = %e, id = ?track.youtube_id, "youtube music lookup failed");
+                    None
+                }
+            }
+        };
+        tokio::time::timeout(MUSIC_LOOKUP_TIMEOUT, lookup).await.ok().flatten()
+    }
+
+    /// Everything needed to start playing `track` now: lazy Spotify match, YouTube Music metadata
+    /// (for playlist entries, looked up only when they are about to play), stream URL and, when
+    /// the video is unavailable here, an alternative upload of the same recording.
+    pub async fn prepare(&self, track: &TrackInfo, owner: &ProcOwner) -> SourceResult<Playable> {
+        let track = self.ensure_youtube(track).await?;
+        let track = self.with_music_meta(track).await;
+        let Some(orig) = track.youtube_id.clone() else {
+            let stream = self.inner.ytdlp.resolve_stream(&track.url, &track.url, owner).await?;
+            let page_url = track.url.clone();
+            return Ok(self.playable(track, stream, page_url, None, None, owner));
+        };
+        let store = &self.inner.store;
+        let cached: Option<Option<String>> = store.cache_get(fallback::CACHE_NS, &orig).await.ok().flatten();
+        let mut tried = HashSet::from([orig.clone()]);
+        if let Some(Some(alt)) = &cached {
+            match self.youtube_stream(alt, owner).await {
+                Ok(stream) => {
+                    let reason = format!("{orig} is unavailable here; playing the known substitute {alt}");
+                    return Ok(self.substitute(track, &orig, alt, stream, reason, owner));
+                }
+                Err(SourceError::Cancelled) => return Err(SourceError::Cancelled),
+                Err(_) => {
+                    tried.insert(alt.clone());
+                }
+            }
+        }
+        let err = match self.youtube_stream(&orig, owner).await {
+            Ok(stream) => return Ok(self.playable(track, stream, watch_url(&orig), Some(orig), None, owner)),
+            // "No alternative" is cached: fail right away.
+            Err(e) if fallback::fallback_worthy(&e) && cached != Some(None) => e,
+            Err(e) => return Err(e),
+        };
+        let alts = LiveAlternatives { sources: self, track: &track, owner };
+        match fallback::try_alternatives(&alts, fallback::steps_for(&track), tried, fallback::MAX_ALTERNATIVES).await {
+            fallback::Outcome::Played(f) => {
+                let _ = store.cache_put(fallback::CACHE_NS, &orig, &Some(f.id.clone()), self.inner.ttl).await;
+                let reason = format!("{orig} is unavailable ({err}); playing {} ({})", f.id, f.step.label());
+                Ok(self.substitute(track, &orig, &f.id, f.stream, reason, owner))
+            }
+            fallback::Outcome::NoAlternative => {
+                let _ = store.cache_put(fallback::CACHE_NS, &orig, &None::<String>, self.inner.ttl).await;
+                Err(err)
+            }
+            fallback::Outcome::Inconclusive => Err(err),
+        }
+    }
+
+    async fn youtube_stream(&self, id: &str, owner: &ProcOwner) -> SourceResult<StreamInfo> {
+        self.inner.ytdlp.resolve_stream(&watch_url(id), id, owner).await
+    }
+
+    fn substitute(
+        &self,
+        track: TrackInfo,
+        orig: &str,
+        alt: &str,
+        stream: StreamInfo,
+        reason: String,
+        owner: &ProcOwner,
+    ) -> Playable {
+        debug!(%reason, "playback fallback");
+        {
+            let mut subs = self.inner.substitutes.lock().unwrap();
+            if subs.len() >= SUBSTITUTES_MAX {
+                subs.clear();
+            }
+            subs.insert(orig.to_owned(), alt.to_owned());
+        }
+        self.playable(track, stream, watch_url(alt), Some(alt.to_owned()), Some(reason), owner)
+    }
+
+    fn playable(
+        &self,
+        track: TrackInfo,
+        stream: StreamInfo,
+        page_url: String,
+        played_youtube_id: Option<String>,
+        fallback_reason: Option<String>,
+        owner: &ProcOwner,
+    ) -> Playable {
+        let work_dir = owner.track_uid.map(|t| self.inner.dirs.track_path(owner.guild_id, owner.voice_channel_id, t));
+        Playable {
+            ytdlp_fallback: stream.needs_ytdlp,
+            track,
+            stream,
+            page_url,
+            work_dir,
+            played_youtube_id,
+            fallback_reason,
+        }
+    }
+
+    /// Forget a cached stream URL (e.g. after the CDN answered 403), including the substitute's.
     pub fn invalidate_stream(&self, track: &TrackInfo) {
         let key = track.youtube_id.as_deref().unwrap_or(&track.url);
         self.inner.ytdlp.invalidate(key);
+        let alt = self.inner.substitutes.lock().unwrap().get(key).cloned();
+        if let Some(alt) = alt {
+            self.inner.ytdlp.invalidate(&alt);
+        }
     }
 
     /// Search for the panel / autocomplete: YouTube Music songs first, then regular videos.
@@ -322,9 +508,104 @@ impl Sources {
     }
 }
 
+fn watch_url(id: &str) -> String {
+    format!("https://www.youtube.com/watch?v={id}")
+}
+
+/// The real alternative sources for one track.
+struct LiveAlternatives<'a> {
+    sources: &'a Sources,
+    track: &'a TrackInfo,
+    owner: &'a ProcOwner,
+}
+
+impl fallback::Alternatives for LiveAlternatives<'_> {
+    async fn candidates(&self, step: fallback::Step) -> SourceResult<Vec<String>> {
+        let orig = self.track.youtube_id.as_deref();
+        match step {
+            fallback::Step::MusicSong => {
+                let meta = match &self.track.music {
+                    Some(m) => Some(m.clone()),
+                    // The lookup in `prepare` may have timed out: one more (cached) try.
+                    None => self.sources.music_meta(self.track).await,
+                };
+                Ok(meta
+                    .map(|m| m.youtube_id)
+                    .filter(|id| Some(id.as_str()) != orig)
+                    .into_iter()
+                    .collect())
+            }
+            fallback::Step::Video => {
+                let readings = counterpart::clean_readings(self.track);
+                let Some(first) = readings.first() else {
+                    return Ok(Vec::new());
+                };
+                let videos = self
+                    .sources
+                    .inner
+                    .yt
+                    .search_videos(&counterpart::video_query(first), 10)
+                    .await?;
+                Ok(counterpart::confident_videos(&readings, &videos))
+            }
+        }
+    }
+
+    async fn try_stream(&self, id: &str) -> SourceResult<StreamInfo> {
+        self.sources.youtube_stream(id, self.owner).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_track_json_without_music_still_loads() {
+        let old = r#"{"title":"Despacito","artists":["Luis Fonsi"],"duration_ms":282000,"thumbnail":null,
+            "url":"https://www.youtube.com/watch?v=kJQP7kiw5Fk","origin":"youtube","youtube_id":"kJQP7kiw5Fk",
+            "spotify_id":null,"isrc":null}"#;
+        let t: TrackInfo = serde_json::from_str(old).unwrap();
+        assert!(t.music.is_none());
+        assert_eq!(t.display_title(), "Despacito");
+        // Without music meta the JSON stays the same shape.
+        assert!(!serde_json::to_string(&t).unwrap().contains("music"));
+    }
+
+    #[test]
+    fn music_meta_round_trip_and_display() {
+        let mut t = crate::store::test_util::track("kJQP7kiw5Fk");
+        t.title = "Luis Fonsi - Despacito ft. Daddy Yankee".into();
+        t.artists = vec!["LuisFonsiVEVO".into()];
+        t.music = Some(MusicMeta {
+            youtube_id: "atv00000000".into(),
+            title: "Despacito".into(),
+            artists: vec!["Luis Fonsi".into(), "Daddy Yankee".into()],
+            album: Some("VIDA".into()),
+            isrc: Some("USUM71703861".into()),
+        });
+        let back: TrackInfo = serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+        assert_eq!(back.music, t.music);
+        assert_eq!(back.display_title(), "Despacito");
+        assert_eq!(back.display_artists(), ["Luis Fonsi", "Daddy Yankee"]);
+        assert_eq!(back.any_isrc(), Some("USUM71703861"));
+        assert!(!back.is_music_song());
+        // Playback identity is untouched.
+        assert_eq!(back.youtube_id.as_deref(), Some("kJQP7kiw5Fk"));
+
+        // The video and its song share one catalog key.
+        let mut song = crate::store::test_util::track("atv00000000");
+        song.music = Some(MusicMeta {
+            youtube_id: "atv00000000".into(),
+            ..t.music.clone().unwrap()
+        });
+        assert!(song.is_music_song());
+        let key = crate::store::track_key;
+        assert_eq!(key(&t), key(&song));
+        // Partial meta (old cache entries) deserializes.
+        let m: MusicMeta = serde_json::from_str(r#"{"youtube_id":"a","title":"b","artists":[]}"#).unwrap();
+        assert!(m.album.is_none() && m.isrc.is_none());
+    }
 
     fn config(data_dir: PathBuf) -> Config {
         Config {
@@ -358,6 +639,84 @@ mod tests {
             privacy_url: None,
             support_url: None,
         }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sources_music_meta_and_playback_fallback() {
+        let dir = std::env::temp_dir().join(format!("lynx-fallback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = config(dir.clone());
+        let store = Store::open(&cfg.database_path()).await.unwrap();
+        let procs = ProcessRegistry::new();
+        let s = Sources::new(&cfg, store.clone(), procs.clone()).unwrap();
+        let owner = ProcOwner::new(10, 20, Some(uuid::Uuid::new_v4()));
+
+        // A pasted official video resolves with the song metadata, playback id unchanged.
+        let r = s
+            .resolve("https://www.youtube.com/watch?v=JGwWNGJdvx8", 1, &owner)
+            .await
+            .unwrap();
+        let t = &r.tracks[0];
+        println!("resolve: {} / {:?} -> {:?}", t.title, t.artists, t.music);
+        assert_eq!(t.youtube_id.as_deref(), Some("JGwWNGJdvx8"));
+        assert_eq!(t.display_title(), "Shape of You");
+        assert_eq!(t.display_artists(), ["Ed Sheeran"]);
+
+        // A Spotify match whose video is gone ("Video unavailable") plays another upload.
+        let gone = "00000000000";
+        let mut sp = crate::store::test_util::track(gone);
+        sp.title = "Never Gonna Give You Up".into();
+        sp.artists = vec!["Rick Astley".into()];
+        sp.duration_ms = Some(213_000);
+        sp.origin = TrackOrigin::Spotify;
+        let p = s.prepare(&sp, &owner).await.unwrap();
+        println!("fallback: {:?} ({:?})", p.played_youtube_id, p.fallback_reason);
+        assert_eq!(p.track.youtube_id.as_deref(), Some(gone));
+        let alt = p.played_youtube_id.clone().unwrap();
+        assert_ne!(alt, gone);
+        assert!(p.page_url.ends_with(&alt) && p.fallback_reason.is_some());
+        let cached = store
+            .cache_get::<Option<String>>(fallback::CACHE_NS, gone)
+            .await
+            .unwrap();
+        assert_eq!(cached, Some(Some(alt.clone())));
+        // Second time: straight to the cached substitute.
+        let p = s.prepare(&sp, &owner).await.unwrap();
+        assert_eq!(p.played_youtube_id.as_deref(), Some(alt.as_str()));
+
+        // A gone pasted video with its song known falls back to the song first.
+        let mut v = crate::store::test_util::track("00000000001");
+        v.title = "Rick Astley - Never Gonna Give You Up (Official Video)".into();
+        v.artists = vec!["Rick Astley".into()];
+        v.duration_ms = Some(213_000);
+        v.music = Some(MusicMeta {
+            youtube_id: "lYBUbBu4W08".into(),
+            title: "Never Gonna Give You Up".into(),
+            artists: vec!["Rick Astley".into()],
+            album: None,
+            isrc: None,
+        });
+        let p = s.prepare(&v, &owner).await.unwrap();
+        println!("video fallback: {:?} ({:?})", p.played_youtube_id, p.fallback_reason);
+        assert_eq!(p.played_youtube_id.as_deref(), Some("lYBUbBu4W08"));
+
+        // Nothing confident for gibberish: the original error, and "no alternative" is cached.
+        let mut x = crate::store::test_util::track("00000000002");
+        x.title = "zqxv wlpk unmatched gibberish title".into();
+        x.artists = vec!["Nobody Qzx".into()];
+        let err = s.prepare(&x, &owner).await.unwrap_err();
+        println!("no alternative: {err}");
+        assert!(fallback::fallback_worthy(&err));
+        let cached = store
+            .cache_get::<Option<String>>(fallback::CACHE_NS, "00000000002")
+            .await
+            .unwrap();
+        assert_eq!(cached, Some(None));
+
+        s.stream_dirs().remove_channel(10, 20).await;
+        store.close().await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -396,6 +755,7 @@ mod tests {
             youtube_id: None,
             spotify_id: Some("4PTG3Z6ehGkBFwjybzWkR8".into()),
             isrc: Some("GBARL9300135".into()),
+            music: None,
         };
         let p = s.prepare(&sp, &owner).await.unwrap();
         println!("spotify prepare: matched {:?}, format {:?}", p.track.youtube_id, p.stream.format_id);
