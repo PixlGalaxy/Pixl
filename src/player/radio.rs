@@ -13,7 +13,8 @@
 //!   the next track starts, so the cancel is not undone right away.
 //! - **Owner leaves**: the radio keeps going with the remaining listeners (their taste is blended
 //!   on the next refill) until it is stopped or the session ends.
-//! - **Dislike**: when the radio owner dislikes the track that is playing, it is skipped.
+//! - **Dislike**: stored as feedback only (future picks avoid it); it never skips, so it cannot
+//!   bypass DJ mode or vote skip.
 //!
 //! Permissions (api.md clarification 4): `canAdd` starts a radio; the owner or anyone with
 //! `canControl` stops it or cancels a job (and may replace someone else's radio).
@@ -38,7 +39,7 @@ use crate::{
         respond::actor,
     },
     perms::{can, Action, Actor, Decision, Deny},
-    store::{Feedback, GuildSettings},
+    store::GuildSettings,
 };
 
 /// Refill when fewer upcoming tracks than this are left.
@@ -275,11 +276,6 @@ impl Radio {
         }
         let room = max_queue.saturating_sub(upcoming);
         (room > 0).then(|| REFILL_BATCH.min(room))
-    }
-
-    /// The radio owner disliked the track that is playing now: skip it.
-    pub fn owner_dislike_skips(&self, user: u64, dislike: bool, target: Uuid, current: Option<Uuid>) -> bool {
-        self.active && dislike && user == self.owner() && current == Some(target)
     }
 
     /// Stop the radio (the queued songs stay). Returns false when it was not active.
@@ -725,14 +721,6 @@ pub async fn cancel_radio_job(
     }
 }
 
-/// Tell the player about a Like / Dislike (after it was stored): the radio owner disliking the
-/// playing track skips it.
-pub async fn radio_feedback(player: &PlayerHandle, user_id: u64, uid: Uuid, value: Option<Feedback>) {
-    if value == Some(Feedback::Dislike) {
-        let _ = player.radio_disliked(user_id, uid).await;
-    }
-}
-
 impl PlayerHandle {
     pub(crate) async fn start_radio(&self, spec: RadioSpec) -> Result<Result<RadioTicket, StartRefused>, PlayerError> {
         self.ask(|reply| Command::StartRadio { spec, reply }).await
@@ -746,10 +734,6 @@ impl PlayerHandle {
     /// Returns false when no job (or not that one) was running.
     pub(crate) async fn cancel_radio_job(&self, job_id: Option<Uuid>) -> Result<bool, PlayerError> {
         self.ask(|reply| Command::CancelRadioJob { job_id, reply }).await
-    }
-
-    pub(crate) async fn radio_disliked(&self, user: u64, uid: Uuid) -> Result<(), PlayerError> {
-        self.send(Command::RadioDisliked { user, uid }).await
     }
 }
 

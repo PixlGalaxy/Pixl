@@ -175,21 +175,6 @@ fn successful_refill_resets_failures() {
 }
 
 #[test]
-fn owner_dislike_skip_rule() {
-    let (mut r, _) = radio(JobKind::Start);
-    let playing = Uuid::new_v4();
-    assert!(r.owner_dislike_skips(7, true, playing, Some(playing)));
-    assert!(!r.owner_dislike_skips(8, true, playing, Some(playing)), "not the owner");
-    assert!(!r.owner_dislike_skips(7, false, playing, Some(playing)), "a like");
-    assert!(
-        !r.owner_dislike_skips(7, true, playing, Some(Uuid::new_v4())),
-        "no longer playing"
-    );
-    r.stop();
-    assert!(!r.owner_dislike_skips(7, true, playing, Some(playing)), "radio off");
-}
-
-#[test]
 fn stop_and_cancel_update_progress() {
     let (mut r, mut progress) = radio(JobKind::Start);
     let id = r.job.as_ref().unwrap().id;

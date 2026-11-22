@@ -270,7 +270,6 @@
       "volume": "**Volume set to {volume}%** (was {previous}%)",
       "liked": "**Saved.** You will hear more songs like {track} on your radio.",
       "disliked": "**Got it.** {track} will not play on your radio again.",
-      "disliked_skipped": "**Got it.** {track} will not play on your radio again, so I skipped it.",
       "feedback_cleared": "**Vote removed** for {track}."
     },
     "cmd": {

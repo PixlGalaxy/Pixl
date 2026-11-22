@@ -203,11 +203,6 @@ pub enum Command {
         job_id: Option<Uuid>,
         reply: Reply<bool>,
     },
-    /// Someone disliked a track (already stored).
-    RadioDisliked {
-        user: u64,
-        uid: Uuid,
-    },
     RadioPhase {
         id: Uuid,
         phase: crate::ai::AiPhase,

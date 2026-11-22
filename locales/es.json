@@ -270,7 +270,6 @@
       "volume": "**Volumen al {volume}%** (antes {previous}%)",
       "liked": "**Guardado.** Escucharás más canciones como {track} en tu radio.",
       "disliked": "**Entendido.** {track} no volverá a sonar en tu radio.",
-      "disliked_skipped": "**Entendido.** {track} no volverá a sonar en tu radio, así que la salté.",
       "feedback_cleared": "**Voto quitado** para {track}."
     },
     "cmd": {

@@ -1025,16 +1025,9 @@ async fn np_button(inv: &Inv<'_>, action: NpAction, vc: u64, tag: &str) -> Optio
                 warn!(error = %err, "could not save feedback");
                 return Some(inv.err("generic", &[]));
             }
-            // The radio owner disliking the playing track skips it.
-            let skips = value == Some(Feedback::Dislike)
-                && snap
-                    .ai
-                    .as_ref()
-                    .is_some_and(|ai| ai.active && ai.owner_id == inv.user_id);
-            crate::player::radio::radio_feedback(&player, inv.user_id, e.uid, value).await;
+            // Feedback only: a Dislike never skips (it would bypass DJ mode and vote skip).
             let key = match value {
                 Some(Feedback::Like) => "bot.reply.liked",
-                Some(Feedback::Dislike) if skips => "bot.reply.disliked_skipped",
                 Some(Feedback::Dislike) => "bot.reply.disliked",
                 None => "bot.reply.feedback_cleared",
             };
