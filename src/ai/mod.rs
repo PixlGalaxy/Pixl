@@ -452,6 +452,7 @@ pub(crate) mod test_util {
             ollama_keep_alive: "30m".into(),
             ollama_timeout_secs: 30,
             ytdlp_cookies_file: None,
+            ytdlp_limit_rate: None,
             empty_channel_timeout_secs: 0,
             max_concurrent_extractions: 1,
             stream_cache_max_mb: 10,

@@ -61,6 +61,9 @@ struct Inner {
     http: reqwest::Client,
     sem: Semaphore,
     cookies: Option<PathBuf>,
+    /// `--limit-rate` for the piped fallback (HLS/live). Direct streams are already paced by songbird's
+    /// 64 KiB read-ahead buffer, so they never download faster than they play.
+    limit_rate: Option<String>,
     cache: Mutex<HashMap<String, StreamInfo>>,
     update_lock: tokio::sync::Mutex<()>,
 }
@@ -82,10 +85,19 @@ impl Ytdlp {
                 http,
                 sem: Semaphore::new(max_concurrent.max(1)),
                 cookies,
+                limit_rate: None,
                 cache: Mutex::new(HashMap::new()),
                 update_lock: tokio::sync::Mutex::new(()),
             }),
         }
+    }
+
+    /// Cap the download rate of the piped fallback (e.g. "300K"). Call right after `new`.
+    pub fn with_limit_rate(mut self, rate: Option<String>) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.limit_rate = rate.filter(|r| !r.is_empty());
+        }
+        self
     }
 
     /// `DATA_DIR/bin/yt-dlp` when present, else `yt-dlp` from PATH.
@@ -117,6 +129,9 @@ impl Ytdlp {
     /// `work_dir`. Spawn it with `ProcessRegistry::spawn_stream`.
     pub fn stream_spec(&self, page_url: &str, owner: &ProcOwner, work_dir: &Path, max_duration: Duration) -> ProcSpec {
         let mut args = self.base_args(work_dir);
+        if let Some(rate) = &self.inner.limit_rate {
+            args.extend(["--limit-rate".into(), rate.clone()]);
+        }
         args.extend(["--quiet".into(), "-f".into(), FORMAT.into(), "-o".into(), "-".into(), page_url.into()]);
         ProcSpec::new(self.binary(), owner.clone(), max_duration).args(args).current_dir(work_dir)
     }
