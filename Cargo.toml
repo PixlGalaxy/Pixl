@@ -24,6 +24,10 @@ thiserror = "2"
 dotenvy = "0.15"
 dashmap = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
+unicode-normalization = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.release]
 lto = "thin"

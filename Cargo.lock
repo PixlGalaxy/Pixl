@@ -2003,6 +2003,7 @@ dependencies = [
  "axum",
  "dashmap 6.2.1",
  "dotenvy",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
@@ -2016,6 +2017,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "unicode-normalization",
  "uuid",
 ]
 
