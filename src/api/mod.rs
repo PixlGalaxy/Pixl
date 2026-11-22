@@ -11,6 +11,7 @@ mod jam;
 mod me;
 mod media;
 mod player;
+mod playlists;
 mod queue;
 mod search;
 mod session;
@@ -83,6 +84,8 @@ pub struct Inner {
     pub auth_limit: RateLimiter<String>,
     pub search_limit: RateLimiter<u64>,
     pub add_limit: RateLimiter<u64>,
+    /// Saved-playlist refreshes (they reach Spotify / YouTube): see `playlists`.
+    pub refresh_limit: playlists::RefreshLimiter,
     pub members: TtlCache<(u64, u64), MemberStatus>,
     pub profiles: TtlCache<u64, Profile>,
     /// Track key -> genres (cached tags, short TTL so new tags show up soon).
@@ -121,6 +124,7 @@ impl ApiState {
             auth_limit: RateLimiter::new(10, Duration::from_secs(60), 20_000),
             search_limit: RateLimiter::new(30, Duration::from_secs(60), 20_000),
             add_limit: RateLimiter::new(15, Duration::from_secs(60), 20_000),
+            refresh_limit: playlists::RefreshLimiter::new(20_000),
             members: TtlCache::new(MEMBER_TTL, 50_000),
             profiles: TtlCache::new(PROFILE_TTL, 20_000),
             genres: TtlCache::new(GENRE_TTL, 20_000),
@@ -136,6 +140,7 @@ impl ApiState {
         self.auth_limit.sweep();
         self.search_limit.sweep();
         self.add_limit.sweep();
+        self.refresh_limit.sweep();
         self.members.sweep();
         self.profiles.sweep();
         self.genres.sweep();
@@ -165,6 +170,12 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/queue/remove", post(queue::remove))
         .route("/api/queue/clear", post(queue::clear))
         .route("/api/tracks/feedback", post(queue::feedback))
+        .route("/api/playlists", get(playlists::list))
+        .route("/api/playlists/{id}", delete(playlists::remove))
+        .route("/api/playlists/{id}/pin", post(playlists::pin))
+        .route("/api/playlists/{id}/tracks", get(playlists::tracks))
+        .route("/api/playlists/{id}/refresh", post(playlists::refresh))
+        .route("/api/playlists/{id}/add", post(playlists::add))
         .route("/api/ai/start", post(ai::start))
         .route("/api/ai/stop", post(ai::stop))
         .route("/api/ai/cancel", post(ai::cancel))

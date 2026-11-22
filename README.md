@@ -25,6 +25,10 @@ docker compose up -d --build
 
 All settings are environment variables; see [.env.example](.env.example).
 
+### Saved playlists
+
+Every playlist, album or artist page a user adds (with `/play` or from the panel) is saved to that user's Playlists tab in the panel: only its name, image, platform and URL. `MAX_STORED_PLAYLISTS` (default `20`, `0` turns saving off) caps the list per user; when it is full the least recently used unpinned entry is dropped, and when every entry is pinned new ones are not saved. Nothing is saved for users who turned their listening history off. The songs of a list are cached for 60 minutes per URL and shared by every user and server, and the panel's refresh button is limited per user (once every 5 seconds; spamming it blocks refreshes for 5 minutes), so popular lists do not flood Spotify or YouTube with requests.
+
 ### Ollama on a shared GPU
 
 The AI radio and the genre tagger use Ollama only when a model is usable, so the GPU can be shared with other workloads:

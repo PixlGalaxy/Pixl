@@ -19,6 +19,8 @@ pub struct ApiError {
     pub message: String,
     /// "Every Lynx bot is busy": the invite link of the next bot to add (`error.invite`).
     pub invite: Option<String>,
+    /// Seconds until the action is accepted again (`error.retryAfter`).
+    pub retry_after: Option<u64>,
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
@@ -30,11 +32,17 @@ impl ApiError {
             code,
             message: message.into(),
             invite: None,
+            retry_after: None,
         }
     }
 
     pub fn with_invite(mut self, invite: Option<String>) -> Self {
         self.invite = invite;
+        self
+    }
+
+    pub fn with_retry_after(mut self, secs: u64) -> Self {
+        self.retry_after = Some(secs);
         self
     }
 
@@ -126,6 +134,9 @@ impl IntoResponse for ApiError {
         let mut error = json!({ "code": self.code, "message": self.message });
         if let Some(invite) = self.invite {
             error["invite"] = json!(invite);
+        }
+        if let Some(secs) = self.retry_after {
+            error["retryAfter"] = json!(secs);
         }
         (self.status, Json(json!({ "error": error }))).into_response()
     }

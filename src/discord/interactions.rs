@@ -434,6 +434,7 @@ fn play_ctx(lynx: &Lynx) -> PlayCtx<'_> {
         bots: &lynx.bots,
         store: &lynx.store,
         sources: &lynx.sources,
+        max_playlists: lynx.config.max_stored_playlists,
     }
 }
 

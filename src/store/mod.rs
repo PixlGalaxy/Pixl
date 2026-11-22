@@ -12,6 +12,7 @@ mod maintenance;
 mod meta;
 mod nodes;
 mod panel_sessions;
+mod playlists;
 mod prefs;
 mod sessions;
 mod settings;
@@ -34,6 +35,8 @@ pub use maintenance::*;
 pub use nodes::*;
 #[allow(unused_imports)]
 pub use panel_sessions::*;
+#[allow(unused_imports)]
+pub use playlists::*;
 #[allow(unused_imports)]
 pub use prefs::*;
 #[allow(unused_imports)]
@@ -128,6 +131,16 @@ impl Store {
         .bind(now_secs() + ttl.as_secs() as i64)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    /// Drop one cached value (forced refreshes).
+    pub async fn cache_delete(&self, namespace: &str, key: &str) -> Result<()> {
+        sqlx::query("DELETE FROM cache WHERE namespace = ? AND key = ?")
+            .bind(namespace)
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

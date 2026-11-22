@@ -517,6 +517,7 @@ pub(crate) mod test_util {
             max_concurrent_extractions: 1,
             stream_cache_max_mb: 10,
             cache_ttl_days: 7,
+            max_stored_playlists: 20,
             landing_url: None,
             terms_url: None,
             privacy_url: None,

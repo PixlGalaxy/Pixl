@@ -28,6 +28,8 @@ pub struct Spotify {
 #[derive(Debug, Clone)]
 pub struct Collection {
     pub name: Option<String>,
+    /// Album cover / playlist image.
+    pub image: Option<String>,
     pub tracks: Vec<TrackInfo>,
 }
 
@@ -136,13 +138,14 @@ impl Spotify {
             next = page["next"].as_str().map(str::to_owned);
         }
         tracks.truncate(limit);
-        Ok(Collection { name, tracks })
+        Ok(Collection { name, image: cover, tracks })
     }
 
     pub async fn playlist(&self, id: &str, limit: usize) -> SourceResult<Collection> {
         // Metadata first: a 404 here is the clear "editorial/algorithmic playlist" case.
-        let meta = self.get_ok(&format!("{API}/playlists/{id}?fields=name"), "playlist").await?;
+        let meta = self.get_ok(&format!("{API}/playlists/{id}?fields=name,images"), "playlist").await?;
         let name = meta["name"].as_str().map(str::to_owned);
+        let image = best_image(&meta["images"]);
         let mut tracks = Vec::new();
         let mut next = Some(format!("{API}/playlists/{id}/tracks?limit=100&offset=0"));
         let mut tried_items = false;
@@ -162,7 +165,7 @@ impl Spotify {
             next = page["next"].as_str().map(str::to_owned);
         }
         tracks.truncate(limit);
-        Ok(Collection { name, tracks })
+        Ok(Collection { name, image, tracks })
     }
 }
 

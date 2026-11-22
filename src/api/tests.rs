@@ -1398,3 +1398,153 @@ async fn jam_join_needs_a_free_bot_and_members_can_leave() {
     })
     .await;
 }
+
+/// A saved Spotify playlist with its songs already in the shared cache (no network in tests:
+/// Spotify is not configured, so any real fetch fails right away with "not enabled").
+async fn seed_playlist(h: &Harness, user: u64) -> (String, String) {
+    let url = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M";
+    let store = &h.state.app.store;
+    let id = match store
+        .save_playlist(
+            user,
+            &crate::store::NewPlaylist {
+                url,
+                platform: "spotify",
+                name: "Old name",
+                image_url: None,
+            },
+            20,
+        )
+        .await
+        .unwrap()
+    {
+        crate::store::SaveOutcome::Saved { id, .. } => id.to_string(),
+        crate::store::SaveOutcome::Full => panic!("not saved"),
+    };
+    let mut song = crate::store::test_util::track("dQw4w9WgXcQ");
+    song.title = "Never Gonna Give You Up".into();
+    song.thumbnail = Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".into());
+    let cached = crate::sources::CachedList {
+        name: Some("Top Hits".into()),
+        image: Some("https://i.scdn.co/image/cover".into()),
+        tracks: vec![song, crate::store::test_util::track("aaaaaaaaaaa")],
+        fetched_at: 1_700_000_000,
+    };
+    store
+        .cache_put(
+            crate::sources::lists::CACHE_NS,
+            url,
+            &cached,
+            crate::sources::lists::LIST_TTL,
+        )
+        .await
+        .unwrap();
+    (id, url.to_owned())
+}
+
+#[tokio::test]
+async fn saved_playlists_routes() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (boss, _) = h.login("boss", None).await;
+    let (id, url) = seed_playlist(&h, ANA).await;
+
+    let (s, v) = h.call("GET", "/api/playlists", Some(&ana), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((v["max"].clone(), v["saving"].clone(), v["full"].clone()), (json!(20), json!(true), json!(false)));
+    assert_eq!(v["playlists"][0]["id"], id.as_str());
+    assert_eq!(v["playlists"][0]["platform"], "spotify");
+    assert_eq!(v["playlists"][0]["url"], url.as_str());
+    let (_, v) = h.call("GET", "/api/playlists", Some(&boss), None).await;
+    assert_eq!(v["playlists"], json!([]), "per user");
+
+    // Songs from the shared cache; the saved name and cover follow the platform.
+    let tracks = format!("/api/playlists/{id}/tracks");
+    let (s, v) = h.call("GET", &tracks, Some(&ana), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["refreshed"], false);
+    assert_eq!(v["fetchedAt"], 1_700_000_000);
+    assert_eq!(v["tracks"].as_array().unwrap().len(), 2);
+    assert_eq!(v["tracks"][0]["title"], "Never Gonna Give You Up");
+    assert!(v["tracks"][0]["artworkUrl"].as_str().unwrap().starts_with("/backend/img?url="));
+    assert_eq!(v["playlist"]["name"], "Top Hits");
+    assert!(v["playlist"]["imageUrl"].as_str().unwrap().contains("i.scdn.co"));
+    let (s, v) = h.call("GET", &tracks, Some(&boss), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"), "someone else's list");
+    let (s, v) = h.call("GET", "/api/playlists/abc/tracks", Some(&ana), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::BAD_REQUEST, "invalid"));
+
+    // Refresh: the first one goes upstream (Spotify is off here, so it fails without network) ...
+    let refresh = format!("/api/playlists/{id}/refresh");
+    let (s, v) = h.call("POST", &refresh, Some(&ana), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::BAD_REQUEST, "invalid"), "{v}");
+    // ... the next ones inside 5 s answer from the cache ...
+    for _ in 0..8 {
+        let (s, v) = h.call("POST", &refresh, Some(&ana), None).await;
+        assert_eq!((s, v["refreshed"].clone()), (StatusCode::OK, json!(false)), "{v}");
+        assert_eq!(v["tracks"].as_array().unwrap().len(), 2);
+    }
+    // ... and the 10th in a row blocks refreshes for 5 minutes.
+    let (s, v) = h.call("POST", &refresh, Some(&ana), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::TOO_MANY_REQUESTS, "refresh_blocked"));
+    assert_eq!(v["error"]["retryAfter"], 300);
+    let (s, v) = h.call("POST", &refresh, Some(&ana), None).await;
+    assert_eq!(code(&v), "refresh_blocked", "{s}");
+    assert!(v["error"]["retryAfter"].as_u64().unwrap() <= 300);
+    // Opening the list still works while refreshes are blocked.
+    let (s, _) = h.call("GET", &tracks, Some(&ana), None).await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Adding goes through the /api/queue/add checks.
+    let add = format!("/api/playlists/{id}/add");
+    let (s, v) = h.call("POST", &add, Some(&ana), Some(json!({ "channelId": "101" }))).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "not_in_channel"));
+    let (_, v) = h
+        .call("PUT", "/api/settings", Some(&boss), Some(json!({ "voiceChannels": ["101"] })))
+        .await;
+    assert_eq!(v["voiceChannels"], json!(["101"]));
+    let (s, v) = h.call("POST", &add, Some(&ana), Some(json!({ "channelId": "100" }))).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "channel_not_allowed"));
+    h.call("PUT", "/api/settings", Some(&boss), Some(json!({ "voiceChannels": [] })))
+        .await;
+    // Allowed: the next check is a free bot (none is connected in tests), like /api/queue/add.
+    let (s, v) = h.call("POST", &add, Some(&ana), Some(json!({ "channelId": "100" }))).await;
+    assert_eq!((s, code(&v)), (StatusCode::SERVICE_UNAVAILABLE, "bot_unavailable"));
+    let (s2, v2) = h
+        .call("POST", "/api/queue/add", Some(&ana), Some(json!({ "channelId": "100", "query": url })))
+        .await;
+    assert_eq!((s2, code(&v2)), (s, code(&v)), "same answer as the queue's add box");
+
+    // Pin, remove.
+    let (s, _) = h
+        .call("POST", &format!("/api/playlists/{id}/pin"), Some(&ana), Some(json!({ "pinned": true })))
+        .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, v) = h
+        .call("POST", &format!("/api/playlists/{id}/pin"), Some(&boss), Some(json!({ "pinned": true })))
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"));
+    let (_, v) = h.call("GET", "/api/playlists", Some(&ana), None).await;
+    assert_eq!(v["playlists"][0]["pinned"], true);
+    let (s, _) = h.call("DELETE", &format!("/api/playlists/{id}"), Some(&ana), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, _) = h.call("DELETE", &format!("/api/playlists/{id}"), Some(&ana), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn saved_playlists_follow_history_and_data_deletion() {
+    let h = harness().await;
+    let (ana, _) = h.login("ana", None).await;
+    seed_playlist(&h, ANA).await;
+    h.call("PUT", "/api/me/prefs", Some(&ana), Some(json!({ "historyEnabled": false })))
+        .await;
+    let (_, v) = h.call("GET", "/api/playlists", Some(&ana), None).await;
+    assert_eq!(v["saving"], false, "history off: nothing new is saved");
+    assert_eq!(v["playlists"].as_array().unwrap().len(), 1, "saved ones stay until removed");
+    let (s, _) = h.call("DELETE", "/api/me/data", Some(&ana), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (_, v) = h.call("GET", "/api/playlists", Some(&ana), None).await;
+    assert_eq!(v["playlists"], json!([]), "Delete my data removes saved playlists");
+}

@@ -31,6 +31,7 @@ impl ApiState {
             bots: &self.app.bots,
             store: &self.app.store,
             sources: &self.app.sources,
+            max_playlists: self.app.config.max_stored_playlists,
         }
     }
 }
@@ -70,7 +71,7 @@ pub struct AddBody {
 
 #[derive(Serialize)]
 pub struct Added {
-    added: usize,
+    pub added: usize,
 }
 
 pub async fn add(State(st): State<ApiState>, m: Member, Body(b): Body<AddBody>) -> ApiResult<Json<Added>> {
@@ -79,38 +80,48 @@ pub async fn add(State(st): State<ApiState>, m: Member, Body(b): Body<AddBody>) 
     if query.is_empty() || query.len() > MAX_QUERY {
         return Err(ApiError::invalid("query must be 1-500 characters"));
     }
-    let actor = st.actor(m.guild_id, m.user_id(), Some(channel), false).await?;
-    let settings = st.app.store.guild_settings(m.guild_id).await.unwrap_or_default();
-    if let Decision::Deny(d) = can(&actor, Action::Add, &settings) {
-        return Err(ApiError::deny(d));
-    }
-    st.check_voice_channel(m.guild_id, channel, actor.is_manager).await?;
-    st.jam_edit_check(m.guild_id, channel)?;
-    if !st.add_limit.allow(m.user_id()) {
-        return Err(ApiError::rate_limited());
-    }
-    play::precheck(st.play_ctx(), m.guild_id, channel).map_err(play_error)?;
-    let s = &m.session;
-    let played = play::play(
-        st.play_ctx(),
-        PlayRequest {
-            guild_id: m.guild_id,
-            user_id: s.user_id,
-            voice_channel_id: channel,
-            query,
-            requester: Requester {
-                id: s.user_id,
-                name: Some(s.display_name().to_owned()),
-                avatar_url: s.avatar_url.clone(),
-            },
-            text_channel: None,
-        },
-    )
-    .await
-    .map_err(play_error)?;
+    st.add_checks(&m, channel).await?;
+    let played = play::play(st.play_ctx(), play_request(&m, channel, query))
+        .await
+        .map_err(play_error)?;
     Ok(Json(Added {
         added: played.push.added,
     }))
+}
+
+impl ApiState {
+    /// Everything `/api/queue/add` checks before resolving: the Add permission (DJ mode), the
+    /// voice channel restriction, the jam's host-only rule, the per-user add limit and a free bot.
+    pub async fn add_checks(&self, m: &Member, channel: u64) -> ApiResult<()> {
+        let actor = self.actor(m.guild_id, m.user_id(), Some(channel), false).await?;
+        let settings = self.app.store.guild_settings(m.guild_id).await.unwrap_or_default();
+        if let Decision::Deny(d) = can(&actor, Action::Add, &settings) {
+            return Err(ApiError::deny(d));
+        }
+        self.check_voice_channel(m.guild_id, channel, actor.is_manager).await?;
+        self.jam_edit_check(m.guild_id, channel)?;
+        if !self.add_limit.allow(m.user_id()) {
+            return Err(ApiError::rate_limited());
+        }
+        play::precheck(self.play_ctx(), m.guild_id, channel).map_err(play_error)
+    }
+}
+
+/// The `/play` request of a panel user in `channel`.
+pub fn play_request<'a>(m: &Member, channel: u64, query: &'a str) -> PlayRequest<'a> {
+    let s = &m.session;
+    PlayRequest {
+        guild_id: m.guild_id,
+        user_id: s.user_id,
+        voice_channel_id: channel,
+        query,
+        requester: Requester {
+            id: s.user_id,
+            name: Some(s.display_name().to_owned()),
+            avatar_url: s.avatar_url.clone(),
+        },
+        text_channel: None,
+    }
 }
 
 #[derive(Deserialize)]

@@ -113,7 +113,7 @@ impl Apple {
         limit: usize,
     ) -> SourceResult<Collection> {
         let mut c = self
-            .cached(store, ttl, &format!("album:{country}:{id}"), || async {
+            .cached(store, ttl, &album_key(country, id), || async {
                 let (name, tracks) = parse_lookup(&self.lookup(country, id, true).await?);
                 Ok(Collection { name, tracks })
             })
@@ -135,7 +135,7 @@ impl Apple {
         limit: usize,
     ) -> SourceResult<Collection> {
         let mut c = self
-            .cached(store, ttl, &format!("playlist:{country}:{id}"), || async {
+            .cached(store, ttl, &playlist_key(country, id), || async {
                 let html = self
                     .get(&format!("{PAGE_BASE}/{country}/playlist/{id}"))
                     .await?
@@ -151,6 +151,15 @@ impl Apple {
         c.tracks.truncate(limit);
         Ok(c)
     }
+}
+
+/// Cache keys of the collections (in [`CACHE_NS`]); a forced list refresh drops them.
+pub fn album_key(country: &str, id: &str) -> String {
+    format!("album:{country}:{id}")
+}
+
+pub fn playlist_key(country: &str, id: &str) -> String {
+    format!("playlist:{country}:{id}")
 }
 
 /// "Bad Bunny & Chencho Corleone", "A, B & C" -> names.

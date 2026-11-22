@@ -1,8 +1,13 @@
 //! The `/play` flow shared by the slash command and the panel API (`POST /api/queue/add`):
 //! resolve the input, pick a bot for the user's voice channel (or reuse the one there), start the
 //! player and enqueue. Callers turn [`PlayError`] into their own message or error code.
+//!
+//! Lists (playlists, albums, artist pages) are read through the shared list cache and saved to the
+//! requester's saved playlists (Playlists tab of the panel).
 
 use std::{sync::Arc, time::Duration};
+
+use tracing::{debug, warn};
 
 use super::registry::{assign, Assignment, BotRegistry};
 use crate::{
@@ -12,11 +17,11 @@ use crate::{
         StartRequest,
     },
     procs::ProcOwner,
-    sources::{SourceError, Sources, DEFAULT_LIST_LIMIT},
-    store::Store,
+    sources::{ListRef, Resolved, SourceError, Sources, DEFAULT_LIST_LIMIT},
+    store::{GuildSettings, NewPlaylist, SaveOutcome, Store},
 };
 
-const RESOLVE_TIMEOUT: Duration = Duration::from_secs(120);
+pub const RESOLVE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// What the flow needs from the app.
 #[derive(Clone, Copy)]
@@ -25,6 +30,8 @@ pub struct PlayCtx<'a> {
     pub bots: &'a BotRegistry,
     pub store: &'a Store,
     pub sources: &'a Sources,
+    /// `MAX_STORED_PLAYLISTS`: saved lists per user (0: lists are not saved).
+    pub max_playlists: usize,
 }
 
 #[derive(Debug)]
@@ -151,22 +158,70 @@ pub async fn player_for(
     }
 }
 
+fn queue_limit(settings: &GuildSettings) -> usize {
+    (settings.max_queue_length as usize).min(DEFAULT_LIST_LIMIT)
+}
+
 /// Resolve, start (or reuse) the player and enqueue. Does not run [`precheck`]: callers that want to
-/// fail before a slow resolve call it first.
+/// fail before a slow resolve call it first. A list is saved to the requester's playlists.
 pub async fn play(ctx: PlayCtx<'_>, req: PlayRequest<'_>) -> Result<Played, PlayError> {
     let query = req.query.trim();
     if query.is_empty() {
         return Err(PlayError::NoResults);
     }
     let settings = ctx.store.guild_settings(req.guild_id).await.unwrap_or_default();
-    let limit = (settings.max_queue_length as usize).min(DEFAULT_LIST_LIMIT);
     let owner = ProcOwner::new(req.guild_id, req.voice_channel_id, None);
-    let resolved = match tokio::time::timeout(RESOLVE_TIMEOUT, ctx.sources.resolve(query, limit, &owner)).await {
-        Ok(Ok(r)) if !r.tracks.is_empty() => r,
+    let resolving = ctx.sources.resolve_for_play(query, queue_limit(&settings), &owner);
+    let (resolved, list) = match tokio::time::timeout(RESOLVE_TIMEOUT, resolving).await {
+        Ok(Ok((r, list))) if !r.tracks.is_empty() => (r, list),
         Ok(Ok(_)) | Ok(Err(SourceError::NotFound(_))) => return Err(PlayError::NoResults),
         Ok(Err(e)) => return Err(PlayError::Source(e)),
         Err(_) => return Err(PlayError::Timeout),
     };
+    let saved = list.map(|l| (l, resolved.playlist_name.clone(), resolved.image.clone()));
+    let played = enqueue(ctx, &req, &settings, resolved).await?;
+    if let Some((list, name, image)) = saved {
+        remember_list(ctx, req.user_id, &list, name.as_deref(), image.as_deref()).await;
+    }
+    Ok(played)
+}
+
+/// [`play`] with tracks that are already resolved (a saved playlist, or one of its songs). Same
+/// player assignment and permission checks; nothing is saved.
+pub async fn play_tracks(ctx: PlayCtx<'_>, req: PlayRequest<'_>, mut resolved: Resolved) -> Result<Played, PlayError> {
+    let settings = ctx.store.guild_settings(req.guild_id).await.unwrap_or_default();
+    resolved.tracks.truncate(queue_limit(&settings));
+    if resolved.tracks.is_empty() {
+        return Err(PlayError::NoResults);
+    }
+    enqueue(ctx, &req, &settings, resolved).await
+}
+
+/// Save a list the user just queued (or move it to the top of their saved playlists). Users who
+/// turned their listening history off are not saved to. Failures only log.
+async fn remember_list(ctx: PlayCtx<'_>, user_id: u64, list: &ListRef, name: Option<&str>, image: Option<&str>) {
+    if ctx.max_playlists == 0 || !ctx.store.history_enabled(user_id).await.unwrap_or(false) {
+        return;
+    }
+    let p = NewPlaylist {
+        url: &list.url,
+        platform: list.platform.as_str(),
+        name: name.unwrap_or_default(),
+        image_url: image,
+    };
+    match ctx.store.save_playlist(user_id, &p, ctx.max_playlists).await {
+        Ok(SaveOutcome::Saved { evicted, .. }) => debug!(user = user_id, url = %list.url, evicted, "playlist saved"),
+        Ok(SaveOutcome::Full) => debug!(user = user_id, url = %list.url, "playlist not saved: every slot is pinned"),
+        Err(e) => warn!(error = %e, user = user_id, "could not save playlist"),
+    }
+}
+
+async fn enqueue(
+    ctx: PlayCtx<'_>,
+    req: &PlayRequest<'_>,
+    settings: &GuildSettings,
+    resolved: Resolved,
+) -> Result<Played, PlayError> {
     let player = player_for(
         ctx,
         req.guild_id,
@@ -182,7 +237,7 @@ pub async fn play(ctx: PlayCtx<'_>, req: PlayRequest<'_>) -> Result<Played, Play
         in_channel: ctx.bots.user_voice_channel(req.guild_id, req.user_id) == Some(player.voice_channel_id()),
         ..Actor::default()
     };
-    if let Decision::Deny(d) = can(&actor, Action::Add, &settings) {
+    if let Decision::Deny(d) = can(&actor, Action::Add, settings) {
         return Err(PlayError::Denied(d));
     }
     let entries: Vec<Entry> = resolved

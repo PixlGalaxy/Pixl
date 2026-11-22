@@ -48,6 +48,9 @@ pub struct Config {
     pub max_concurrent_extractions: usize,
     pub stream_cache_max_mb: u64,
     pub cache_ttl_days: u32,
+    /// Saved playlists per user (Playlists tab). When full, the least recently used unpinned one
+    /// is dropped. 0 turns saving off.
+    pub max_stored_playlists: usize,
 
     pub landing_url: Option<String>,
     pub terms_url: Option<String>,
@@ -91,6 +94,7 @@ impl Config {
             max_concurrent_extractions: parse_or("MAX_CONCURRENT_EXTRACTIONS", 8)?,
             stream_cache_max_mb: parse_or("STREAM_CACHE_MAX_MB", 2048)?,
             cache_ttl_days: parse_or("CACHE_TTL_DAYS", 7)?,
+            max_stored_playlists: parse_or("MAX_STORED_PLAYLISTS", 20)?,
 
             landing_url: optional("LANDING_URL"),
             terms_url: optional("TERMS_URL"),
