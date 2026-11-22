@@ -28,7 +28,31 @@ pub fn http_input(client: reqwest::Client, stream: &StreamInfo) -> Input {
             headers.insert(name, value);
         }
     }
-    HttpRequest::new_with_headers(client, stream.url.clone(), headers).into()
+    let mut request = HttpRequest::new_with_headers(client, stream.url.clone(), headers);
+    // YouTube only answers bounded ranges (`bytes=a-b`), so songbird needs the length to seek with
+    // a range request instead of reading (or re-reading) the stream up to the target.
+    request.content_length = content_length(&stream.url);
+    request.into()
+}
+
+/// Byte length of a googlevideo URL (`clen` query parameter), when present.
+fn content_length(url: &str) -> Option<u64> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let clen = parsed.query_pairs().find(|(k, _)| k == "clen")?.1;
+    clen.parse().ok().filter(|n| *n > 0)
+}
+
+#[cfg(test)]
+mod content_length_tests {
+    use super::content_length;
+
+    #[test]
+    fn reads_clen() {
+        let url = "https://rr1---sn-x.googlevideo.com/videoplayback?expire=1&itag=251&clen=3437753&dur=212.061";
+        assert_eq!(content_length(url), Some(3_437_753));
+        assert_eq!(content_length("https://example.com/a.opus"), None);
+        assert_eq!(content_length("not a url"), None);
+    }
 }
 
 /// Pipe the page through yt-dlp (fragmented or live streams). The child is registered in the
