@@ -140,6 +140,14 @@
       "jam_left_own": {
         "title": "{channel} salió de la escucha compartida"
       },
+      "jam_empty": {
+        "title": "Aquí no hay nadie escuchando",
+        "body": "Todos salieron de {channel}. Lynx saldrá de la escucha compartida y se desconectará {time} si no entra nadie."
+      },
+      "jam_back": {
+        "title": "Sigue en la escucha compartida",
+        "body": "Alguien entró a {channel}, así que sigue en la escucha compartida."
+      },
       "jam_removed": {
         "title": "Este canal salió de la escucha compartida",
         "body": "El anfitrión lo quitó. {channel} vuelve a su propia cola."

@@ -653,6 +653,12 @@ pub enum Notice<'a> {
     JamLeftOwn {
         restored: bool,
     },
+    /// Nobody is left in this jam channel: it leaves the jam and disconnects at `deadline_secs`.
+    JamEmpty {
+        deadline_secs: i64,
+    },
+    /// Someone came back to this jam channel before the deadline.
+    JamBack,
 }
 
 fn titled(title: String, body: String) -> Vec<Component> {
@@ -847,6 +853,23 @@ pub fn notice(n: &Notice, voice_channel_id: u64, i18n: &I18n) -> Message {
                     },
                     &[("channel", &ch)],
                 ),
+            ),
+        ),
+        Notice::JamEmpty { deadline_secs } => (
+            Tone::Warn,
+            titled(
+                i18n.t("bot.notice.jam_empty.title", &[]),
+                i18n.t(
+                    "bot.notice.jam_empty.body",
+                    &[("channel", &ch), ("time", &relative_time(*deadline_secs))],
+                ),
+            ),
+        ),
+        Notice::JamBack => (
+            Tone::Ok,
+            titled(
+                i18n.t("bot.notice.jam_back.title", &[]),
+                i18n.t("bot.notice.jam_back.body", &[("channel", &ch)]),
             ),
         ),
     };
@@ -1635,6 +1658,20 @@ mod tests {
         assert!(all_text(&json).contains("<t:1700000180:R>"));
         assert_eq!(json["components"][0]["accent_color"], COLOR_WARNING);
 
+        let json = notice(
+            &Notice::JamEmpty {
+                deadline_secs: 1_700_000_180,
+            },
+            5,
+            &i,
+        )
+        .to_json();
+        let text = all_text(&json);
+        assert!(text.contains("<t:1700000180:R>"), "{text}");
+        assert!(text.contains("leave the jam and disconnect"), "{text}");
+        assert_eq!(json["components"][0]["accent_color"], COLOR_WARNING);
+        check_text(&text);
+
         let json = notice(&Notice::QueueDeleted { minutes: 3 }, 5, &i).to_json();
         assert_eq!(json["components"][0]["accent_color"], COLOR_ERROR);
         assert_eq!(json["components"][0]["components"][0]["accessory"]["custom_id"], "re:5");
@@ -1685,6 +1722,7 @@ mod tests {
             Notice::JamEnded { restored: false },
             Notice::JamRemoved,
             Notice::JamLeftOwn { restored: true },
+            Notice::JamBack,
         ] {
             let json = notice(&n, 5, &i).to_json();
             assert_eq!(json["flags"], FLAG_COMPONENTS_V2, "notices are public");
