@@ -1,0 +1,51 @@
+name: Dependabot auto-merge
+
+# Minor and patch bumps from Dependabot merge on their own; majors stay open
+# for a manual review. "Auto-merge" only queues the merge: GitHub still waits
+# for the required checks (tests and the Docker build), so a broken update is
+# never merged.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v3
+
+      - name: Summary
+        env:
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          DEPS: ${{ steps.meta.outputs.dependency-names }}
+        run: |
+          {
+            echo "### Dependabot auto-merge"
+            echo "- Dependencies: \`$DEPS\`"
+            echo "- Update type: \`$UPDATE_TYPE\`"
+            if [ "$UPDATE_TYPE" = "version-update:semver-major" ]; then
+              echo "- Decision: **manual review** (major version bump)"
+            else
+              echo "- Decision: **auto-merge** once the checks pass"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enable auto-merge for minor and patch
+        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Flag majors for review
+        if: steps.meta.outputs.update-type == 'version-update:semver-major' && github.event.action == 'opened'
+        run: gh pr comment "$PR_URL" --body "Major version bump. Not auto-merged; needs a manual review."
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ github.token }}

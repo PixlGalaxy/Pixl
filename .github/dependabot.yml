@@ -1,0 +1,54 @@
+version: 2
+# Minor/patch bumps are grouped into one PR per ecosystem and merged
+# automatically by dependabot-auto-merge.yml once the checks pass. Every major
+# bump gets its own PR and waits for a manual review.
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    target-branch: "Lynx"
+    open-pull-requests-limit: 15
+    schedule:
+      interval: "daily"
+    groups:
+      rust-deps:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "npm"
+    directory: "/web"
+    target-branch: "Lynx"
+    open-pull-requests-limit: 15
+    schedule:
+      interval: "daily"
+    groups:
+      web-deps:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    target-branch: "Lynx"
+    open-pull-requests-limit: 5
+    schedule:
+      interval: "weekly"
+    groups:
+      docker-deps:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "Lynx"
+    open-pull-requests-limit: 5
+    schedule:
+      interval: "weekly"
+    groups:
+      actions-deps:
+        patterns:
+          - "*"
