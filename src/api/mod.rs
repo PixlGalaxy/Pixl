@@ -20,7 +20,7 @@ pub async fn serve(state: AppState) -> Result<()> {
         .fallback_service(static_files)
         .with_state(state.clone());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], state.config.http_port));
+    let addr: SocketAddr = format!("{}:{}", state.config.http_host, state.config.http_port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(%addr, "http listening");
     axum::serve(listener, app)

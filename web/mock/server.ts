@@ -544,6 +544,11 @@ export function mockApi(): Plugin {
     name: 'lynx-mock-api',
     apply: 'serve',
     configureServer(server: ViteDevServer) {
+      // The real image serves the backend under /backend/ (nginx strips the prefix); do the same here.
+      server.middlewares.use((req, _res, next) => {
+        if (req.url?.startsWith('/backend/')) req.url = req.url.slice('/backend'.length)
+        next()
+      })
       // Pretend Discord loaded us: add the iframe params unless ?outside=1.
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? '/', 'http://localhost')
@@ -587,7 +592,7 @@ export function mockApi(): Plugin {
       const wss = new WebSocketServer({ noServer: true })
       server.httpServer?.on('upgrade', (req, socket, head) => {
         const url = new URL(req.url ?? '/', 'http://localhost')
-        if (url.pathname !== '/ws') return
+        if (url.pathname !== '/backend/ws') return
         wss.handleUpgrade(req, socket, head, (ws) => {
           const flags = decodeFlags(url.searchParams.get('session'))
           sockets.set(ws, flags)

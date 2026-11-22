@@ -23,11 +23,13 @@ export default defineConfig(async ({ mode }) => {
     server: mock
       ? {}
       : {
+          // Same shape as nginx in the image: /backend/* goes to the Rust server without the prefix.
           proxy: {
-            '/api': backend,
-            '/cdn': backend,
-            '/img': backend,
-            '/ws': { target: backend.replace(/^http/, 'ws'), ws: true },
+            '/backend': {
+              target: backend,
+              ws: true,
+              rewrite: (path: string) => path.replace(/^\/backend/, ''),
+            },
           },
         },
   }

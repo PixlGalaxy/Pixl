@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, getSession } from './api'
+import { api, BACKEND, getSession } from './api'
 import type { AiState, GuildSettings, Permissions, PlayerState, ServerMessage } from './types'
 
 const PING_MS = 25_000
@@ -67,7 +67,7 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
       const params = new URLSearchParams({ session, channelId })
       try {
-        ws = new WebSocket(`${proto}://${location.host}/ws?${params}`)
+        ws = new WebSocket(`${proto}://${location.host}${BACKEND}/ws?${params}`)
       } catch {
         schedule()
         return

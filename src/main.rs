@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
         .init();
 
     let config = Arc::new(Config::from_env()?);
+    tokio::fs::create_dir_all(&config.appdata_dir).await?;
     tokio::fs::create_dir_all(&config.data_dir).await?;
     // Temporary stream fragments never survive a restart.
     let _ = tokio::fs::remove_dir_all(config.streams_dir()).await;
