@@ -277,7 +277,26 @@
     "deleteConfirm": "Borrar",
     "deleted": "Tus datos se borraron.",
     "policy": "Leer la política de privacidad",
-    "noHistoryNote": "Solo se guarda el idioma de tu panel."
+    "noHistoryNote": "Solo se guarda el idioma de tu panel.",
+    "tasteMoved": "Tus gustos (géneros principales y canciones más escuchadas) están al final de la pestaña Radio."
+  },
+  "taste": {
+    "genresHint": "Pulsa un género para ver sus canciones de tu historial.",
+    "noGenres": "Todavía no hay géneros. Aparecen cuando tus canciones tienen etiquetas.",
+    "genreSongs": "{{genre}} en tu historial",
+    "genreSongsCount_one": "{{genre}}: {{count}} canción",
+    "genreSongsCount_other": "{{genre}}: {{count}} canciones",
+    "genreEmpty": "No quedan canciones de este género en tu historial.",
+    "showMore_one": "Mostrar {{count}} más",
+    "showMore_other": "Mostrar {{count}} más",
+    "close": "Cerrar género",
+    "removeLabel": "Quitar {{title}} de tu historial",
+    "removeHint": "Las canciones quitadas salen de tu historial y no sonarán en tu radio.",
+    "removeQuestion": "¿Quitar esta canción?",
+    "remove": "Quitar",
+    "removed": "{{title}} se quitó de tu historial.",
+    "historyOff": "Tu historial de escucha está desactivado, así que no hay gustos que mostrar. Actívalo en Cuenta > Privacidad.",
+    "openPrivacy": "Abrir cuenta"
   },
   "help": {
     "title": "Ayuda",
@@ -299,7 +318,7 @@
       },
       "radio": {
         "title": "Radio",
-        "body": "Empieza una mezcla sin fin a partir de tu historial, tus Me gusta y gente con gustos parecidos. Puedes añadir un texto corto, como \"música tranquila para estudiar\". Mientras elige canciones, la cola muestra cada paso y puedes cancelarlo."
+        "body": "Empieza una mezcla sin fin a partir de tu historial, tus Me gusta y gente con gustos parecidos. Puedes añadir un texto corto, como \"música tranquila para estudiar\". Mientras elige canciones, la cola muestra cada paso y puedes cancelarlo. Al final, Tus gustos muestra tus géneros principales: pulsa uno para ver sus canciones y quitar las que no quieras en tu radio."
       },
       "settings": {
         "title": "Ajustes",
@@ -307,7 +326,7 @@
       },
       "privacy": {
         "title": "Cuenta",
-        "body": "El botón redondo con tu foto, arriba a la derecha: tema y color de acento, idioma, tu historial y tus gustos, y borrar tus datos."
+        "body": "El botón redondo con tu foto, arriba a la derecha: tema y color de acento, idioma, tu historial y borrar tus datos. Tus gustos están al final de la pestaña Radio."
       },
       "language": {
         "title": "Idioma",

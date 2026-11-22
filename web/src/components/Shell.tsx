@@ -2,6 +2,7 @@ import { Headphones, Moon, Sun } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { applyTheme, isDark } from '../lib/appearance'
+import { onOpenAccount } from '../lib/events'
 import { cx } from '../lib/format'
 import { useLynx } from '../lib/lynx'
 import { HelpScreen } from '../screens/Help'
@@ -87,6 +88,7 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
 
   const [accountOpen, setAccountOpen] = useState(false)
   const closeAccount = useCallback(() => setAccountOpen(false), [])
+  useEffect(() => onOpenAccount(() => setAccountOpen(true)), [])
   const navRef = useRef<HTMLElement>(null)
   useEffect(() => {
     window.scrollTo({ top: 0 })

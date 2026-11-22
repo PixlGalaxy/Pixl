@@ -198,6 +198,44 @@ const s = {
 for (let i = 1; i <= 12; i++) s.upcoming.push(makeTrack(CATALOG[i]!, USERS[i % USERS.length]!))
 for (let i = 13; i < 18; i++) s.history.unshift(makeTrack(CATALOG[i]!, USERS[(i + 2) % USERS.length]!))
 
+// Listening history behind the taste card: every catalog song, a few played a lot.
+type HistoryRow = { key: string; index: number; plays: number; lastPlayed: number }
+const nowSecs = Math.floor(Date.now() / 1000)
+let tasteHistory: HistoryRow[] = CATALOG.map((_, index) => ({
+  key: `mock${index}`,
+  index,
+  plays: [42, 9, 18, 4, 7, 2, 23, 11, 5, 3, 6, 14, 1, 8, 31, 2, 16, 12][index] ?? 1,
+  lastPlayed: nowSecs - ((index * 7919) % 40) * 3600 * 6 - index * 600,
+}))
+function historyTrack(h: HistoryRow) {
+  const c = CATALOG[h.index]!
+  return {
+    key: h.key,
+    title: c.title,
+    artists: c.artists,
+    artworkUrl: `/mock/art/${h.index}.svg`,
+    url: `https://music.example.com/watch?v=mock${h.index}`,
+    plays: h.plays,
+    lastPlayed: h.lastPlayed,
+  }
+}
+function tasteSummary() {
+  const weights = new Map<string, number>()
+  for (const h of tasteHistory) {
+    for (const g of CATALOG[h.index]!.genres) weights.set(g, (weights.get(g) ?? 0) + h.plays)
+  }
+  const topGenres = [...weights]
+    .map(([genre, weight]) => ({ genre, weight }))
+    .sort((a, b) => b.weight - a.weight || a.genre.localeCompare(b.genre))
+    .slice(0, 10)
+  const topTracks = [...tasteHistory]
+    .sort((a, b) => b.plays - a.plays || b.lastPlayed - a.lastPlayed)
+    .slice(0, 10)
+    .map(historyTrack)
+    .map(({ title, artists, plays, url, artworkUrl }) => ({ title, artists, plays, url, artworkUrl }))
+  return { topGenres, topTracks }
+}
+
 function currentPosition() {
   if (s.status !== 'playing') return s.positionMs
   return s.positionMs + (Date.now() - s.positionAt)
@@ -591,24 +629,36 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       return s.prefs
     case 'GET /me/taste':
       await delay(200)
-      return {
-        topGenres: [
-          { genre: 'synthwave', weight: 0.92 },
-          { genre: 'dream pop', weight: 0.71 },
-          { genre: 'indie rock', weight: 0.55 },
-          { genre: 'electronic', weight: 0.48 },
-          { genre: 'lo-fi', weight: 0.3 },
-          { genre: 'folk', weight: 0.18 },
-        ],
-        topTracks: CATALOG.slice(0, 6).map((c, i) => ({
-          title: c.title,
-          artists: c.artists,
-          plays: 42 - i * 6,
-          url: `https://music.example.com/watch?v=mock${i}`,
-        })),
-      }
+      return tasteSummary()
     case 'DELETE /me/data':
+      tasteHistory = []
       return undefined
+  }
+  // Same rules as src/api/me.rs: AI on, history on, a known genre.
+  const genreMatch = /^\/me\/taste\/genre\/([^/]+)$/.exec(path)
+  const forgetMatch = /^\/me\/history\/([^/]+)$/.exec(path)
+  if ((method === 'GET' && genreMatch) || (method === 'DELETE' && forgetMatch)) {
+    if (!f.ai) throw new HttpError(404, 'not_found')
+    if (!s.prefs.historyEnabled) throw new HttpError(403, 'history_disabled')
+  }
+  if (method === 'GET' && genreMatch) {
+    const genre = decodeURIComponent(genreMatch[1]!).toLowerCase()
+    if (!CATALOG.some((c) => c.genres.includes(genre))) throw new HttpError(400, 'invalid')
+    const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50))
+    const offset = Math.max(0, Number(url.searchParams.get('offset') ?? 0) || 0)
+    const all = tasteHistory
+      .filter((h) => CATALOG[h.index]!.genres.includes(genre))
+      .sort((a, b) => b.plays - a.plays || b.lastPlayed - a.lastPlayed)
+    await delay(150)
+    return { tracks: all.slice(offset, offset + limit).map(historyTrack), total: all.length }
+  }
+  if (method === 'DELETE' && forgetMatch) {
+    const key = decodeURIComponent(forgetMatch[1]!)
+    const before = tasteHistory.length
+    tasteHistory = tasteHistory.filter((h) => h.key !== key)
+    if (tasteHistory.length === before) throw new HttpError(404, 'not_found')
+    await delay(250)
+    return undefined
   }
   const djMatch = /^\/djs\/(\w+)$/.exec(path)
   if (method === 'DELETE' && djMatch) {

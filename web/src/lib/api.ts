@@ -2,6 +2,7 @@ import type {
   AuthResult,
   ChannelRef,
   Feedback,
+  GenreTrack,
   GuildChannels,
   GuildSettings,
   LoopMode,
@@ -171,6 +172,13 @@ export const api = {
   prefs: () => request<UserPrefs>('/me/prefs'),
   updatePrefs: (patch: Partial<UserPrefs>) => request<UserPrefs | void>('/me/prefs', 'PUT', patch),
   taste: () => request<Taste>('/me/taste'),
+  /** Songs of your history tagged with a genre, most played first. */
+  tasteGenre: (genre: string, limit: number, offset: number) =>
+    request<{ tracks: GenreTrack[]; total: number }>(
+      `/me/taste/genre/${encodeURIComponent(genre)}?${q({ limit: String(limit), offset: String(offset) })}`,
+    ),
+  /** Removes a song from your history and dislikes it (the radio never plays it for you). */
+  forgetTrack: (key: string) => request<void>(`/me/history/${encodeURIComponent(key)}`, 'DELETE'),
   /** Voice channel the panel follows (polling fallback of the socket's `channel` message). */
   meChannel: () => request<{ channel: ChannelRef | null }>('/me/channel'),
   deleteData: () => request<void>('/me/data', 'DELETE'),
