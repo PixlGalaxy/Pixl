@@ -86,7 +86,7 @@
       },
       "back_online": {
         "title": "De vuelta",
-        "body": "Lynx se reinició. Sigo donde lo dejaron en {channel}: {track}, canción {position} de {total}, desde el principio."
+        "body": "Lynx se reinició. Sigo donde lo dejaron en {channel}: {track}, canción {position} de {total}."
       },
       "queue_finished": {
         "title": "Terminó la cola",
@@ -270,7 +270,7 @@
       },
       "volume": {
         "description": "Cambia el volumen",
-        "value": "Volumen de 0 a 200 (100 es el original)"
+        "value": "Volumen de 10 a 100 (100 es el original)"
       },
       "lyrics": {
         "description": "Muestra la letra de la canción actual o de una búsqueda",

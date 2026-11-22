@@ -55,8 +55,8 @@ pub fn definitions(i18n: &I18n, entry_point: bool, ai: bool) -> Value {
         { "name": d("bot.cmd.loop.queue"), "value": "queue" },
     ]);
     let mut volume = opt(INTEGER, "value", d("bot.cmd.volume.value"), true);
-    volume["min_value"] = json!(0);
-    volume["max_value"] = json!(200);
+    volume["min_value"] = json!(10);
+    volume["max_value"] = json!(100);
     let mut lyrics_query = opt(STRING, "query", d("bot.cmd.lyrics.query"), false);
     lyrics_query["max_length"] = json!(200);
 
@@ -291,7 +291,7 @@ mod tests {
             (Some(4), Some(2))
         );
         assert_eq!(list[0]["options"][0]["autocomplete"], true);
-        assert_eq!(list[12]["options"][0]["max_value"], 200);
+        assert_eq!(list[12]["options"][0]["max_value"], 100);
 
         // Nodes get the same commands without the entry point.
         let node = definitions(&i18n, false, false);

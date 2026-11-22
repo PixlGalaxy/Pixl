@@ -484,7 +484,7 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       return changed()
     case 'POST /player/volume':
       requireControl(f)
-      s.volume = Math.max(0, Math.min(200, Number(body.volume) || 0))
+      s.volume = Math.max(10, Math.min(100, Number(body.volume) || 0))
       return changed()
     case 'POST /player/loop':
       requireControl(f)

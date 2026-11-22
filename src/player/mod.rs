@@ -339,7 +339,7 @@ impl PlayerHandle {
         self.ask(|reply| Command::Seek { position_ms, reply }).await
     }
 
-    /// 0-200 (100 = original, passthrough). Returns the previous volume.
+    /// 0-100 (100 = original, passthrough). Returns the previous volume.
     pub async fn set_volume(&self, volume: u16) -> Result<u16, PlayerError> {
         self.ask(|reply| Command::Volume { volume, reply }).await
     }

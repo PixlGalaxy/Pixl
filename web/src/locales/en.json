@@ -393,7 +393,7 @@
         "example": "/loop mode:queue"
       },
       "volume": {
-        "description": "Sets the volume from 0 to 200. 100 plays the audio untouched.",
+        "description": "Sets the volume from 10 to 100. 100 plays the audio untouched.",
         "example": "/volume level:80"
       },
       "lyrics": {
@@ -438,7 +438,8 @@
       "privacy": "Privacy policy",
       "support": "Support"
     },
-    "developedBy": "Developed by"
+    "developedBy": "Developed by",
+    "hostedOn": "Hosted on"
   },
   "support": {
     "eyebrow": "A note from Pixl",

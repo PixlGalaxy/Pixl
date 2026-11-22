@@ -388,8 +388,8 @@ export function SettingsScreen() {
           <NumberField
             label={t('settings.defaultVolume')}
             value={settings.defaultVolume}
-            min={0}
-            max={200}
+            min={10}
+            max={100}
             suffix="%"
             onSave={(defaultVolume) => save({ defaultVolume })}
           />
