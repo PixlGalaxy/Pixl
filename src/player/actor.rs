@@ -227,7 +227,20 @@ async fn jam_changed(rx: &mut Option<watch::Receiver<Arc<JamView>>>) -> bool {
     }
 }
 
-/// Seek of a restored track, applied once it is playable.
+/// Where a seek to `position_ms` lands on a track of `duration_ms`: past the end is refused, and
+/// the last second is kept so the track does not end at once.
+fn seek_target(position_ms: u64, duration_ms: Option<u64>) -> Result<u64, SeekOutcome> {
+    let duration = duration_ms.filter(|d| *d > 0);
+    if duration.is_some_and(|d| position_ms > d) {
+        return Err(SeekOutcome::OutOfRange);
+    }
+    Ok(duration
+        .map(|d| position_ms.min(d.saturating_sub(1000)))
+        .unwrap_or(position_ms))
+}
+
+/// Seek of a restored track, or a seek asked while the track was loading, applied once it is
+/// playable.
 struct PendingResume {
     uid: Uuid,
     /// Saved position (kept as the checkpoint until the seek is done).
@@ -463,8 +476,8 @@ impl Player {
                 _ = until(jam_drift) => self.drift_check().await,
                 _ = until(tick) => {
                     self.next_tick = Instant::now() + POSITION_TICK;
-                    if let Some(p) = &self.playing {
-                        let _ = self.events.send(PlayerEvent::Position { position_ms: p.position_ms(), position_at: epoch_ms() });
+                    if self.playing.is_some() {
+                        let _ = self.events.send(PlayerEvent::Position { position_ms: self.shown_position_ms(), position_at: epoch_ms() });
                     }
                 }
             }
@@ -534,7 +547,7 @@ impl Player {
             }
             Command::Stop { by, announce } => self.ending = Some(EndReason::Stopped { by, announce }),
             Command::Seek { position_ms, reply } => {
-                let outcome = self.seek(position_ms).await;
+                let outcome = self.user_seek(position_ms).await;
                 let _ = reply.send(outcome);
             }
             Command::Volume { volume, reply } => {
@@ -1190,17 +1203,44 @@ impl Player {
         }
     }
 
+    /// A seek asked by a user. While the current track is still being prepared (nothing is
+    /// playing yet), the target is kept and applied once the track is playable, like a restored
+    /// position.
+    async fn user_seek(&mut self, position_ms: u64) -> SeekOutcome {
+        if self.playing.is_some() {
+            // The newest target wins over one still waiting for the track to become playable.
+            self.resume_at = None;
+            return self.seek(position_ms).await;
+        }
+        let Some(entry) = self.queue.current().filter(|e| self.loading == Some(e.uid)).cloned() else {
+            return SeekOutcome::NothingPlaying;
+        };
+        let target = match seek_target(position_ms, entry.info.duration_ms) {
+            Ok(t) => t,
+            Err(outcome) => return outcome,
+        };
+        self.resume_at = Some(PendingResume {
+            uid: entry.uid,
+            saved_ms: target,
+            target_ms: target,
+        });
+        self.persist(false);
+        self.publish();
+        let _ = self.events.send(PlayerEvent::Position {
+            position_ms: target,
+            position_at: epoch_ms(),
+        });
+        SeekOutcome::Done
+    }
+
     async fn seek(&mut self, position_ms: u64) -> SeekOutcome {
         let Some(p) = &mut self.playing else {
             return SeekOutcome::NothingPlaying;
         };
-        let duration = p.entry.info.duration_ms.filter(|d| *d > 0);
-        if duration.is_some_and(|d| position_ms > d) {
-            return SeekOutcome::OutOfRange;
-        }
-        let target = duration
-            .map(|d| position_ms.min(d.saturating_sub(1000)))
-            .unwrap_or(position_ms);
+        let target = match seek_target(position_ms, p.entry.info.duration_ms) {
+            Ok(t) => t,
+            Err(outcome) => return outcome,
+        };
         let seeked = match tokio::time::timeout(SEEK_TIMEOUT, p.handle.seek_async(Duration::from_millis(target))).await
         {
             Ok(Ok(_)) => true,
@@ -1959,7 +1999,7 @@ impl Player {
             paused_reason,
             empty_channel_deadline: self.empty.deadline().map(deadline_epoch_ms),
             current: current.clone(),
-            position_ms: self.playing.as_ref().map(Playing::position_ms).unwrap_or(0),
+            position_ms: self.shown_position_ms(),
             position_at: epoch_ms(),
             upcoming,
             history: self.queue.history(HISTORY_LEN),
@@ -1982,6 +2022,22 @@ impl Player {
             Err(p) => *p.into_inner() = snap.clone(),
         }
         let _ = self.events.send(PlayerEvent::State(snap));
+    }
+
+    /// Position shown to the panel: the playing position, or the position a loading track will
+    /// start at (a seek asked while it loads, or a restored position) until that seek is applied.
+    fn shown_position_ms(&self) -> u64 {
+        let pending = self.resume_at.as_ref();
+        match &self.playing {
+            Some(p) => match pending {
+                Some(r) if r.uid == p.entry.uid && !p.became_playable => r.target_ms,
+                _ => p.position_ms(),
+            },
+            None => match (pending, self.loading) {
+                (Some(r), Some(uid)) if r.uid == uid => r.target_ms,
+                _ => 0,
+            },
+        }
     }
 
     /// Position saved with the session: the saved position of a restored track until its seek is
@@ -2396,6 +2452,76 @@ mod tests {
 
     fn version(slot: &Arc<RwLock<Arc<PlayerSnapshot>>>) -> u64 {
         slot.read().unwrap().version
+    }
+
+    #[test]
+    fn seek_target_keeps_the_last_second_and_refuses_past_the_end() {
+        assert_eq!(seek_target(60_000, Some(180_000)), Ok(60_000));
+        assert_eq!(seek_target(180_000, Some(180_000)), Ok(179_000));
+        assert_eq!(seek_target(180_001, Some(180_000)), Err(SeekOutcome::OutOfRange));
+        assert_eq!(seek_target(500_000, None), Ok(500_000));
+        assert_eq!(seek_target(500_000, Some(0)), Ok(500_000));
+    }
+
+    #[tokio::test]
+    async fn seek_with_nothing_playing_or_loading_is_refused() {
+        let (tx, _slot) = idle_actor().await;
+        let outcome = ask(&tx, |reply| Command::Seek { position_ms: 1_000, reply }).await;
+        assert_eq!(outcome, SeekOutcome::NothingPlaying);
+        tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn seek_while_the_track_loads_is_kept_for_when_it_plays() {
+        let (manager, bot) = test_manager().await;
+        let req = StartRequest {
+            guild_id: GUILD,
+            voice_channel_id: VOICE,
+            bot_index: 0,
+            text_channel_id: None,
+            started_by: 1,
+            humans: HashSet::from([1]),
+            settings: GuildSettings::default(),
+            restore: Some(restore_of(&["a", "b"])),
+        };
+        let (tx, rx) = mpsc::channel(64);
+        let (events, mut ev) = broadcast::channel(64);
+        let snapshot = Arc::new(RwLock::new(Arc::new(initial_snapshot(&req, 0))));
+        let call = Arc::new(Mutex::new(Call::standalone(GuildId::new(GUILD), UserId::new(99))));
+        // Queued before the actor boots, so it lands while the first track is being prepared
+        // (the prepare result comes back on the same channel, after it).
+        let (r, seek_rx) = oneshot::channel();
+        tx.send(Command::Seek {
+            position_ms: 60_000,
+            reply: r,
+        })
+        .await
+        .unwrap();
+        tokio::spawn(run(Spawn {
+            manager,
+            req,
+            call,
+            bot,
+            generation: 1,
+            tx: tx.clone(),
+            rx,
+            events,
+            snapshot,
+        }));
+        let outcome = tokio::time::timeout(Duration::from_secs(5), seek_rx).await.unwrap().unwrap();
+        assert_eq!(outcome, SeekOutcome::Done);
+        let mut shown = false;
+        let mut position = false;
+        while let Ok(e) = ev.try_recv() {
+            match e {
+                PlayerEvent::State(s) if s.status == Status::Loading && s.position_ms == 60_000 => shown = true,
+                PlayerEvent::Position { position_ms: 60_000, .. } => position = true,
+                _ => {}
+            }
+        }
+        assert!(shown, "the loading snapshot shows the requested position");
+        assert!(position, "the position event carries the requested position");
+        tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
     }
 
     #[tokio::test]
