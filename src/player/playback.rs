@@ -11,7 +11,7 @@ use symphonia::core::io::{MediaSource, ReadOnlySource};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::Command;
+use super::{http_seek::SeekableHttpRequest, Command};
 use crate::{
     procs::{ProcOwner, ProcessRegistry, StreamChild},
     sources::{Playable, Sources, StreamInfo},
@@ -21,6 +21,7 @@ use crate::{
 pub const MAX_STREAM_DURATION: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Direct HTTP read of the stream URL (normal case: songbird passes Opus through untouched).
+/// Seekable in both directions when the URL carries its byte length.
 pub fn http_input(client: reqwest::Client, stream: &StreamInfo) -> Input {
     let mut headers = HeaderMap::new();
     for (k, v) in &stream.http_headers {
@@ -28,11 +29,12 @@ pub fn http_input(client: reqwest::Client, stream: &StreamInfo) -> Input {
             headers.insert(name, value);
         }
     }
-    let mut request = HttpRequest::new_with_headers(client, stream.url.clone(), headers);
-    // YouTube only answers bounded ranges (`bytes=a-b`), so songbird needs the length to seek with
-    // a range request instead of reading (or re-reading) the stream up to the target.
-    request.content_length = content_length(&stream.url);
-    request.into()
+    // With the length known, seeks become bounded range requests (YouTube only answers `bytes=a-b`)
+    // instead of reading the stream up to the target, and seeking backward works.
+    match content_length(&stream.url) {
+        Some(len) => SeekableHttpRequest::new(client, stream.url.clone(), headers, len).into(),
+        None => HttpRequest::new_with_headers(client, stream.url.clone(), headers).into(),
+    }
 }
 
 /// Byte length of a googlevideo URL (`clen` query parameter), when present.

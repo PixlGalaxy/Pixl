@@ -16,7 +16,7 @@ use crate::{
     perms::{can, Action, Decision},
     player::{
         state::{ApiContext, ApiPlayerState},
-        PlayerError, PlayerHandle, PlayerSnapshot, SkipOutcome,
+        PlayerError, PlayerHandle, PlayerSnapshot, SeekOutcome, SkipOutcome,
     },
     store::{track_key, GuildSettings, LoopMode},
 };
@@ -206,15 +206,16 @@ pub struct SeekBody {
 }
 
 pub async fn seek(State(st): State<ApiState>, m: Member, Body(b): Body<SeekBody>) -> ApiResult<StatusCode> {
-    if control(&st, &m, &b.channel_id)
+    match control(&st, &m, &b.channel_id)
         .await?
         .seek(b.position_ms)
         .await
         .map_err(gone)?
     {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::invalid("This track can't be seeked"))
+        SeekOutcome::Done => Ok(StatusCode::NO_CONTENT),
+        SeekOutcome::NothingPlaying => Err(ApiError::not_found("Nothing is playing")),
+        SeekOutcome::OutOfRange => Err(ApiError::invalid("That position is past the end of the track")),
+        SeekOutcome::Failed => Err(ApiError::internal("seek failed", b.position_ms)),
     }
 }
 

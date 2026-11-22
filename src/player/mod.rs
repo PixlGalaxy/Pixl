@@ -6,6 +6,7 @@
 //! the actor, and a broadcast of [`PlayerEvent`]s (state changes and position ticks) for the panel.
 
 pub mod actor;
+pub mod http_seek;
 pub mod lifecycle;
 pub mod messages;
 pub mod playback;
@@ -73,6 +74,16 @@ pub enum SkipOutcome {
     NothingPlaying,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeekOutcome {
+    Done,
+    NothingPlaying,
+    /// The position is past the end of the track.
+    OutOfRange,
+    /// The seek failed, even after restarting the track at the target.
+    Failed,
+}
+
 /// Why a session ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndReason {
@@ -124,7 +135,7 @@ pub enum Command {
     },
     Seek {
         position_ms: u64,
-        reply: Reply<bool>,
+        reply: Reply<SeekOutcome>,
     },
     Volume {
         volume: u16,
@@ -324,7 +335,7 @@ impl PlayerHandle {
         self.send(Command::Stop { by, announce }).await
     }
 
-    pub async fn seek(&self, position_ms: u64) -> Result<bool, PlayerError> {
+    pub async fn seek(&self, position_ms: u64) -> Result<SeekOutcome, PlayerError> {
         self.ask(|reply| Command::Seek { position_ms, reply }).await
     }
 
