@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Shell } from './components/Shell'
+import { PipView } from './components/PipView'
+import { readTab, Shell, type TabId } from './components/Shell'
 import { api, setUnauthorizedHandler } from './lib/api'
 import { connect, isInsideDiscord, LoginError, type Connection, type LoginStep } from './lib/discord'
 import { errorMessage } from './lib/format'
 import i18n, { DEFAULT_LANGUAGE, matchLanguage, setDocumentLanguage } from './lib/i18n'
+import { useCompactLayout } from './lib/layout'
 import { LynxProvider } from './lib/lynx'
 import { ConnectingScreen, NoGuildScreen, OutsideDiscordScreen, SessionExpiredScreen } from './screens/Gate'
 
@@ -24,6 +26,13 @@ async function applyInitialLanguage(conn: Connection) {
   const lang = matchLanguage(saved) ?? matchLanguage(conn.auth.locale) ?? DEFAULT_LANGUAGE
   await i18n.changeLanguage(lang)
   setDocumentLanguage(lang)
+}
+
+/** Full shell when focused; the compact view in picture-in-picture or a grid tile. */
+function Panel() {
+  const compact = useCompactLayout()
+  const [tab, setTab] = useState<TabId>(readTab)
+  return compact ? <PipView /> : <Shell tab={tab} onTab={setTab} />
 }
 
 export default function App() {
@@ -58,7 +67,7 @@ export default function App() {
   if (!phase.conn.auth.guild) return <NoGuildScreen />
   return (
     <LynxProvider conn={phase.conn}>
-      <Shell />
+      <Panel />
     </LynxProvider>
   )
 }

@@ -100,6 +100,13 @@
     "stop": "Stop",
     "stopQuestion": "Stop and clear the queue?"
   },
+  "pip": {
+    "label": "Lynx, compact player",
+    "radio": "Radio: {{phase}}",
+    "emptyCountdown": "Clears in",
+    "emptyPaused": "Channel empty",
+    "nothingHint": "Use /play or open the panel."
+  },
   "queue": {
     "upNext": "Up next",
     "emptyUpcoming": "Nothing queued after this song.",

@@ -1,18 +1,5 @@
-import {
-  CircleHelp,
-  Disc3,
-  Headphones,
-  Languages,
-  ListMusic,
-  MicVocal,
-  Moon,
-  Radio,
-  Settings,
-  ShieldCheck,
-  Sun,
-  type LucideIcon,
-} from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Headphones, Languages, Moon, Sun } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
 import { cx } from '../lib/format'
@@ -29,17 +16,18 @@ import { LynxMark } from './Logo'
 
 export type TabId = 'player' | 'queue' | 'lyrics' | 'radio' | 'settings' | 'privacy' | 'help'
 
-const TABS: Array<{ id: TabId; icon: LucideIcon }> = [
-  { id: 'player', icon: Disc3 },
-  { id: 'queue', icon: ListMusic },
-  { id: 'lyrics', icon: MicVocal },
-  { id: 'radio', icon: Radio },
-  { id: 'settings', icon: Settings },
-  { id: 'privacy', icon: ShieldCheck },
-  { id: 'help', icon: CircleHelp },
+const TABS: Array<{ id: TabId }> = [
+  { id: 'player' },
+  { id: 'queue' },
+  { id: 'lyrics' },
+  { id: 'radio' },
+  { id: 'settings' },
+  { id: 'privacy' },
+  { id: 'help' },
 ]
 
-function readTab(): TabId {
+/** Initial tab: `#hash` deep link, then the last tab of this session. */
+export function readTab(): TabId {
   // `#queue`, `#lyrics`... deep-link to a tab.
   const hash = location.hash.slice(1) as TabId
   if (TABS.some((t) => t.id === hash)) return hash
@@ -105,10 +93,19 @@ function ThemeToggle() {
   )
 }
 
-export function Shell() {
+/** Saves the tab so a reload (or a trip through picture-in-picture) comes back to it. */
+export function saveTab(id: TabId) {
+  try {
+    sessionStorage.setItem('lynx:tab', id)
+  } catch {
+    // storage blocked
+  }
+}
+
+/** Full panel. The tab lives in the parent so it survives the compact (PiP) view replacing the shell. */
+export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }) {
   const { t } = useTranslation()
   const { state, permissions, aiEnabled, guildName, launchChannelName } = useLynx()
-  const [tab, setTabState] = useState<TabId>(readTab)
 
   const tabs = TABS.filter(
     (x) => (x.id !== 'radio' || aiEnabled) && (x.id !== 'settings' || permissions.isManager),
@@ -116,16 +113,20 @@ export function Shell() {
   const active: TabId = tabs.some((x) => x.id === tab) ? tab : 'player'
 
   const setTab = (id: TabId) => {
-    setTabState(id)
-    try {
-      sessionStorage.setItem('lynx:tab', id)
-    } catch {
-      // storage blocked
-    }
+    onTab(id)
+    saveTab(id)
   }
 
+  const navRef = useRef<HTMLElement>(null)
   useEffect(() => {
     window.scrollTo({ top: 0 })
+    // Narrow widths scroll the tab row sideways: keep the active tab in view.
+    const nav = navRef.current
+    const el = nav?.querySelector<HTMLElement>('[aria-current="page"]')
+    if (nav && el && nav.scrollWidth > nav.clientWidth) {
+      const left = el.offsetLeft - (nav.clientWidth - el.offsetWidth) / 2
+      nav.scrollTo({ left: Math.max(0, left), behavior: 'smooth' })
+    }
   }, [active])
 
   const channelName = state?.channelName || launchChannelName
@@ -152,22 +153,23 @@ export function Shell() {
             <ThemeToggle />
           </div>
         </div>
-        <nav className="no-scrollbar mx-auto flex h-11 max-w-6xl items-stretch overflow-x-auto px-1 sm:px-2" aria-label={t('topbar.sections')}>
-          {tabs.map(({ id, icon: Icon }) => (
+        <nav
+          ref={navRef}
+          className="no-scrollbar mx-auto flex h-11 max-w-6xl items-stretch overflow-x-auto px-1 sm:px-2"
+          aria-label={t('topbar.sections')}
+        >
+          {tabs.map(({ id }) => (
             <button
               key={id}
               type="button"
               onClick={() => setTab(id)}
               aria-current={active === id ? 'page' : undefined}
-              title={t(`tabs.${id}`)}
-              aria-label={t(`tabs.${id}`)}
               className={cx(
-                'relative inline-flex min-w-11 flex-1 items-center justify-center gap-2 px-2.5 text-sm font-medium whitespace-nowrap transition-colors sm:flex-none',
+                'relative inline-flex shrink-0 items-center justify-center px-3 text-sm font-medium whitespace-nowrap transition-colors',
                 active === id ? 'text-sky-600 dark:text-sky-400' : 'text-muted hover:text-fg',
               )}
             >
-              <Icon size={16} />
-              <span className="hidden sm:inline">{t(`tabs.${id}`)}</span>
+              {t(`tabs.${id}`)}
               {active === id && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-sky-500" />}
             </button>
           ))}

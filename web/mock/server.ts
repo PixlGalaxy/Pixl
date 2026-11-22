@@ -8,6 +8,7 @@
 //   ?lyrics=plain|none                        ?vote=1  vote skip in progress
 //   ?outside=1       show the "open from Discord" screen
 //   ?lang=es         Discord locale reported at sign-in
+//   ?pip=1 / ?grid=1 start in picture-in-picture / grid layout (mock SDK; keys `p` / `g` toggle)
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, ViteDevServer } from 'vite'
 import { WebSocketServer, type WebSocket } from 'ws'
