@@ -4,11 +4,13 @@ services:
     build: .
     env_file: .env
     ports:
-      - "8080:8080"
+      - "8080:8080"   # nginx: panel at /, backend at /backend/
     volumes:
-      - lynx-data:/data
+      - lynx-appdata:/appdata   # persistent app data (SQLite, yt-dlp updates)
+      - lynx-data:/data         # heavy data (stream fragments, caches)
     restart: unless-stopped
     stop_grace_period: 20s
 
 volumes:
+  lynx-appdata:
   lynx-data:

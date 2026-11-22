@@ -1,3 +1,5 @@
+import { BACKEND } from './api'
+
 /** `m:ss` or `h:mm:ss`. */
 export function fmtTime(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return '--:--'
@@ -29,13 +31,15 @@ export function errorMessage(error: unknown): string {
 
 /**
  * Only mapped origins load inside the Discord iframe. The backend already rewrites URLs, this is a
- * safety net: Discord CDN -> `/cdn/...`, any other absolute URL -> `/img?url=...`.
+ * safety net: Discord CDN -> `/backend/cdn/...`, any other absolute URL -> `/backend/img?url=...`.
  */
 export function mediaUrl(url: string | null | undefined): string | null {
   if (!url) return null
   if (url.startsWith('/')) return url
-  if (url.startsWith('https://cdn.discordapp.com/')) return url.replace('https://cdn.discordapp.com/', '/cdn/')
-  if (/^https?:\/\//.test(url)) return `/img?url=${encodeURIComponent(url)}`
+  if (url.startsWith('https://cdn.discordapp.com/')) {
+    return url.replace('https://cdn.discordapp.com/', `${BACKEND}/cdn/`)
+  }
+  if (/^https?:\/\//.test(url)) return `${BACKEND}/img?url=${encodeURIComponent(url)}`
   return url
 }
 

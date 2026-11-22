@@ -40,7 +40,13 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
 
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
-/** Relative `/api/...` request (goes through Discord's `/` URL mapping). */
+/**
+ * Prefix of everything served by the Rust backend. nginx in the image proxies `/backend/*` to it
+ * (stripping the prefix); the panel itself is served at `/`. Both go through Discord's `/` URL mapping.
+ */
+export const BACKEND = '/backend'
+
+/** Relative `/backend/api/...` request. */
 export async function request<T>(path: string, method: Method = 'GET', body?: unknown): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
@@ -48,7 +54,7 @@ export async function request<T>(path: string, method: Method = 'GET', body?: un
 
   let res: Response
   try {
-    res = await fetch(`/api${path}`, {
+    res = await fetch(`${BACKEND}/api${path}`, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),

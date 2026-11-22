@@ -14,7 +14,12 @@ pub struct Config {
     pub node_tokens: Vec<String>,
 
     pub public_url: String,
+    /// Internal HTTP server (nginx in the image proxies `/backend/` to it).
+    pub http_host: String,
     pub http_port: u16,
+    /// Persistent app data: SQLite database, updated yt-dlp binary.
+    pub appdata_dir: PathBuf,
+    /// Heavy data: stream fragments per voice channel, large caches.
     pub data_dir: PathBuf,
     pub bot_locale: String,
 
@@ -54,7 +59,9 @@ impl Config {
             node_tokens: list("NODE_TOKENS"),
 
             public_url: required("PUBLIC_URL")?.trim_end_matches('/').to_owned(),
-            http_port: parse_or("HTTP_PORT", 8080)?,
+            http_host: optional("HTTP_HOST").unwrap_or_else(|| "127.0.0.1".into()),
+            http_port: parse_or("HTTP_PORT", 4000)?,
+            appdata_dir: optional("APPDATA_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("./appdata")),
             data_dir: optional("DATA_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("./data")),
             bot_locale: optional("BOT_LOCALE").unwrap_or_else(|| "en".into()),
 
@@ -95,11 +102,11 @@ impl Config {
     }
 
     pub fn bin_dir(&self) -> PathBuf {
-        self.data_dir.join("bin")
+        self.appdata_dir.join("bin")
     }
 
     pub fn database_path(&self) -> PathBuf {
-        self.data_dir.join("lynx.db")
+        self.appdata_dir.join("lynx.db")
     }
 }
 
