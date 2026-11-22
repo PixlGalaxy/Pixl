@@ -5,6 +5,7 @@ import { Button, Card, Tag } from '../components/ui'
 import { openExternal } from '../lib/discord'
 import { useLynx } from '../lib/lynx'
 import type { PublicLinks } from '../lib/types'
+import { SupportCard } from '../components/SupportCard'
 
 type Access = 'anyone' | 'control' | 'vote'
 
@@ -114,6 +115,8 @@ export function HelpScreen() {
           </div>
         </Card>
       )}
+
+      <SupportCard />
 
       <footer className="pb-2 text-center text-xs text-muted">
         <span className="font-medium text-fg/80">Lynx</span>
