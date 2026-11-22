@@ -6,6 +6,7 @@
 //! the actor, and a broadcast of [`PlayerEvent`]s (state changes and position ticks) for the panel.
 
 pub mod actor;
+pub mod checkpoint;
 pub mod http_seek;
 pub mod lifecycle;
 pub mod messages;
@@ -408,6 +409,8 @@ pub struct Restore {
     pub index: usize,
     pub loop_mode: LoopMode,
     pub volume: u16,
+    /// Saved position in the current track (time checkpoint); 0 plays it from the start.
+    pub position_ms: u64,
     /// Post "Back online" when playback starts.
     pub after_restart: bool,
 }

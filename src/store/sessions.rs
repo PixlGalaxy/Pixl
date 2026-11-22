@@ -64,6 +64,8 @@ pub struct SessionRecord {
     pub paused: bool,
     pub started_by: u64,
     pub ai_state: Option<serde_json::Value>,
+    /// Position in the current track (time checkpoint). 0 for rows saved before it existed.
+    pub position_ms: u64,
     /// Set by the store on write.
     pub updated_at: i64,
 }
@@ -88,7 +90,7 @@ pub struct SavedSession {
     pub tracks: Vec<SessionTrack>,
 }
 
-type SessionRow = (u64, u64, u64, u64, u32, String, u16, bool, u64, Option<String>, i64);
+type SessionRow = (u64, u64, u64, u64, u32, String, u16, bool, u64, Option<String>, i64, i64);
 
 fn session_from_row(r: SessionRow) -> SessionRecord {
     SessionRecord {
@@ -103,21 +105,23 @@ fn session_from_row(r: SessionRow) -> SessionRecord {
         started_by: r.8,
         ai_state: r.9.and_then(|s| serde_json::from_str(&s).ok()),
         updated_at: r.10,
+        position_ms: r.11.max(0) as u64,
     }
 }
 
 const SESSION_COLUMNS: &str = "guild_id, voice_channel_id, bot_user_id, text_channel_id, current_index, loop_mode, \
-                               volume, paused, started_by, ai_state, updated_at";
+                               volume, paused, started_by, ai_state, updated_at, position_ms";
 
 /// Upsert the session row and, when `tracks` is given, replace its whole track list.
 async fn write_session(conn: &mut SqliteConnection, s: &SessionRecord, tracks: Option<&[SessionTrack]>) -> Result<()> {
     let ai_state = s.ai_state.as_ref().map(serde_json::to_string).transpose()?;
     sqlx::query(&format!(
-        "INSERT INTO sessions ({SESSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+        "INSERT INTO sessions ({SESSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(guild_id, voice_channel_id) DO UPDATE SET bot_user_id = excluded.bot_user_id, \
          text_channel_id = excluded.text_channel_id, current_index = excluded.current_index, \
          loop_mode = excluded.loop_mode, volume = excluded.volume, paused = excluded.paused, \
-         started_by = excluded.started_by, ai_state = excluded.ai_state, updated_at = excluded.updated_at"
+         started_by = excluded.started_by, ai_state = excluded.ai_state, updated_at = excluded.updated_at, \
+         position_ms = excluded.position_ms"
     ))
     .bind(sf(s.guild_id))
     .bind(sf(s.voice_channel_id))
@@ -130,6 +134,7 @@ async fn write_session(conn: &mut SqliteConnection, s: &SessionRecord, tracks: O
     .bind(sf(s.started_by))
     .bind(ai_state)
     .bind(now_secs())
+    .bind(i64::try_from(s.position_ms).unwrap_or(i64::MAX))
     .execute(&mut *conn)
     .await?;
 
@@ -410,6 +415,7 @@ mod tests {
             paused: false,
             started_by: 42,
             ai_state: None,
+            position_ms: 0,
             updated_at: 0,
         }
     }
@@ -504,6 +510,58 @@ mod tests {
         drop(writer2);
         handle2.await.unwrap();
         assert!(store.get_session(SessionKey { guild_id: 4, voice_channel_id: 4 }).await.unwrap().is_some());
+        drop(writer);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn position_roundtrip_and_old_rows() {
+        let store = Store::open_in_memory().await.unwrap();
+        let mut s = record(1, 2, 3);
+        s.position_ms = 123_456;
+        store.save_session_full(&s, &tracks(4)).await.unwrap();
+        let got = store.get_session(s.key()).await.unwrap().unwrap();
+        assert_eq!(got.session.position_ms, 123_456);
+
+        // A row written before the column existed (no position_ms given) loads with 0.
+        sqlx::query(
+            "INSERT INTO sessions (guild_id, voice_channel_id, bot_user_id, text_channel_id, started_by, updated_at) \
+             VALUES (7, 8, 9, 0, 1, 0)",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+        let old = store.get_session(SessionKey { guild_id: 7, voice_channel_id: 8 }).await.unwrap().unwrap();
+        assert_eq!(old.session.position_ms, 0);
+        let all = store.list_sessions().await.unwrap();
+        assert_eq!(all.iter().map(|s| s.session.position_ms).collect::<Vec<_>>(), [123_456, 0]);
+    }
+
+    #[tokio::test]
+    async fn writer_coalesces_position_checkpoints() {
+        const PLAYERS: u64 = 1000;
+        let store = Store::open_in_memory().await.unwrap();
+        let (writer, handle) = SessionWriter::spawn_with_interval(store.clone(), Duration::from_secs(3600));
+        for g in 0..PLAYERS {
+            writer.save(record(g, 1, 0), Some(tracks(3)));
+        }
+        assert_eq!(writer.flush_now().await.unwrap(), PLAYERS as usize);
+
+        // Many checkpoints per player between flushes: one row write per player, tracks untouched.
+        for step in 1..=20u64 {
+            for g in 0..PLAYERS {
+                let mut r = record(g, 1, 0);
+                r.position_ms = step * 5_000 + g;
+                writer.save(r, None);
+            }
+        }
+        assert_eq!(writer.flush_now().await.unwrap(), PLAYERS as usize);
+        let all = store.list_sessions().await.unwrap();
+        assert_eq!(all.len(), PLAYERS as usize);
+        for s in &all {
+            assert_eq!(s.session.position_ms, 100_000 + s.session.guild_id);
+            assert_eq!(s.tracks.len(), 3, "position-only saves keep the track list");
+        }
         drop(writer);
         handle.await.unwrap();
     }

@@ -110,6 +110,7 @@ mod tests {
                 paused: false,
                 started_by: 5,
                 ai_state: None,
+                position_ms: 0,
                 updated_at: 0,
             },
             Some(vec![]),

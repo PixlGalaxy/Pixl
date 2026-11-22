@@ -19,6 +19,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::{
+    checkpoint::{self, ResumePlan, CHECKPOINT_EVERY},
     lifecycle::{deadline_epoch_ms, EmptyAction, EmptyChannel, QUEUE_END_LEAVE_AFTER},
     messages::{Messenger, MessengerDeps, NpData, OwnedNotice},
     playback::{http_input, track_events, ytdlp_input, TrackNotifier, TrackSignal},
@@ -125,6 +126,14 @@ impl Playing {
     }
 }
 
+/// Seek of a restored track, applied once it is playable.
+struct PendingResume {
+    uid: Uuid,
+    /// Saved position (kept as the checkpoint until the seek is done).
+    saved_ms: u64,
+    target_ms: u64,
+}
+
 struct Player {
     manager: PlayerManager,
     deps: Arc<PlayerDeps>,
@@ -154,6 +163,9 @@ struct Player {
     prefetch_at: Option<Instant>,
     idle_leave_at: Option<Instant>,
     next_tick: Instant,
+    /// Next position checkpoint (armed only while a track is running). Every session write moves it.
+    checkpoint_at: Instant,
+    resume_at: Option<PendingResume>,
 
     user_paused: bool,
     empty: EmptyChannel,
@@ -205,6 +217,8 @@ pub async fn run(s: Spawn) {
         prefetch_at: None,
         idle_leave_at: None,
         next_tick: Instant::now() + POSITION_TICK,
+        checkpoint_at: Instant::now() + CHECKPOINT_EVERY,
+        resume_at: None,
         user_paused: false,
         empty: EmptyChannel::default(),
         waiting_start: false,
@@ -251,7 +265,29 @@ impl Player {
 
     async fn boot(&mut self, restore: Option<Restore>) {
         if let Some(r) = restore {
-            self.queue = super::queue::Queue::restore(r.tracks, r.index, r.loop_mode);
+            let mut index = r.index;
+            if let Some(e) = r.tracks.get(index) {
+                match checkpoint::resume_plan(r.position_ms, e.info.duration_ms) {
+                    ResumePlan::Start => {}
+                    ResumePlan::SeekTo(target_ms) => {
+                        self.resume_at = Some(PendingResume {
+                            uid: e.uid,
+                            saved_ms: r.position_ms,
+                            target_ms,
+                        });
+                    }
+                    ResumePlan::Next => {
+                        info!(
+                            guild = self.guild_id,
+                            channel = self.voice_channel_id,
+                            position_ms = r.position_ms,
+                            "restored track was almost over, starting the next one"
+                        );
+                        index = checkpoint::next_index(index, r.tracks.len(), r.loop_mode);
+                    }
+                }
+            }
+            self.queue = super::queue::Queue::restore(r.tracks, index, r.loop_mode);
             self.volume = r.volume.clamp(MIN_VOLUME, MAX_VOLUME);
             self.back_online = r.after_restart;
             self.persist(true);
@@ -277,6 +313,12 @@ impl Player {
             self.maybe_refill();
             let tick = (self.events.receiver_count() > 0 && self.playing.as_ref().is_some_and(|p| p.since.is_some()))
                 .then_some(self.next_tick);
+            // Idle and paused players have no checkpoint timer.
+            let checkpoint = self
+                .playing
+                .as_ref()
+                .is_some_and(|p| p.since.is_some())
+                .then_some(self.checkpoint_at);
             tokio::select! {
                 cmd = rx.recv() => match cmd {
                     Some(cmd) => self.handle(cmd).await,
@@ -294,6 +336,7 @@ impl Player {
                 }
                 _ = until(self.idle_leave_at) => self.ending = Some(EndReason::QueueEnded),
                 _ = until(self.prefetch_at) => self.start_prefetch(),
+                _ = until(checkpoint) => self.persist(false),
                 _ = until(tick) => {
                     self.next_tick = Instant::now() + POSITION_TICK;
                     if let Some(p) = &self.playing {
@@ -750,6 +793,9 @@ impl Player {
     }
 
     async fn begin(&mut self, entry: Entry, playable: Playable) {
+        if self.resume_at.as_ref().is_some_and(|r| r.uid != entry.uid) {
+            self.resume_at = None;
+        }
         let handle = match self.start_input(&entry, &playable).await {
             Ok(h) => h,
             Err(reason) => return self.failed(entry, &reason).await,
@@ -873,7 +919,10 @@ impl Player {
             return;
         }
         match signal {
-            TrackSignal::Playable => self.failures = 0,
+            TrackSignal::Playable => {
+                self.failures = 0;
+                self.apply_resume().await;
+            }
             TrackSignal::End => self.next_track(false).await,
             TrackSignal::Error => {
                 let entry = self.playing.as_ref().map(|p| p.entry.clone());
@@ -988,12 +1037,71 @@ impl Player {
         }
         let pos = p.position_ms();
         self.schedule_prefetch();
+        self.persist(false);
         self.publish();
         let _ = self.events.send(PlayerEvent::Position {
             position_ms: pos,
             position_at: epoch_ms(),
         });
         SeekOutcome::Done
+    }
+
+    /// The restored track is playable: go to its saved position. A failed seek keeps it playing
+    /// from the start instead of skipping it.
+    async fn apply_resume(&mut self) {
+        let playing = self.playing.as_ref().map(|p| p.entry.uid);
+        if playing.is_none() || self.resume_at.as_ref().map(|r| r.uid) != playing {
+            return;
+        }
+        let Some(r) = self.resume_at.take() else { return };
+        match self.seek(r.target_ms).await {
+            SeekOutcome::Done => {
+                info!(
+                    guild = self.guild_id,
+                    channel = self.voice_channel_id,
+                    target = r.target_ms,
+                    "resumed at the checkpoint"
+                );
+            }
+            outcome => {
+                warn!(
+                    guild = self.guild_id,
+                    channel = self.voice_channel_id,
+                    target = r.target_ms,
+                    ?outcome,
+                    "could not resume at the checkpoint; playing from the start"
+                );
+                if outcome == SeekOutcome::Failed {
+                    self.restart_from_start(r.uid).await;
+                }
+                self.persist(false);
+            }
+        }
+    }
+
+    /// Play the current track `uid` again from 0 on a fresh input (a failed seek ends the old one).
+    /// Events of the old handle are ignored from here on.
+    async fn restart_from_start(&mut self, uid: Uuid) {
+        let Some(p) = self.playing.as_ref().filter(|p| p.entry.uid == uid) else {
+            return;
+        };
+        let (entry, playable) = (p.entry.clone(), p.playable.clone());
+        let _ = p.handle.stop();
+        match self.start_input(&entry, &playable).await {
+            Ok(handle) => {
+                if let Some(p) = &mut self.playing {
+                    p.handle = handle;
+                    let running = p.since.is_some();
+                    p.stop_clock();
+                    p.base_ms = 0;
+                    if running {
+                        p.start_clock();
+                    }
+                }
+                self.publish();
+            }
+            Err(reason) => self.failed(entry, &reason).await,
+        }
     }
 
     /// songbird ends a track whose seek failed: play the same stream again and seek the fresh input
@@ -1243,8 +1351,26 @@ impl Player {
         let _ = self.events.send(PlayerEvent::State(snap));
     }
 
+    /// Position saved with the session: the saved position of a restored track until its seek is
+    /// applied, else the playing position.
+    fn checkpoint_ms(&self) -> u64 {
+        if let Some(r) = &self.resume_at {
+            if self.queue.cursor().is_some_and(|e| e.uid == r.uid) {
+                return r.saved_ms;
+            }
+        }
+        self.playing.as_ref().map(Playing::position_ms).unwrap_or(0)
+    }
+
     /// Queue the session write (debounced by the writer). `tracks`: the track list changed.
-    fn persist(&self, tracks: bool) {
+    fn persist(&mut self, tracks: bool) {
+        let position = self.checkpoint_ms();
+        self.persist_at(tracks, position);
+    }
+
+    fn persist_at(&mut self, tracks: bool, position_ms: u64) {
+        // Any write carries the position, so the next periodic checkpoint is due from now.
+        self.checkpoint_at = Instant::now() + CHECKPOINT_EVERY;
         let record = SessionRecord {
             guild_id: self.guild_id,
             voice_channel_id: self.voice_channel_id,
@@ -1256,6 +1382,7 @@ impl Player {
             paused: self.user_paused,
             started_by: self.started_by,
             ai_state: None,
+            position_ms,
             updated_at: 0,
         };
         let list = tracks.then(|| self.queue.all().iter().map(|e| e.to_session()).collect());
@@ -1274,11 +1401,13 @@ impl Player {
             index: self.queue.index().min(self.queue.all().len().saturating_sub(1)),
             loop_mode: self.queue.loop_mode,
             volume: self.volume,
+            position_ms: 0,
             after_restart: false,
         };
         if let Some(r) = self.radio.as_mut() {
             r.stop();
         }
+        let position = self.checkpoint_ms();
         if let Some(p) = self.playing.take() {
             let _ = p.handle.stop();
             if reason != EndReason::Shutdown {
@@ -1288,7 +1417,8 @@ impl Player {
         self.prefetched = None;
 
         if reason == EndReason::Shutdown {
-            self.persist(true);
+            // Exact position at shutdown; main flushes the writer once every player has ended.
+            self.persist_at(true, position);
         } else {
             self.deps.sessions.delete(self.key());
         }
@@ -1324,5 +1454,122 @@ impl Player {
         self.messenger.close(true).await;
         self.manager.remove(self.key(), self.generation);
         let _ = self.events.send(PlayerEvent::Closed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serenity::{all::UserId, cache::Cache, http::Http};
+    use songbird::Songbird;
+
+    use super::*;
+    use crate::{
+        ai::AiEngine,
+        discord::registry::BotRegistry,
+        i18n::I18n,
+        player::{PlayerDeps, QueueEntry, Requester},
+        procs::ProcessRegistry,
+        sources::Sources,
+        store::{test_util::track, GuildSettings, LoopMode, SessionWriter, Store},
+    };
+
+    const GUILD: u64 = 11;
+    const VOICE: u64 = 22;
+
+    /// Restore a session into a real actor with nobody in the channel (so nothing is fetched), shut
+    /// it down and return the saved (current_index, position_ms).
+    async fn restore_then_shutdown(position_ms: u64, index: usize) -> (u32, u64) {
+        let dir = std::env::temp_dir().join(format!("lynx-ckpt-test-{}", Uuid::new_v4()));
+        let config = Arc::new(crate::ai::test_util::config(dir));
+        let store = Store::open_in_memory().await.unwrap();
+        let procs = ProcessRegistry::new();
+        let sources = Sources::new(&config, store.clone(), procs.clone()).unwrap();
+        let (sessions, _task) = SessionWriter::spawn_with_interval(store.clone(), Duration::from_secs(3600));
+        let bot = Arc::new(BotInfo::new(
+            0,
+            Arc::new(Http::new("x")),
+            Arc::new(Cache::new()),
+            Songbird::serenity(),
+        ));
+        let bots = Arc::new(BotRegistry::new(vec![bot.clone()]));
+        let ai = AiEngine::new(&config, store.clone(), sources.clone());
+        let manager = PlayerManager::new(PlayerDeps {
+            config: config.clone(),
+            i18n: Arc::new(I18n::load("en").unwrap()),
+            store: store.clone(),
+            sources,
+            procs,
+            sessions: sessions.clone(),
+            bots,
+            ai,
+            http: reqwest::Client::new(),
+        });
+
+        let tracks: Vec<Entry> = ["a", "b", "c"]
+            .iter()
+            .map(|id| Arc::new(QueueEntry::new(track(id), Requester::id_only(1))))
+            .collect();
+        let req = StartRequest {
+            guild_id: GUILD,
+            voice_channel_id: VOICE,
+            bot_index: 0,
+            text_channel_id: None,
+            started_by: 1,
+            humans: HashSet::new(),
+            settings: GuildSettings::default(),
+            restore: Some(Restore {
+                tracks,
+                index,
+                loop_mode: LoopMode::Off,
+                volume: 100,
+                position_ms,
+                after_restart: true,
+            }),
+        };
+        let (tx, rx) = mpsc::channel(64);
+        let (events, _) = broadcast::channel(16);
+        let snapshot = Arc::new(RwLock::new(Arc::new(initial_snapshot(&req, 0))));
+        let call = Arc::new(Mutex::new(Call::standalone(GuildId::new(GUILD), UserId::new(99))));
+        let task = tokio::spawn(run(Spawn {
+            manager,
+            req,
+            call,
+            bot,
+            generation: 1,
+            tx: tx.clone(),
+            rx,
+            events,
+            snapshot,
+        }));
+        tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(30), task)
+            .await
+            .unwrap()
+            .unwrap();
+        sessions.flush_now().await.unwrap();
+        let saved = store
+            .get_session(SessionKey {
+                guild_id: GUILD,
+                voice_channel_id: VOICE,
+            })
+            .await
+            .unwrap()
+            .expect("shutdown keeps the session");
+        assert_eq!(saved.tracks.len(), 3);
+        (saved.session.current_index, saved.session.position_ms)
+    }
+
+    #[tokio::test]
+    async fn restored_checkpoint_survives_a_restart_before_it_plays() {
+        // The track never started (nobody in the channel): the saved position is kept, not reset.
+        assert_eq!(restore_then_shutdown(90_000, 1).await, (1, 90_000));
+    }
+
+    #[tokio::test]
+    async fn restored_track_near_its_end_moves_to_the_next_one() {
+        // 180 s tracks: 177 s is within the last 5 s.
+        assert_eq!(restore_then_shutdown(177_000, 0).await, (1, 0));
+        // No checkpoint: same track from the start.
+        assert_eq!(restore_then_shutdown(0, 2).await, (2, 0));
     }
 }

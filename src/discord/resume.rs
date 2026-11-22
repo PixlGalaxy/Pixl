@@ -1,5 +1,5 @@
 //! Startup: wait for every bot's guilds, reconcile node commands, make stray bots leave voice and
-//! resume the saved sessions (same bot when possible, current track from the start).
+//! resume the saved sessions (same bot when possible, current track from its saved position).
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
@@ -155,6 +155,7 @@ async fn resume_one(lynx: &Lynx, saved: SavedSession) {
             index,
             loop_mode: s.loop_mode,
             volume: s.volume,
+            position_ms: s.position_ms,
             after_restart: true,
         }),
     };
