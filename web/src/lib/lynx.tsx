@@ -10,9 +10,9 @@ type LynxContext = {
   config: PublicConfig
   user: User
   guildName: string | null
-  /** Name of the voice channel the Activity was launched in. */
-  launchChannelName: string | null
+  /** Voice channel the user is in right now (the panel always follows it); null when not in voice. */
   channelId: string | null
+  channelName: string | null
   aiEnabled: boolean
   permissions: Permissions
   settings: GuildSettings | null
@@ -44,7 +44,7 @@ export function LynxProvider({ conn, children }: { conn: Connection; children: R
   const [permissions, setPermissions] = useState<Permissions>(conn.auth.permissions)
   const [settings, setSettings] = useState<GuildSettings | null>(null)
 
-  const live = useLivePlayer(conn.channelId, { onSettings: setSettings, onPermissions: setPermissions })
+  const live = useLivePlayer(conn.channel, { onSettings: setSettings, onPermissions: setPermissions })
 
   useEffect(() => {
     if (!conn.auth.guild) return
@@ -87,8 +87,8 @@ export function LynxProvider({ conn, children }: { conn: Connection; children: R
       config: conn.config,
       user: conn.auth.user,
       guildName: conn.auth.guild?.name ?? null,
-      launchChannelName: conn.auth.channel?.name ?? null,
-      channelId: conn.channelId,
+      channelId: live.channel?.id ?? null,
+      channelName: live.channel?.name ?? null,
       aiEnabled: conn.config.features?.ai === true,
       permissions,
       settings,

@@ -42,6 +42,12 @@
     "expiredTitle": "Tu sesión terminó",
     "expiredBody": "Vuelve a iniciar sesión para seguir usando el panel."
   },
+  "noVoice": {
+    "title": "Entra a un canal de voz para ver y controlar la música",
+    "body": "El panel sigue el canal de voz en el que estás.",
+    "hint": "En cuanto entres a un canal de voz de este servidor, su reproductor aparece aquí. Si cambias de canal, el panel te acompaña.",
+    "pip": "Entra a un canal de voz para controlar la música."
+  },
   "topbar": {
     "language": "Idioma",
     "lightTheme": "Tema claro",

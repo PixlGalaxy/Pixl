@@ -178,6 +178,7 @@ function NowPlaying({ state }: { state: PlayerState }) {
 
 function NothingPlaying({ state }: { state: PlayerState | null }) {
   const { t } = useTranslation()
+  const { channelId } = useLynx()
   const radio = <RadioLine state={state} />
   const job = state?.ai?.job
   const radioRunning = !!job && AI_STEPS.includes(job.phase)
@@ -185,8 +186,14 @@ function NothingPlaying({ state }: { state: PlayerState | null }) {
     <div className="flex flex-1 items-center justify-center gap-3">
       <LynxMark className="size-[clamp(28px,22vh,44px)] text-muted" />
       <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold">{t('player.nothingTitle')}</div>
-        {radioRunning ? radio : <div className="truncate text-[11px] text-muted">{t('pip.nothingHint')}</div>}
+        <div className="truncate text-[13px] font-semibold">
+          {channelId ? t('player.nothingTitle') : t('noVoice.title')}
+        </div>
+        {radioRunning ? (
+          radio
+        ) : (
+          <div className="truncate text-[11px] text-muted">{channelId ? t('pip.nothingHint') : t('noVoice.pip')}</div>
+        )}
       </div>
     </div>
   )

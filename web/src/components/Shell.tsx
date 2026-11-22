@@ -13,6 +13,7 @@ import { QueueScreen, UpNextPanel } from '../screens/Queue'
 import { RadioScreen } from '../screens/Radio'
 import { SettingsScreen } from '../screens/Settings'
 import { LynxMark } from './Logo'
+import { NoVoiceCard } from './NoVoice'
 
 export type TabId = 'player' | 'queue' | 'lyrics' | 'radio' | 'settings' | 'privacy' | 'help'
 
@@ -105,7 +106,7 @@ export function saveTab(id: TabId) {
 /** Full panel. The tab lives in the parent so it survives the compact (PiP) view replacing the shell. */
 export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }) {
   const { t } = useTranslation()
-  const { state, permissions, aiEnabled, guildName, launchChannelName } = useLynx()
+  const { state, permissions, aiEnabled, guildName, channelId, channelName: followed } = useLynx()
 
   const tabs = TABS.filter(
     (x) => (x.id !== 'radio' || aiEnabled) && (x.id !== 'settings' || permissions.isManager),
@@ -129,9 +130,11 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
     }
   }, [active])
 
-  const channelName = state?.channelName || launchChannelName
+  const channelName = followed ?? state?.channelName ?? null
+  // Not in a voice channel: no player anywhere, only Settings and Help stay useful.
+  const noVoice = !channelId && (active === 'player' || active === 'queue' || active === 'lyrics' || active === 'radio')
   // On wide screens the queue lives in a right column next to every tab except the queue itself.
-  const showSide = active !== 'queue'
+  const showSide = active !== 'queue' && !!channelId
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -178,10 +181,11 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
 
       <div className="mx-auto flex w-full max-w-6xl flex-1 gap-5 px-3 py-4 sm:px-4 sm:py-6">
         <main className="min-w-0 flex-1">
-          {active === 'player' && <PlayerScreen onOpenQueue={() => setTab('queue')} />}
-          {active === 'queue' && <QueueScreen />}
-          {active === 'lyrics' && <LyricsScreen />}
-          {active === 'radio' && <RadioScreen />}
+          {noVoice && <NoVoiceCard />}
+          {!noVoice && active === 'player' && <PlayerScreen onOpenQueue={() => setTab('queue')} />}
+          {!noVoice && active === 'queue' && <QueueScreen />}
+          {!noVoice && active === 'lyrics' && <LyricsScreen />}
+          {!noVoice && active === 'radio' && <RadioScreen />}
           {active === 'settings' && <SettingsScreen />}
           {active === 'privacy' && <PrivacyScreen />}
           {active === 'help' && <HelpScreen />}

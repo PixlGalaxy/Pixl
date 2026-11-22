@@ -42,6 +42,12 @@
     "expiredTitle": "Your session ended",
     "expiredBody": "Sign in again to keep using the panel."
   },
+  "noVoice": {
+    "title": "Join a voice channel to see and control the music",
+    "body": "The panel follows the voice channel you are in.",
+    "hint": "As soon as you join a voice channel in this server, its player shows up here. Move to another channel and the panel moves with you.",
+    "pip": "Join a voice channel to control the music."
+  },
   "topbar": {
     "language": "Language",
     "lightTheme": "Light theme",

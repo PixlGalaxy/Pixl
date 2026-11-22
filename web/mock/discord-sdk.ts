@@ -6,6 +6,7 @@ const params = new URLSearchParams(location.search)
 
 // Layout mode as Discord reports it (0 focused, 1 pip, 2 grid). `?pip=1` / `?grid=1` start in that
 // mode; in the browser press `p` to toggle picture-in-picture and `g` to toggle the grid tile.
+// `v` and `x` drive the mock backend (voice channel switch, session expiry; see mock/server.ts).
 type LayoutListener = (data: { layout_mode: 0 | 1 | 2 | -1 }) => unknown
 let layoutMode: 0 | 1 | 2 = params.get('pip') === '1' ? 1 : params.get('grid') === '1' ? 2 : 0
 const layoutListeners = new Set<LayoutListener>()
@@ -18,6 +19,9 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || el?.closest('input, textarea, select, [contenteditable]')) return
   if (e.key === 'p') setLayout(layoutMode === 1 ? 0 : 1)
   else if (e.key === 'g') setLayout(layoutMode === 2 ? 0 : 2)
+  // `v`: move to the next voice channel (100 -> 101 -> none). `x`: expire every session.
+  else if (e.key === 'v') void fetch('/backend/api/mock/voice', { method: 'POST' })
+  else if (e.key === 'x') void fetch('/backend/api/mock/expire', { method: 'POST' })
 })
 
 export class DiscordSDK {

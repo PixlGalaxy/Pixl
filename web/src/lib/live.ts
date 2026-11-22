@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, BACKEND, getSession } from './api'
-import type { AiState, GuildSettings, Permissions, PlayerState, ServerMessage } from './types'
+import type { AiState, ChannelRef, GuildSettings, Permissions, PlayerState, ServerMessage } from './types'
 
 const PING_MS = 25_000
 const POLL_MS = 5_000
@@ -22,11 +22,15 @@ type Handlers = {
 }
 
 /**
- * Live player state: WebSocket (`/ws`) with a 5 s `GET /api/player` poll while the socket is down
- * and the panel is visible.
+ * Live player state of the voice channel the user is in. The server decides that channel: the
+ * socket (`/ws`) pushes `channel` when the user joins, leaves or moves, then the new `state`. While
+ * the socket is down and the panel is visible, a 5 s poll of `GET /api/me/channel` + `GET /api/player`
+ * does the same. A socket that cannot open (refused session) triggers a request, which renews the
+ * session silently, and the next attempt uses the new one.
  */
-export function useLivePlayer(channelId: string | null, handlers: Handlers) {
+export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handlers) {
   const [state, setState] = useState<PlayerState | null>(null)
+  const [channel, setChannel] = useState<ChannelRef | null>(initialChannel)
   const [anchor, setAnchor] = useState<PositionAnchor>({ positionMs: 0, localAt: Date.now() })
   const [loaded, setLoaded] = useState(false)
   const [socketOpen, setSocketOpen] = useState(false)
@@ -39,22 +43,23 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
     if (next) setAnchor(anchorFrom(next.positionMs, next.positionAt))
   }, [])
 
+  const applyChannel = useCallback((next: ChannelRef | null) => {
+    setChannel((prev) => (prev?.id === next?.id && prev?.name === next?.name ? prev : next))
+  }, [])
+
   const refresh = useCallback(async () => {
-    if (!channelId) {
-      applyState(null)
-      return
-    }
     try {
-      applyState(await api.player(channelId))
+      const { channel: now } = await api.meChannel()
+      applyChannel(now)
+      applyState(now ? await api.player(now.id) : null)
     } catch (error) {
       console.warn('[lynx] player refresh failed', error)
       setLoaded(true)
     }
-  }, [channelId, applyState])
+  }, [applyChannel, applyState])
 
-  // WebSocket with reconnect backoff.
+  // WebSocket with reconnect backoff. One socket for the whole session: the server switches channels.
   useEffect(() => {
-    if (!channelId) return
     let ws: WebSocket | null = null
     let ping: ReturnType<typeof setInterval> | undefined
     let retry: ReturnType<typeof setTimeout> | undefined
@@ -65,7 +70,8 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
       const session = getSession()
       if (!session || closed) return
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const params = new URLSearchParams({ session, channelId })
+      const params = new URLSearchParams({ session })
+      let opened = false
       try {
         ws = new WebSocket(`${proto}://${location.host}${BACKEND}/ws?${params}`)
       } catch {
@@ -73,6 +79,7 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
         return
       }
       ws.onopen = () => {
+        opened = true
         attempts = 0
         setSocketOpen(true)
         ping = setInterval(() => ws?.readyState === WebSocket.OPEN && ws.send('{"type":"ping"}'), PING_MS)
@@ -85,6 +92,9 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
           return
         }
         switch (msg.type) {
+          case 'channel':
+            applyChannel(msg.channel)
+            break
           case 'state':
             applyState(msg.state)
             break
@@ -106,6 +116,9 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
       ws.onclose = () => {
         setSocketOpen(false)
         clearInterval(ping)
+        // The handshake failed (the browser hides the status): a plain request finds out whether the
+        // session was refused and renews it, so the next attempt carries the new one.
+        if (!opened) void refresh()
         schedule()
       }
     }
@@ -126,7 +139,7 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
       }
       setSocketOpen(false)
     }
-  }, [channelId, applyState])
+  }, [applyChannel, applyState, refresh])
 
   // Initial load + polling fallback while the socket is down and the panel is visible.
   useEffect(() => {
@@ -145,7 +158,7 @@ export function useLivePlayer(channelId: string | null, handlers: Handlers) {
     }
   }, [socketOpen, refresh])
 
-  return { state, setState, anchor, setAnchor, loaded, socketOpen, refresh }
+  return { state, setState, channel, anchor, setAnchor, loaded, socketOpen, refresh }
 }
 
 /** Interpolated playback position, re-rendering ~4 times a second while playing. */

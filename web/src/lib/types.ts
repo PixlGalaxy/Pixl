@@ -19,8 +19,14 @@ export type AuthResult = {
   session: string
   user: User
   guild: GuildInfo | null
-  /** Voice channel the Activity was launched in (null outside a server voice channel). */
-  channel?: ChannelRef | null
+  /**
+   * Voice channel the panel follows: the one the user is connected to right now, wherever the
+   * Activity was opened from. Null when the user is not in a voice channel (nothing is shown).
+   * The socket's `channel` message and `GET /api/me/channel` keep it current.
+   */
+  channel: ChannelRef | null
+  /** Channel the Activity was opened from (any kind), for display only. */
+  launchChannel?: ChannelRef | null
   permissions: Permissions
   locale: string | null
 }
@@ -137,3 +143,5 @@ export type ServerMessage =
   | { type: 'ai'; ai: AiState | null }
   | { type: 'settings'; settings: GuildSettings }
   | { type: 'permissions'; permissions: Permissions }
+  /** The followed voice channel changed (the user joined, left or moved); `state` follows. */
+  | { type: 'channel'; channel: ChannelRef | null }
