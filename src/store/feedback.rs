@@ -41,6 +41,11 @@ impl Store {
     /// Set or clear (`None`) a user's vote on a track. Feedback is an explicit action, so it is
     /// stored even when history is disabled (it only filters that user's own radio).
     pub async fn set_feedback(&self, user_id: u64, info: &TrackInfo, value: Option<Feedback>) -> Result<()> {
+        // Votes only feed the AI radio, which needs history: users who turned history off store nothing.
+        // Callers check `history_enabled` first to tell the user why the vote was ignored.
+        if value.is_some() && !self.history_enabled(user_id).await? {
+            return Ok(());
+        }
         let uid = sf(user_id);
         let mut tx = self.begin_write().await?;
         match value {
@@ -133,7 +138,16 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::test_util::track;
+    use crate::store::{test_util::track, UserPrefsPatch};
+
+    #[tokio::test]
+    async fn ignored_when_history_off() {
+        let store = Store::open_in_memory().await.unwrap();
+        let patch = UserPrefsPatch { locale: None, history_enabled: Some(false) };
+        store.update_user_prefs(7, &patch).await.unwrap();
+        store.set_feedback(7, &track("a"), Some(Feedback::Like)).await.unwrap();
+        assert!(store.get_feedback(7, &track("a")).await.unwrap().is_none());
+    }
 
     #[tokio::test]
     async fn set_get_toggle() {
