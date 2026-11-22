@@ -636,6 +636,110 @@ async fn channel_restrictions() {
 }
 
 #[tokio::test]
+async fn music_channel_and_manager_exemption() {
+    let h = harness().await;
+    h.fake.set_voice(BOSS, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (boss, _) = h.login("boss", Some(VOICE)).await;
+
+    let (_, v) = h.call("GET", "/api/settings", Some(&ana), None).await;
+    assert_eq!(v["musicChannel"], Value::Null);
+    assert_eq!(v["managersExempt"], true);
+
+    let put = |body: Value| Some(body);
+    let (s, _) = h
+        .call(
+            "PUT",
+            "/api/settings",
+            Some(&ana),
+            put(json!({ "musicChannel": "200" })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "managers only");
+    let (s, v) = h
+        .call(
+            "PUT",
+            "/api/settings",
+            Some(&boss),
+            put(json!({ "musicChannel": "999" })),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::BAD_REQUEST, "invalid"), "unknown channel");
+
+    let (s, v) = h
+        .call(
+            "PUT",
+            "/api/settings",
+            Some(&boss),
+            put(json!({ "musicChannel": "200" })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["musicChannel"], "200");
+    let (_, v) = h
+        .call(
+            "PUT",
+            "/api/settings",
+            Some(&boss),
+            put(json!({ "musicChannel": "100" })),
+        )
+        .await;
+    assert_eq!(v["musicChannel"], "100", "a voice channel's chat");
+    let (_, v) = h
+        .call("PUT", "/api/settings", Some(&boss), put(json!({ "controlMode": "dj" })))
+        .await;
+    assert_eq!(v["musicChannel"], "100", "absent = unchanged");
+    let (_, v) = h
+        .call(
+            "PUT",
+            "/api/settings",
+            Some(&boss),
+            put(json!({ "musicChannel": null })),
+        )
+        .await;
+    assert_eq!(v["musicChannel"], Value::Null);
+    h.call(
+        "PUT",
+        "/api/settings",
+        Some(&boss),
+        put(json!({ "musicChannel": "200" })),
+    )
+    .await;
+    let (_, v) = h
+        .call("PUT", "/api/settings", Some(&boss), put(json!({ "musicChannel": "" })))
+        .await;
+    assert_eq!(v["musicChannel"], Value::Null, "empty string clears too");
+    assert_eq!(h.state.app.store.music_channel(GUILD).await.unwrap(), None);
+
+    // Playback restricted to 101: an exempt manager may still use 100, a non-exempt one may not.
+    let (s, _) = h
+        .call(
+            "PUT",
+            "/api/settings",
+            Some(&boss),
+            put(json!({ "voiceChannels": ["101"] })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let add = || Some(json!({ "channelId": "100", "query": "song" }));
+    let (_, v) = h.call("POST", "/api/queue/add", Some(&boss), add()).await;
+    assert_ne!(code(&v), "channel_not_allowed", "{v}");
+    let (s, v) = h
+        .call(
+            "PUT",
+            "/api/settings",
+            Some(&boss),
+            put(json!({ "managersExempt": false })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["managersExempt"], false);
+    assert_eq!(v["voiceChannels"], json!(["101"]), "other rules kept");
+    let (s, v) = h.call("POST", "/api/queue/add", Some(&boss), add()).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "channel_not_allowed"), "{v}");
+}
+
+#[tokio::test]
 async fn history_disabled_blocks_feedback() {
     let h = harness().await;
     h.fake.set_voice(ANA, Some(VOICE));

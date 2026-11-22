@@ -19,10 +19,7 @@ use super::{
     upstream::{ChannelKind, GuildChannel},
     ApiState, GuildEvent,
 };
-use crate::{
-    perms::channel_allowed,
-    store::{ChannelRules, GuildSettings, GuildSettingsPatch, RuleKind, MAX_RULE_CHANNELS},
-};
+use crate::store::{ChannelOptionsPatch, ChannelRules, GuildSettings, GuildSettingsPatch, RuleKind, MAX_RULE_CHANNELS};
 
 const MAX_DJS_SHOWN: usize = 100;
 const MAX_CANDIDATES: usize = 25;
@@ -35,6 +32,11 @@ pub struct SettingsView {
     pub settings: GuildSettings,
     pub command_channels: Vec<String>,
     pub voice_channels: Vec<String>,
+    /// Where every automatic message goes (and the only place commands work, with
+    /// `command_channels`). `null` = off.
+    pub music_channel: Option<String>,
+    /// Managers ignore the channel rules.
+    pub managers_exempt: bool,
 }
 
 impl SettingsView {
@@ -44,6 +46,8 @@ impl SettingsView {
             settings,
             command_channels: ids(rules.command_channels),
             voice_channels: ids(rules.voice_channels),
+            music_channel: rules.music_channel.map(|c| c.to_string()),
+            managers_exempt: rules.managers_exempt,
         }
     }
 }
@@ -57,6 +61,16 @@ pub struct SettingsPatch {
     command_channels: Option<Vec<String>>,
     #[serde(default)]
     voice_channels: Option<Vec<String>>,
+    /// Absent = unchanged, `null` or `""` = off.
+    #[serde(default, deserialize_with = "nullable")]
+    music_channel: Option<Option<String>>,
+    #[serde(default)]
+    managers_exempt: Option<bool>,
+}
+
+/// Keeps "field absent" (`None`) apart from "field is null" (`Some(None)`).
+fn nullable<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(d).map(Some)
 }
 
 fn require_manager(m: &Member) -> ApiResult<()> {
@@ -80,7 +94,7 @@ impl ApiState {
     /// Panel actions that make Lynx play in `channel` respect the voice restriction.
     pub async fn check_voice_channel(&self, guild_id: u64, channel: u64, is_manager: bool) -> ApiResult<()> {
         let rules = self.app.store.channel_rules(guild_id).await.unwrap_or_default();
-        if channel_allowed(&rules.voice_channels, channel, is_manager) {
+        if rules.voice_allowed_for(channel, is_manager) {
             Ok(())
         } else {
             Err(ApiError::channel_not_allowed())
@@ -123,7 +137,11 @@ pub async fn put_settings(
     let mut next = store.guild_settings(g).await.unwrap_or_default();
     next.apply(&patch.base);
     next.validate().map_err(ApiError::invalid)?;
-    let channels = if patch.command_channels.is_some() || patch.voice_channels.is_some() {
+    let music_set = patch
+        .music_channel
+        .as_ref()
+        .is_some_and(|m| m.as_deref().is_some_and(|m| !m.is_empty()));
+    let channels = if patch.command_channels.is_some() || patch.voice_channels.is_some() || music_set {
         st.discord.guild_channels(g)
     } else {
         Vec::new()
@@ -138,6 +156,19 @@ pub async fn put_settings(
         .as_deref()
         .map(|l| channel_list(l, &channels, &[ChannelKind::Voice]))
         .transpose()?;
+    let music = match patch.music_channel.as_ref() {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(m)) if m.is_empty() => Some(None),
+        Some(Some(m)) => {
+            let list = channel_list(
+                std::slice::from_ref(m),
+                &channels,
+                &[ChannelKind::Text, ChannelKind::Voice],
+            )?;
+            Some(list.first().copied())
+        }
+    };
 
     let settings = store
         .update_guild_settings(g, &patch.base)
@@ -155,6 +186,16 @@ pub async fn put_settings(
             .await
             .map_err(|e| ApiError::internal("could not save channel rules", e))?;
     }
+    store
+        .update_channel_options(
+            g,
+            ChannelOptionsPatch {
+                music_channel: music,
+                managers_exempt: patch.managers_exempt,
+            },
+        )
+        .await
+        .map_err(|e| ApiError::internal("could not save channel options", e))?;
     for p in st.app.players.in_guild(g) {
         let _ = p.settings_changed(settings).await;
     }

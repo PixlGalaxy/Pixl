@@ -157,6 +157,10 @@ export type GuildSettings = {
   commandChannels: string[]
   /** Voice channels where Lynx may play. Empty = every channel. */
   voiceChannels: string[]
+  /** Text channel (or a voice channel chat) for every Lynx message; commands only work there. null = off. */
+  musicChannel: string | null
+  /** Managers ignore every channel rule. */
+  managersExempt: boolean
 }
 
 export type GuildChannel = { id: string; name: string; parentName: string | null }

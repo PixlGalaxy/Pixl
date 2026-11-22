@@ -182,11 +182,6 @@ function ChannelPicker({
   const { t } = useTranslation()
   const byId = new Map(options.map((o) => [o.id, o]))
   const remaining = options.filter((o) => !value.includes(o.id))
-  const groups = new Map<string, ChannelOption[]>()
-  for (const o of remaining) {
-    const key = o.parentName ?? t('settings.noCategory')
-    groups.set(key, [...(groups.get(key) ?? []), o])
-  }
   return (
     <div className="space-y-2">
       <div>
@@ -226,7 +221,80 @@ function ChannelPicker({
           className={inputCls}
         >
           <option value="">{t('settings.addChannel')}</option>
-          {[...groups].map(([group, list]) => (
+          {groupOptions(remaining, t('settings.noCategory')).map(([group, list]) => (
+            <optgroup key={group} label={group}>
+              {list.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      )}
+    </div>
+  )
+}
+
+/** Options grouped by category for a native select. */
+function groupOptions(options: ChannelOption[], noCategory: string) {
+  const groups = new Map<string, ChannelOption[]>()
+  for (const o of options) {
+    const key = o.parentName ?? noCategory
+    groups.set(key, [...(groups.get(key) ?? []), o])
+  }
+  return [...groups]
+}
+
+/** One channel or none: a removable chip plus a select to pick or change it. */
+function SingleChannelPicker({
+  label,
+  description,
+  options,
+  value,
+  onChange,
+}: {
+  label: string
+  description: string
+  options: ChannelOption[]
+  value: string | null
+  onChange: (next: string | null) => void
+}) {
+  const { t } = useTranslation()
+  const current = value ? (options.find((o) => o.id === value)?.label ?? t('settings.unknownChannel')) : null
+  const remaining = options.filter((o) => o.id !== value)
+  return (
+    <div className="space-y-2">
+      <div>
+        <div className="text-sm font-medium">{label}</div>
+        <div className="text-xs text-muted">{description}</div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {current === null ? (
+          <span className="text-xs text-muted">{t('settings.musicChannelOff')}</span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface-2 py-0.5 pr-1 pl-2 text-xs">
+            <Hash size={12} className="text-muted" />
+            <span className="max-w-40 truncate">{current}</span>
+            <IconButton
+              label={t('settings.clearMusicChannel')}
+              className="!size-5 hover:!text-red-500"
+              onClick={() => onChange(null)}
+            >
+              <X size={12} />
+            </IconButton>
+          </span>
+        )}
+      </div>
+      {remaining.length > 0 && (
+        <select
+          aria-label={t('settings.chooseMusicChannel')}
+          value=""
+          onChange={(e) => e.target.value && onChange(e.target.value)}
+          className={inputCls}
+        >
+          <option value="">{t('settings.chooseMusicChannel')}</option>
+          {groupOptions(remaining, t('settings.noCategory')).map(([group, list]) => (
             <optgroup key={group} label={group}>
               {list.map((o) => (
                 <option key={o.id} value={o.id}>
@@ -265,7 +333,11 @@ function ChannelsCard({
   const voice: ChannelOption[] = channels ? channels.voice.map((c) => ({ ...c, label: c.name })) : []
 
   return (
-    <Card title={t('settings.channels')} description={t('settings.channelsHint')} icon={<Hash size={18} />}>
+    <Card
+      title={t('settings.channels')}
+      description={t(settings.managersExempt === false ? 'settings.channelsHintStrict' : 'settings.channelsHint')}
+      icon={<Hash size={18} />}
+    >
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       {!channels && !error ? (
         <div className="flex justify-center py-4 text-muted">
@@ -273,13 +345,22 @@ function ChannelsCard({
         </div>
       ) : (
         <>
-          <ChannelPicker
-            label={t('settings.commandChannels')}
-            description={t('settings.commandChannelsHint')}
+          <SingleChannelPicker
+            label={t('settings.musicChannel')}
+            description={t('settings.musicChannelHint')}
             options={text}
-            value={settings.commandChannels ?? []}
-            onChange={(commandChannels) => save({ commandChannels })}
+            value={settings.musicChannel ?? null}
+            onChange={(musicChannel) => save({ musicChannel })}
           />
+          <div className="border-t border-line pt-4">
+            <ChannelPicker
+              label={t('settings.commandChannels')}
+              description={t('settings.commandChannelsHint')}
+              options={text}
+              value={settings.commandChannels ?? []}
+              onChange={(commandChannels) => save({ commandChannels })}
+            />
+          </div>
           <div className="border-t border-line pt-4">
             <ChannelPicker
               label={t('settings.voiceChannels')}
@@ -288,6 +369,15 @@ function ChannelsCard({
               value={settings.voiceChannels ?? []}
               onChange={(voiceChannels) => save({ voiceChannels })}
             />
+          </div>
+          <div className="border-t border-line pt-4">
+            <SettingRow label={t('settings.managersExempt')} description={t('settings.managersExemptHint')}>
+              <Toggle
+                label={t('settings.managersExempt')}
+                checked={settings.managersExempt !== false}
+                onChange={(managersExempt) => save({ managersExempt })}
+              />
+            </SettingRow>
           </div>
         </>
       )}
