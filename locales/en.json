@@ -39,7 +39,7 @@
       "replay": "Play it again",
       "start_radio": "Start radio",
       "vote": "Vote to skip",
-      "invite_node": "Invite Lynx Node {number}",
+      "invite_node": "Add another Lynx",
       "invite_main": "Invite Lynx",
       "cancel": "Cancel",
       "stop_radio": "Stop radio"
@@ -117,13 +117,13 @@
     },
     "busy": {
       "title": "All Lynx bots are busy in this server",
-      "body": "Lynx is already playing in {busy}. Invite another Lynx bot so it can play in {channel} at the same time.",
-      "body_generic": "Invite another Lynx bot so it can play in {channel} at the same time.",
+      "body": "Lynx is already playing in {busy}. Add another Lynx so it can play in {channel} at the same time.",
+      "body_generic": "Add another Lynx so it can play in {channel} at the same time.",
       "no_more": "Every Lynx bot is already playing in another voice channel, and there are no more bots to add. Try again when one of them is free to play in {channel}."
     },
     "add_main": {
-      "title": "Add the main Lynx bot",
-      "body": "I am a Lynx helper bot: I play music when the main bot is busy in another channel. To use commands, this server needs the main Lynx bot."
+      "title": "Add the main Lynx",
+      "body": "This Lynx plays music when the main Lynx is busy in another channel. To use commands, this server needs the main Lynx too."
     },
     "radio": {
       "mix": {

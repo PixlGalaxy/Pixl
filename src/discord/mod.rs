@@ -170,7 +170,8 @@ impl EventHandler for Handler {
             self.index,
             ready.user.id.get(),
             ready.application.id.get(),
-            &ready.user.name,
+            // Display name, as users see it in the member list.
+            ready.user.global_name.as_deref().unwrap_or(&ready.user.name),
             shards,
             &guilds,
         );
