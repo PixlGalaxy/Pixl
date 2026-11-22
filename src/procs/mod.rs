@@ -47,12 +47,20 @@ pub struct ProcOwner {
 
 impl ProcOwner {
     pub fn new(guild_id: u64, voice_channel_id: u64, track_uid: Option<Uuid>) -> Self {
-        Self { guild_id, voice_channel_id, track_uid }
+        Self {
+            guild_id,
+            voice_channel_id,
+            track_uid,
+        }
     }
 
     /// Owner for background work not tied to any voice channel (self-update, API probes).
     pub fn system() -> Self {
-        Self { guild_id: 0, voice_channel_id: 0, track_uid: None }
+        Self {
+            guild_id: 0,
+            voice_channel_id: 0,
+            track_uid: None,
+        }
     }
 
     pub fn is_system(&self) -> bool {
@@ -60,7 +68,10 @@ impl ProcOwner {
     }
 
     pub fn with_track(&self, track_uid: Uuid) -> Self {
-        Self { track_uid: Some(track_uid), ..self.clone() }
+        Self {
+            track_uid: Some(track_uid),
+            ..self.clone()
+        }
     }
 }
 
@@ -77,7 +88,14 @@ pub struct ProcSpec {
 
 impl ProcSpec {
     pub fn new(program: impl Into<PathBuf>, owner: ProcOwner, timeout: Duration) -> Self {
-        Self { program: program.into(), args: Vec::new(), current_dir: None, envs: Vec::new(), timeout, owner }
+        Self {
+            program: program.into(),
+            args: Vec::new(),
+            current_dir: None,
+            envs: Vec::new(),
+            timeout,
+            owner,
+        }
     }
 
     pub fn arg(mut self, a: impl Into<OsString>) -> Self {
@@ -200,7 +218,12 @@ impl ProcessRegistry {
     pub fn list(&self) -> Vec<ProcInfo> {
         self.inner
             .iter()
-            .map(|e| ProcInfo { id: *e.key(), owner: e.owner.clone(), pid: e.pid, age: e.started.elapsed() })
+            .map(|e| ProcInfo {
+                id: *e.key(),
+                owner: e.owner.clone(),
+                pid: e.pid,
+                age: e.started.elapsed(),
+            })
             .collect()
     }
 
@@ -223,9 +246,10 @@ impl ProcessRegistry {
         #[cfg(unix)]
         cmd.process_group(0);
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|source| ProcError::Spawn { program: spec.program.display().to_string(), source })?;
+        let mut child = cmd.spawn().map_err(|source| ProcError::Spawn {
+            program: spec.program.display().to_string(),
+            source,
+        })?;
         let pid = child.id();
         let id = Uuid::new_v4();
         let cancel = CancellationToken::new();
@@ -239,7 +263,12 @@ impl ProcessRegistry {
                 done: CancellationToken::new(),
             },
         );
-        let mut guard = EntryGuard { map: self.inner.clone(), id, pid, reaped: false };
+        let mut guard = EntryGuard {
+            map: self.inner.clone(),
+            id,
+            pid,
+            reaped: false,
+        };
         debug!(?pid, owner = ?spec.owner, program = %spec.program.display(), "spawned child");
 
         let stdout = tokio::spawn(read_capped(child.stdout.take(), STDOUT_MAX, false));
@@ -272,14 +301,20 @@ impl ProcessRegistry {
 
         // Pipes close once every process in the group is gone; never hang on them.
         let collect = async { (stdout.await.unwrap_or_default(), stderr.await.unwrap_or_default()) };
-        let (out, err) = tokio::time::timeout(Duration::from_secs(3), collect).await.unwrap_or_default();
+        let (out, err) = tokio::time::timeout(Duration::from_secs(3), collect)
+            .await
+            .unwrap_or_default();
         let err = String::from_utf8_lossy(&err).into_owned();
         drop(guard);
 
         match end {
             End::Killed => Err(ProcError::Killed(err)),
             End::Timeout => Err(ProcError::Timeout(spec.timeout, err)),
-            End::Exited => Ok(ProcOutput { status: status?, stdout: out, stderr: err }),
+            End::Exited => Ok(ProcOutput {
+                status: status?,
+                stdout: out,
+                stderr: err,
+            }),
         }
     }
 
@@ -293,7 +328,8 @@ impl ProcessRegistry {
 
     /// Kill every process of one voice channel session.
     pub async fn kill_channel(&self, guild_id: u64, voice_channel_id: u64) -> usize {
-        self.kill_where(|o| o.guild_id == guild_id && o.voice_channel_id == voice_channel_id).await
+        self.kill_where(|o| o.guild_id == guild_id && o.voice_channel_id == voice_channel_id)
+            .await
     }
 
     /// Kill every process of one guild.
@@ -474,7 +510,11 @@ mod tests {
     async fn captures_output_and_unregisters() {
         let reg = ProcessRegistry::new();
         let out = reg
-            .run(sh("echo hello; echo oops >&2; exit 3", owner(1, 2, None), Duration::from_secs(5)))
+            .run(sh(
+                "echo hello; echo oops >&2; exit 3",
+                owner(1, 2, None),
+                Duration::from_secs(5),
+            ))
             .await
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
@@ -501,7 +541,10 @@ mod tests {
     #[tokio::test]
     async fn timeout_kills_group() {
         let reg = ProcessRegistry::new();
-        let err = reg.run(sh("sleep 30", owner(1, 2, None), Duration::from_millis(200))).await.unwrap_err();
+        let err = reg
+            .run(sh("sleep 30", owner(1, 2, None), Duration::from_millis(200)))
+            .await
+            .unwrap_err();
         assert!(matches!(err, ProcError::Timeout(..)), "{err:?}");
         assert!(reg.is_empty());
     }
@@ -547,7 +590,9 @@ mod tests {
         let mut tasks = Vec::new();
         for o in [owner(1, 1, Some(t1)), owner(1, 1, Some(t2)), owner(2, 1, None)] {
             let r = reg.clone();
-            tasks.push(tokio::spawn(async move { r.run(sh("sleep 30", o, Duration::from_secs(60))).await }));
+            tasks.push(tokio::spawn(async move {
+                r.run(sh("sleep 30", o, Duration::from_secs(60))).await
+            }));
         }
         wait_len(&reg, 3).await;
         assert_eq!(reg.kill_track(1, 1, t1).await, 1);
@@ -575,11 +620,15 @@ mod tests {
         let mut tasks = Vec::new();
         for o in [owner(5, 1, None), owner(6, 1, None), ProcOwner::system()] {
             let r = reg.clone();
-            tasks.push(tokio::spawn(async move { r.run(sh("sleep 30", o, Duration::from_secs(60))).await }));
+            tasks.push(tokio::spawn(async move {
+                r.run(sh("sleep 30", o, Duration::from_secs(60))).await
+            }));
         }
         wait_len(&reg, 3).await;
         // Guild 6 is gone; system owners are never considered orphaned.
-        let n = reg.sweep_once(Duration::from_secs(3600), &|o: &ProcOwner| o.guild_id != 6).await;
+        let n = reg
+            .sweep_once(Duration::from_secs(3600), &|o: &ProcOwner| o.guild_id != 6)
+            .await;
         assert_eq!(n, 1);
         assert_eq!(reg.len(), 2);
         let n = reg.sweep_once(Duration::ZERO, &|_: &ProcOwner| true).await;

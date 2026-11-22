@@ -1,5 +1,162 @@
 {
   "common": {
     "error": "Something went wrong. Please try again."
+  },
+  "bot": {
+    "track": {
+      "live": "Live",
+      "requested_by": "Requested by {user}"
+    },
+    "now_playing": {
+      "title": "Now playing",
+      "title_in": "Now playing in {channel}",
+      "genres": "Genre: {genres}",
+      "paused": "Paused",
+      "up_next": "{count} up next",
+      "up_next_none": "Nothing up next"
+    },
+    "loop": {
+      "off": "Loop off",
+      "track": "Looping this track",
+      "queue": "Looping the queue"
+    },
+    "button": {
+      "pause": "Pause",
+      "resume": "Resume",
+      "skip": "Skip",
+      "stop": "Stop",
+      "queue": "Queue",
+      "panel": "Open panel",
+      "like": "Like",
+      "dislike": "Dislike",
+      "previous": "Previous",
+      "next": "Next",
+      "invite": "Invite another bot",
+      "invite_main": "Add Lynx"
+    },
+    "queue": {
+      "title": "Queue",
+      "in_channel": "In {channel}",
+      "current": "**Now playing**",
+      "current_paused": "**Now playing (paused)**",
+      "empty": "Nothing up next. Add songs with /play.",
+      "page": "Page {page} of {pages}",
+      "count": "{count} tracks"
+    },
+    "added": {
+      "title": "Added to the queue",
+      "playing_now": "Starting now",
+      "position": "Position {position} in the queue",
+      "playlist_named": "Added {count} tracks from {name}",
+      "playlist": "Added {count} tracks",
+      "first": "Starting with {track}",
+      "truncated": "The list was cut to fit the queue limit."
+    },
+    "notice": {
+      "paused_empty": "Everyone left {channel}, so the music is paused. The queue will be deleted {time} unless someone joins.",
+      "resumed_join": "Someone joined {channel}. Resuming the music.",
+      "queue_deleted": "Nobody came back to {channel}. The queue was deleted.",
+      "resumed_restart": "Lynx restarted. Playback resumed in {channel} with {track}.",
+      "queue_ended": "The queue in {channel} has ended.",
+      "track_failed": "Could not play {track}: {reason}. Skipping it.",
+      "too_many_failures": "Several tracks in a row could not be played, so playback in {channel} stopped.",
+      "disconnected": "Lynx was disconnected from {channel}. The queue was deleted.",
+      "stopped": "{user} stopped the music in {channel}."
+    },
+    "lyrics": {
+      "title": "Lyrics",
+      "truncated": "Open the panel to read the full lyrics.",
+      "not_found": "No lyrics found for that song.",
+      "nothing": "Nothing is playing. Use /lyrics with a song name."
+    },
+    "error": {
+      "not_in_voice": "Join a voice channel first.",
+      "guild_only": "This command only works in a server.",
+      "no_player": "Nothing is playing in your voice channel.",
+      "no_permission": "You don't have permission to do that here.",
+      "dj_only": "Only DJs and managers can do that in this server.",
+      "queue_full": "The queue is full (limit {max} tracks).",
+      "no_results": "Nothing was found for that search.",
+      "all_busy": "All Lynx bots in this server are busy in other voice channels. Invite another one to play here at the same time.",
+      "no_more_bots": "All Lynx bots are busy in other voice channels of this server, and there are no more bots to add.",
+      "cannot_connect": "Lynx cannot join or speak in {channel}. Check the channel permissions.",
+      "join_failed": "Could not connect to the voice channel. Please try again.",
+      "outdated": "This message is outdated.",
+      "expired": "These buttons have expired. Use /queue again.",
+      "invalid_position": "Pick a position between 1 and {max}.",
+      "restarting": "Lynx is restarting. Try again in a moment.",
+      "spotify_disabled": "Spotify links are not enabled on this bot.",
+      "unsupported": "That link is not supported.",
+      "timeout": "The source took too long to answer. Please try again.",
+      "source": "Could not load that: {reason}",
+      "main_missing": "Add the main Lynx bot to this server to use this.",
+      "history_off": "Your listening history is turned off. Turn it on in the panel (Privacy) to use Like, Dislike and the AI radio."
+    },
+    "reply": {
+      "paused": "Paused.",
+      "resumed": "Resumed.",
+      "already_paused": "The music is already paused.",
+      "not_paused": "The music is not paused.",
+      "skipped": "Skipped {track}.",
+      "vote": "Vote to skip registered: {current} of {required}.",
+      "already_voted": "You already voted to skip this song ({current} of {required}).",
+      "stopped": "Stopped the music and left the channel.",
+      "removed": "Removed {track} from the queue.",
+      "moved": "Moved {track} to position {position}.",
+      "skipped_to": "Skipped to {track}.",
+      "shuffled": "Shuffled {count} tracks.",
+      "loop": "Loop mode: {mode}.",
+      "volume": "Volume set to {volume}%.",
+      "liked": "You liked {track}.",
+      "disliked": "You disliked {track}.",
+      "feedback_cleared": "Your vote on {track} was removed.",
+      "nothing_to_shuffle": "There is nothing to shuffle."
+    },
+    "node": {
+      "notice": "This bot is a Lynx voice node: it only plays music together with the main Lynx bot. Add the main bot to use Lynx in this server."
+    },
+    "cmd": {
+      "play": {
+        "description": "Play a song, a playlist or a search",
+        "query": "Link or song name"
+      },
+      "pause": { "description": "Pause the music" },
+      "resume": { "description": "Resume the music" },
+      "skip": { "description": "Skip the current song (or vote to skip)" },
+      "stop": { "description": "Stop the music, clear the queue and leave" },
+      "queue": { "description": "Show the queue" },
+      "nowplaying": { "description": "Show the current song" },
+      "remove": {
+        "description": "Remove a song from the queue",
+        "position": "Position in the queue"
+      },
+      "move": {
+        "description": "Move a song in the queue",
+        "from": "Current position",
+        "to": "New position"
+      },
+      "skipto": {
+        "description": "Jump to a position in the queue, dropping the songs before it",
+        "position": "Position in the queue"
+      },
+      "shuffle": { "description": "Shuffle the queue" },
+      "loop": {
+        "description": "Set the loop mode",
+        "mode": "Loop mode",
+        "off": "Off",
+        "track": "Current song",
+        "queue": "Whole queue"
+      },
+      "volume": {
+        "description": "Set the volume",
+        "value": "Volume from 0 to 200 (100 is the original)"
+      },
+      "lyrics": {
+        "description": "Show the lyrics of the current song or of a search",
+        "query": "Song name (optional)"
+      },
+      "panel": { "description": "Open the Lynx panel" },
+      "launch": { "description": "Open the Lynx panel" }
+    }
   }
 }

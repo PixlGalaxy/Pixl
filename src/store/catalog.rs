@@ -111,8 +111,19 @@ pub struct CatalogTrack {
 pub(crate) const CATALOG_COLUMNS: &str =
     "t.id, t.key, t.title, t.artists, t.url, t.duration_ms, t.isrc, t.tag_status, t.tag_attempts, t.created_at, t.info";
 
-pub(crate) type CatalogRow =
-    (i64, String, String, String, String, Option<i64>, Option<String>, String, u32, i64, String);
+pub(crate) type CatalogRow = (
+    i64,
+    String,
+    String,
+    String,
+    String,
+    Option<i64>,
+    Option<String>,
+    String,
+    u32,
+    i64,
+    String,
+);
 
 pub(crate) fn catalog_from_row(r: CatalogRow) -> CatalogTrack {
     CatalogTrack {
@@ -182,8 +193,10 @@ pub(crate) async fn upsert_track(conn: &mut SqliteConnection, info: &TrackInfo) 
 }
 
 pub(crate) async fn lookup_track_id(conn: &mut SqliteConnection, key: &str) -> Result<Option<TrackId>> {
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM tracks WHERE key = ?").bind(key).fetch_optional(&mut *conn).await?;
+    let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM tracks WHERE key = ?")
+        .bind(key)
+        .fetch_optional(&mut *conn)
+        .await?;
     Ok(row.map(|r| r.0))
 }
 
@@ -222,17 +235,27 @@ impl Store {
     /// Replace every tag of a track and mark it done (or failed when `tags` is empty).
     pub async fn write_track_tags(&self, track_id: TrackId, tags: &[Tag]) -> Result<()> {
         let mut tx = self.begin_write().await?;
-        sqlx::query("DELETE FROM track_tags WHERE track_id = ?").bind(track_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM track_tags WHERE track_id = ?")
+            .bind(track_id)
+            .execute(&mut *tx)
+            .await?;
         if !tags.is_empty() {
             let mut qb: QueryBuilder<Sqlite> =
                 QueryBuilder::new("INSERT INTO track_tags (track_id, tag, weight, source) ");
             qb.push_values(tags, |mut b, t| {
-                b.push_bind(track_id).push_bind(t.tag.clone()).push_bind(t.weight).push_bind(t.source.as_str());
+                b.push_bind(track_id)
+                    .push_bind(t.tag.clone())
+                    .push_bind(t.weight)
+                    .push_bind(t.source.as_str());
             });
             qb.push(" ON CONFLICT(track_id, tag) DO UPDATE SET weight = MAX(weight, excluded.weight)");
             qb.build().execute(&mut *tx).await?;
         }
-        let status = if tags.is_empty() { TagStatus::Failed } else { TagStatus::Done };
+        let status = if tags.is_empty() {
+            TagStatus::Failed
+        } else {
+            TagStatus::Done
+        };
         sqlx::query("UPDATE tracks SET tag_status = ?, tagged_at = ?, tag_attempts = tag_attempts + 1 WHERE id = ?")
             .bind(status.as_str())
             .bind(now_secs())
@@ -266,7 +289,11 @@ impl Store {
                 .await?;
         Ok(rows
             .into_iter()
-            .map(|(tag, weight, source)| Tag { tag, weight, source: TagSource::parse(&source) })
+            .map(|(tag, weight, source)| Tag {
+                tag,
+                weight,
+                source: TagSource::parse(&source),
+            })
             .collect())
     }
 
@@ -295,7 +322,11 @@ impl Store {
         .await?;
         Ok((!rows.is_empty()).then(|| {
             rows.into_iter()
-                .map(|(tag, weight, source)| Tag { tag, weight, source: TagSource::parse(&source) })
+                .map(|(tag, weight, source)| Tag {
+                    tag,
+                    weight,
+                    source: TagSource::parse(&source),
+                })
                 .collect()
         }))
     }
@@ -305,7 +336,10 @@ impl Store {
         let norm = normalize_artist(artist);
         let now = now_secs();
         let mut tx = self.begin_write().await?;
-        sqlx::query("DELETE FROM artist_tags WHERE artist_norm = ?").bind(&norm).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM artist_tags WHERE artist_norm = ?")
+            .bind(&norm)
+            .execute(&mut *tx)
+            .await?;
         if !tags.is_empty() {
             let mut qb: QueryBuilder<Sqlite> =
                 QueryBuilder::new("INSERT INTO artist_tags (artist_norm, tag, weight, source, fetched_at) ");
@@ -339,7 +373,11 @@ mod tests {
     use crate::store::test_util::track;
 
     fn tag(t: &str, w: f64) -> Tag {
-        Tag { tag: t.into(), weight: w, source: TagSource::Lastfm }
+        Tag {
+            tag: t.into(),
+            weight: w,
+            source: TagSource::Lastfm,
+        }
     }
 
     #[test]
@@ -380,7 +418,10 @@ mod tests {
         let c = store.ensure_track(&track("c")).await.unwrap();
         assert_eq!(store.pending_tag_tracks(10).await.unwrap().len(), 3);
 
-        store.write_track_tags(a, &[tag("rock", 1.0), tag("indie", 0.5)]).await.unwrap();
+        store
+            .write_track_tags(a, &[tag("rock", 1.0), tag("indie", 0.5)])
+            .await
+            .unwrap();
         store.write_track_tags(b, &[]).await.unwrap();
         assert_eq!(store.record_tag_failure(c, 3).await.unwrap(), TagStatus::Pending);
         let pending = store.pending_tag_tracks(10).await.unwrap();
@@ -389,7 +430,10 @@ mod tests {
         assert_eq!(store.record_tag_failure(c, 3).await.unwrap(), TagStatus::Failed);
         assert!(store.pending_tag_tracks(10).await.unwrap().is_empty());
 
-        assert_eq!(store.catalog_track(b).await.unwrap().unwrap().tag_status, TagStatus::Failed);
+        assert_eq!(
+            store.catalog_track(b).await.unwrap().unwrap().tag_status,
+            TagStatus::Failed
+        );
         assert_eq!(store.track_tags(a).await.unwrap()[0].tag, "rock");
         assert_eq!(store.track_genres_by_key("a", 5).await.unwrap(), vec!["rock", "indie"]);
 

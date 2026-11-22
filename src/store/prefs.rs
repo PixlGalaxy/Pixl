@@ -14,7 +14,10 @@ pub struct UserPrefs {
 
 impl Default for UserPrefs {
     fn default() -> Self {
-        Self { locale: None, history_enabled: true }
+        Self {
+            locale: None,
+            history_enabled: true,
+        }
     }
 }
 
@@ -35,7 +38,12 @@ impl Store {
                 .bind(sf(user_id))
                 .fetch_optional(self.pool())
                 .await?;
-        Ok(row.map(|(locale, history_enabled)| UserPrefs { locale, history_enabled }).unwrap_or_default())
+        Ok(row
+            .map(|(locale, history_enabled)| UserPrefs {
+                locale,
+                history_enabled,
+            })
+            .unwrap_or_default())
     }
 
     /// True unless the user opted out of history.
@@ -69,7 +77,10 @@ impl Store {
         .bind(now_secs())
         .fetch_one(self.pool())
         .await?;
-        Ok(UserPrefs { locale, history_enabled })
+        Ok(UserPrefs {
+            locale,
+            history_enabled,
+        })
     }
 }
 
@@ -84,20 +95,52 @@ mod tests {
         assert!(store.history_enabled(1).await.unwrap());
 
         let p = store
-            .update_user_prefs(1, &UserPrefsPatch { locale: Some(Some("es".into())), history_enabled: None })
+            .update_user_prefs(
+                1,
+                &UserPrefsPatch {
+                    locale: Some(Some("es".into())),
+                    history_enabled: None,
+                },
+            )
             .await
             .unwrap();
-        assert_eq!(p, UserPrefs { locale: Some("es".into()), history_enabled: true });
+        assert_eq!(
+            p,
+            UserPrefs {
+                locale: Some("es".into()),
+                history_enabled: true
+            }
+        );
 
-        let p =
-            store.update_user_prefs(1, &UserPrefsPatch { locale: None, history_enabled: Some(false) }).await.unwrap();
-        assert_eq!(p, UserPrefs { locale: Some("es".into()), history_enabled: false });
+        let p = store
+            .update_user_prefs(
+                1,
+                &UserPrefsPatch {
+                    locale: None,
+                    history_enabled: Some(false),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            p,
+            UserPrefs {
+                locale: Some("es".into()),
+                history_enabled: false
+            }
+        );
         assert!(!store.history_enabled(1).await.unwrap());
 
         let patch: UserPrefsPatch = serde_json::from_str(r#"{"locale":null}"#).unwrap();
         assert_eq!(patch.locale, Some(None));
         let p = store.update_user_prefs(1, &patch).await.unwrap();
-        assert_eq!(p, UserPrefs { locale: None, history_enabled: false });
+        assert_eq!(
+            p,
+            UserPrefs {
+                locale: None,
+                history_enabled: false
+            }
+        );
 
         let patch: UserPrefsPatch = serde_json::from_str(r#"{}"#).unwrap();
         assert_eq!(patch.locale, None);

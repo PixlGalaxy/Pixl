@@ -189,7 +189,10 @@ impl Sources {
             Input::SpotifyShortLink(url) => self.expand_short_link(&url).await?,
             other => other,
         };
-        let single = |t: TrackInfo| Resolved { tracks: vec![t], playlist_name: None };
+        let single = |t: TrackInfo| Resolved {
+            tracks: vec![t],
+            playlist_name: None,
+        };
         match input {
             Input::Search(q) if q.is_empty() => Err(SourceError::NotFound("Empty search".into())),
             Input::Search(q) => {
@@ -198,7 +201,9 @@ impl Sources {
                     Some(t) => Some(t),
                     None => self.inner.yt.search_videos(&q, 1).await?.into_iter().next(),
                 };
-                found.map(single).ok_or_else(|| SourceError::NotFound(format!("No results for \"{q}\"")))
+                found
+                    .map(single)
+                    .ok_or_else(|| SourceError::NotFound(format!("No results for \"{q}\"")))
             }
             Input::YoutubeVideo { id, music } => match self.inner.yt.video(&id, music).await {
                 Ok(t) => Ok(single(t)),
@@ -206,32 +211,47 @@ impl Sources {
                 Err(SourceError::Http(_)) => {
                     let url = format!("https://www.youtube.com/watch?v={id}");
                     let (tracks, _) = self.inner.ytdlp.probe(&url, 1, owner).await?;
-                    Ok(Resolved { tracks, playlist_name: None })
+                    Ok(Resolved {
+                        tracks,
+                        playlist_name: None,
+                    })
                 }
                 Err(e) => Err(e),
             },
             Input::YoutubePlaylist { id, music } => {
                 let p = self.inner.yt.playlist(&id, music, limit).await?;
-                Ok(Resolved { tracks: p.tracks, playlist_name: p.title })
+                Ok(Resolved {
+                    tracks: p.tracks,
+                    playlist_name: p.title,
+                })
             }
             Input::SpotifyTrack(id) => Ok(single(self.spotify()?.track(&id).await?)),
             Input::SpotifyAlbum(id) => {
                 let c = self.spotify()?.album(&id, limit).await?;
-                Ok(Resolved { tracks: c.tracks, playlist_name: c.name })
+                Ok(Resolved {
+                    tracks: c.tracks,
+                    playlist_name: c.name,
+                })
             }
             Input::SpotifyPlaylist(id) => {
                 let c = self.spotify()?.playlist(&id, limit).await?;
                 if c.tracks.is_empty() {
                     return Err(SourceError::NotFound("That Spotify playlist is empty".into()));
                 }
-                Ok(Resolved { tracks: c.tracks, playlist_name: c.name })
+                Ok(Resolved {
+                    tracks: c.tracks,
+                    playlist_name: c.name,
+                })
             }
             Input::SpotifyUnsupported(_) | Input::SpotifyShortLink(_) => Err(SourceError::Unsupported(
                 "Only Spotify tracks, albums and playlists can be played".into(),
             )),
             Input::Url(url) => {
                 let (tracks, name) = self.inner.ytdlp.probe(&url, limit, owner).await?;
-                Ok(Resolved { tracks, playlist_name: name })
+                Ok(Resolved {
+                    tracks,
+                    playlist_name: name,
+                })
             }
         }
     }
@@ -273,8 +293,16 @@ impl Sources {
             None => (track.url.clone(), track.url.clone()),
         };
         let stream = self.inner.ytdlp.resolve_stream(&page_url, &key, owner).await?;
-        let work_dir = owner.track_uid.map(|t| self.inner.dirs.track_path(owner.guild_id, owner.voice_channel_id, t));
-        Ok(Playable { ytdlp_fallback: stream.needs_ytdlp, track, stream, page_url, work_dir })
+        let work_dir = owner
+            .track_uid
+            .map(|t| self.inner.dirs.track_path(owner.guild_id, owner.voice_channel_id, t));
+        Ok(Playable {
+            ytdlp_fallback: stream.needs_ytdlp,
+            track,
+            stream,
+            page_url,
+            work_dir,
+        })
     }
 
     /// Forget a cached stream URL (e.g. after the CDN answered 403).
@@ -291,11 +319,18 @@ impl Sources {
         }
         let limit = limit.clamp(1, 25);
         let key = format!("{}|{limit}", text::normalize(q));
-        if let Ok(Some(hit)) = self.inner.store.cache_get::<Vec<TrackInfo>>(SEARCH_CACHE_NS, &key).await {
+        if let Ok(Some(hit)) = self
+            .inner
+            .store
+            .cache_get::<Vec<TrackInfo>>(SEARCH_CACHE_NS, &key)
+            .await
+        {
             return Ok(hit);
         }
-        let (songs, videos) =
-            tokio::join!(self.inner.yt.search_songs(q, limit), self.inner.yt.search_videos(q, limit));
+        let (songs, videos) = tokio::join!(
+            self.inner.yt.search_songs(q, limit),
+            self.inner.yt.search_videos(q, limit)
+        );
         if let (Err(e), Err(_)) = (&songs, &videos) {
             return Err(SourceError::Http(e.to_string()));
         }
@@ -311,7 +346,11 @@ impl Sources {
         }
         out.truncate(limit);
         if !out.is_empty() {
-            let _ = self.inner.store.cache_put(SEARCH_CACHE_NS, &key, &out, self.inner.ttl).await;
+            let _ = self
+                .inner
+                .store
+                .cache_put(SEARCH_CACHE_NS, &key, &out, self.inner.ttl)
+                .await;
         }
         Ok(out)
     }
@@ -371,13 +410,23 @@ mod tests {
         assert_eq!(r.tracks.len(), 1);
         println!("search resolve: {} - {:?}", r.tracks[0].title, r.tracks[0].artists);
 
-        let r = s.resolve("https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI", 120, &owner).await.unwrap();
+        let r = s
+            .resolve(
+                "https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI",
+                120,
+                &owner,
+            )
+            .await
+            .unwrap();
         assert_eq!(r.tracks.len(), 120);
         println!("playlist: {:?} ({} tracks)", r.playlist_name, r.tracks.len());
 
         let r = s.resolve("https://youtu.be/dQw4w9WgXcQ", 10, &owner).await.unwrap();
         let p = s.prepare(&r.tracks[0], &owner).await.unwrap();
-        println!("prepare: format {:?} opus {} fallback {}", p.stream.format_id, p.stream.is_opus, p.ytdlp_fallback);
+        println!(
+            "prepare: format {:?} opus {} fallback {}",
+            p.stream.format_id, p.stream.is_opus, p.ytdlp_fallback
+        );
         assert!(p.work_dir.as_ref().unwrap().is_dir());
         assert!(procs.is_empty());
 
@@ -394,14 +443,20 @@ mod tests {
             isrc: Some("GBARL9300135".into()),
         };
         let p = s.prepare(&sp, &owner).await.unwrap();
-        println!("spotify prepare: matched {:?}, format {:?}", p.track.youtube_id, p.stream.format_id);
+        println!(
+            "spotify prepare: matched {:?}, format {:?}",
+            p.track.youtube_id, p.stream.format_id
+        );
         assert!(p.track.youtube_id.is_some());
 
         let res = s.search("never gonna give you up", 10).await.unwrap();
         assert!(res.len() >= 5);
         assert_eq!(res[0].origin, TrackOrigin::YoutubeMusic);
         let l = s.lyrics(&r.tracks[0]).await.unwrap();
-        println!("lyrics for video title: synced={}", l.as_ref().is_some_and(|l| l.synced.is_some()));
+        println!(
+            "lyrics for video title: synced={}",
+            l.as_ref().is_some_and(|l| l.synced.is_some())
+        );
 
         s.stream_dirs().remove_channel(10, 20).await;
         store.close().await;

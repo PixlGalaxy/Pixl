@@ -66,7 +66,11 @@ impl Store {
                 .await?;
         Ok(row.and_then(|(vector, updated_at)| {
             let vector = serde_json::from_str(vector.as_deref()?).ok()?;
-            Some(UserTaste { user_id, vector, updated_at })
+            Some(UserTaste {
+                user_id,
+                vector,
+                updated_at,
+            })
         }))
     }
 
@@ -94,7 +98,10 @@ impl Store {
         .bind(limit)
         .fetch_all(self.pool())
         .await?;
-        Ok(rows.into_iter().map(|(user_id, version)| StaleTaste { user_id, version }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(user_id, version)| StaleTaste { user_id, version })
+            .collect())
     }
 
     /// Page through computed taste vectors by user id (similarity job). Users with history
@@ -113,7 +120,11 @@ impl Store {
         Ok(rows
             .into_iter()
             .filter_map(|(user_id, v, updated_at)| {
-                Some(UserTaste { user_id, vector: serde_json::from_str(&v).ok()?, updated_at })
+                Some(UserTaste {
+                    user_id,
+                    vector: serde_json::from_str(&v).ok()?,
+                    updated_at,
+                })
             })
             .collect())
     }
@@ -151,7 +162,10 @@ impl Store {
     pub async fn replace_neighbors(&self, user_id: u64, neighbors: &[(u64, f64)]) -> Result<()> {
         let uid = sf(user_id);
         let mut tx = self.begin_write().await?;
-        sqlx::query("DELETE FROM user_neighbors WHERE user_id = ?").bind(uid).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM user_neighbors WHERE user_id = ?")
+            .bind(uid)
+            .execute(&mut *tx)
+            .await?;
         let rows: Vec<_> = neighbors.iter().filter(|(n, _)| *n != user_id).collect();
         for chunk in rows.chunks(300) {
             let mut qb: QueryBuilder<Sqlite> =
@@ -178,7 +192,10 @@ impl Store {
         .bind(limit)
         .fetch_all(self.pool())
         .await?;
-        Ok(rows.into_iter().map(|(user_id, score)| Neighbor { user_id, score }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(user_id, score)| Neighbor { user_id, score })
+            .collect())
     }
 
     /// Tracks popular with the user's neighbors that the user never played nor disliked,
@@ -192,7 +209,12 @@ impl Store {
         .fetch_all(self.pool())
         .await?;
         rows.iter()
-            .map(|r| Ok(DiscoverTrack { track: catalog_from_sqlite_row(r)?, score: r.try_get(CATALOG_COLUMN_COUNT)? }))
+            .map(|r| {
+                Ok(DiscoverTrack {
+                    track: catalog_from_sqlite_row(r)?,
+                    score: r.try_get(CATALOG_COLUMN_COUNT)?,
+                })
+            })
             .collect()
     }
 }
@@ -229,16 +251,29 @@ mod tests {
         let store = Store::open_in_memory().await.unwrap();
         let a = store.record_play(1, &track("a")).await.unwrap().unwrap();
         let b = store.ensure_track(&track("b")).await.unwrap();
-        let t = |tag: &str| Tag { tag: tag.into(), weight: 1.0, source: TagSource::Lastfm };
+        let t = |tag: &str| Tag {
+            tag: tag.into(),
+            weight: 1.0,
+            source: TagSource::Lastfm,
+        };
         store.write_track_tags(a, &[t("rock")]).await.unwrap();
         store.write_track_tags(b, &[t("jazz")]).await.unwrap();
-        store.set_feedback(1, &track("a"), Some(Feedback::Dislike)).await.unwrap();
+        store
+            .set_feedback(1, &track("a"), Some(Feedback::Dislike))
+            .await
+            .unwrap();
         store.set_feedback(1, &track("b"), Some(Feedback::Like)).await.unwrap();
         let mut inputs = store.taste_inputs(1).await.unwrap();
         inputs.sort_by(|x, y| x.tag.cmp(&y.tag));
         assert_eq!(inputs.len(), 2);
-        assert_eq!((inputs[0].tag.as_str(), inputs[0].play_count, inputs[0].feedback), ("jazz", 0, 1));
-        assert_eq!((inputs[1].tag.as_str(), inputs[1].play_count, inputs[1].feedback), ("rock", 1, -1));
+        assert_eq!(
+            (inputs[0].tag.as_str(), inputs[0].play_count, inputs[0].feedback),
+            ("jazz", 0, 1)
+        );
+        assert_eq!(
+            (inputs[1].tag.as_str(), inputs[1].play_count, inputs[1].feedback),
+            ("rock", 1, -1)
+        );
     }
 
     #[tokio::test]
@@ -251,10 +286,25 @@ mod tests {
         store.record_play(2, &track("mine")).await.unwrap();
         store.record_play(2, &track("hated")).await.unwrap();
         store.record_play(3, &track("hidden")).await.unwrap();
-        store.set_feedback(1, &track("hated"), Some(Feedback::Dislike)).await.unwrap();
+        store
+            .set_feedback(1, &track("hated"), Some(Feedback::Dislike))
+            .await
+            .unwrap();
 
-        store.replace_neighbors(1, &[(2, 0.8), (3, 0.5), (1, 1.0)]).await.unwrap();
-        store.update_user_prefs(3, &UserPrefsPatch { locale: None, history_enabled: Some(false) }).await.unwrap();
+        store
+            .replace_neighbors(1, &[(2, 0.8), (3, 0.5), (1, 1.0)])
+            .await
+            .unwrap();
+        store
+            .update_user_prefs(
+                3,
+                &UserPrefsPatch {
+                    locale: None,
+                    history_enabled: Some(false),
+                },
+            )
+            .await
+            .unwrap();
 
         let n = store.neighbors(1, 10).await.unwrap();
         assert_eq!(n, vec![Neighbor { user_id: 2, score: 0.8 }]);

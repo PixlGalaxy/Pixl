@@ -19,7 +19,12 @@ pub struct NodeGuildCommands {
 type Row = (u64, u64, i64, String);
 
 fn from_row((node_app_id, guild_id, registered_at, commands_hash): Row) -> NodeGuildCommands {
-    NodeGuildCommands { node_app_id, guild_id, registered_at, commands_hash }
+    NodeGuildCommands {
+        node_app_id,
+        guild_id,
+        registered_at,
+        commands_hash,
+    }
 }
 
 impl Store {
@@ -87,7 +92,10 @@ mod tests {
         store.set_node_guild_commands(11, 1, "h1").await.unwrap();
         store.set_node_guild_commands(10, 1, "h2").await.unwrap();
 
-        assert_eq!(store.node_guild_commands(10, 1).await.unwrap().unwrap().commands_hash, "h2");
+        assert_eq!(
+            store.node_guild_commands(10, 1).await.unwrap().unwrap().commands_hash,
+            "h2"
+        );
         let list = store.list_node_guild_commands(10).await.unwrap();
         assert_eq!(list.iter().map(|r| r.guild_id).collect::<Vec<_>>(), vec![1, 2]);
 

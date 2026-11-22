@@ -67,7 +67,10 @@ impl YouTube {
             .post(format!("{base}/{endpoint}?prettyPrint=false"))
             .header(reqwest::header::USER_AGENT, BROWSER_UA)
             .header(reqwest::header::ORIGIN, origin)
-            .header("X-Youtube-Client-Name", if matches!(client, Client::Web) { "1" } else { "67" })
+            .header(
+                "X-Youtube-Client-Name",
+                if matches!(client, Client::Web) { "1" } else { "67" },
+            )
             .header("X-Youtube-Client-Version", version)
             .json(&body)
             .send()
@@ -93,7 +96,9 @@ impl YouTube {
         if id.starts_with("RD") {
             return self.mix(id, music, limit).await;
         }
-        let first = self.call(Client::Web, "browse", json!({ "browseId": format!("VL{id}") })).await?;
+        let first = self
+            .call(Client::Web, "browse", json!({ "browseId": format!("VL{id}") }))
+            .await?;
         let title = playlist_title(&first);
         let (mut tracks, mut token) = parse_playlist_page(first_items(&first), music);
         if tracks.is_empty() && token.is_none() {
@@ -107,9 +112,10 @@ impl YouTube {
         while tracks.len() < limit && pages < 500 {
             let Some(tok) = token.take() else { break };
             let page = self.call(Client::Web, "browse", json!({ "continuation": tok })).await?;
-            let items = page["onResponseReceivedActions"]
-                .as_array()
-                .and_then(|a| a.iter().find_map(|x| x["appendContinuationItemsAction"]["continuationItems"].as_array()));
+            let items = page["onResponseReceivedActions"].as_array().and_then(|a| {
+                a.iter()
+                    .find_map(|x| x["appendContinuationItemsAction"]["continuationItems"].as_array())
+            });
             let Some(items) = items else { break };
             let (more, next) = parse_playlist_page(Some(items), music);
             if more.is_empty() {
@@ -134,7 +140,14 @@ impl YouTube {
             let title = text_of(&r["title"]).unwrap_or_default();
             let channel = text_of(&r["shortBylineText"]).or_else(|| text_of(&r["longBylineText"]));
             let duration = text_of(&r["lengthText"]).and_then(|t| parse_clock(&t));
-            tracks.push(web_track(vid, title, channel, duration, best_thumb(&r["thumbnail"]["thumbnails"]), music));
+            tracks.push(web_track(
+                vid,
+                title,
+                channel,
+                duration,
+                best_thumb(&r["thumbnail"]["thumbnails"]),
+                music,
+            ));
         }
         dedup(&mut tracks);
         tracks.truncate(limit);
@@ -147,7 +160,13 @@ impl YouTube {
 
     /// Regular YouTube video search.
     pub async fn search_videos(&self, query: &str, limit: usize) -> SourceResult<Vec<TrackInfo>> {
-        let v = self.call(Client::Web, "search", json!({ "query": query, "params": WEB_SEARCH_VIDEOS })).await?;
+        let v = self
+            .call(
+                Client::Web,
+                "search",
+                json!({ "query": query, "params": WEB_SEARCH_VIDEOS }),
+            )
+            .await?;
         let mut out = parse_web_search(&v);
         out.truncate(limit);
         Ok(out)
@@ -155,7 +174,13 @@ impl YouTube {
 
     /// YouTube Music search restricted to songs. Also used with an ISRC as the query.
     pub async fn search_songs(&self, query: &str, limit: usize) -> SourceResult<Vec<TrackInfo>> {
-        let v = self.call(Client::Remix, "search", json!({ "query": query, "params": REMIX_SEARCH_SONGS })).await?;
+        let v = self
+            .call(
+                Client::Remix,
+                "search",
+                json!({ "query": query, "params": REMIX_SEARCH_SONGS }),
+            )
+            .await?;
         let mut out = parse_music_search(&v);
         out.truncate(limit);
         Ok(out)
@@ -196,7 +221,11 @@ fn runs_text(v: &Value) -> Option<String> {
 
 /// `{simpleText}`, `{runs}` or `{content}` text containers.
 fn text_of(v: &Value) -> Option<String> {
-    v["simpleText"].as_str().or_else(|| v["content"].as_str()).map(str::to_owned).or_else(|| runs_text(v))
+    v["simpleText"]
+        .as_str()
+        .or_else(|| v["content"].as_str())
+        .map(str::to_owned)
+        .or_else(|| runs_text(v))
 }
 
 fn best_thumb(list: &Value) -> Option<String> {
@@ -204,7 +233,13 @@ fn best_thumb(list: &Value) -> Option<String> {
     arr.iter()
         .max_by_key(|t| t["width"].as_u64().unwrap_or(0) * t["height"].as_u64().unwrap_or(0))
         .and_then(|t| t["url"].as_str())
-        .map(|u| if u.starts_with("//") { format!("https:{u}") } else { u.to_owned() })
+        .map(|u| {
+            if u.starts_with("//") {
+                format!("https:{u}")
+            } else {
+                u.to_owned()
+            }
+        })
 }
 
 /// YouTube Music art URLs carry their size (`=w120-h120-...`); ask for a large one.
@@ -250,11 +285,19 @@ fn web_track(
 ) -> TrackInfo {
     TrackInfo {
         title,
-        artists: channel.map(|c| clean_channel(&c)).filter(|c| !c.is_empty()).into_iter().collect(),
+        artists: channel
+            .map(|c| clean_channel(&c))
+            .filter(|c| !c.is_empty())
+            .into_iter()
+            .collect(),
         duration_ms,
         thumbnail: thumb.or_else(|| Some(format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))),
         url: video_url(id, music),
-        origin: if music { TrackOrigin::YoutubeMusic } else { TrackOrigin::Youtube },
+        origin: if music {
+            TrackOrigin::YoutubeMusic
+        } else {
+            TrackOrigin::Youtube
+        },
         youtube_id: Some(id.to_owned()),
         spotify_id: None,
         isrc: None,
@@ -270,10 +313,21 @@ pub(crate) fn parse_video_details(v: &Value, music: bool) -> Option<TrackInfo> {
     let d = &v["videoDetails"];
     let id = d["videoId"].as_str()?;
     let title = d["title"].as_str()?.to_owned();
-    let duration = d["lengthSeconds"].as_str().and_then(|s| s.parse::<u64>().ok()).filter(|s| *s > 0).map(|s| s * 1000);
+    let duration = d["lengthSeconds"]
+        .as_str()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .map(|s| s * 1000);
     let thumb = best_thumb(&v["microformat"]["playerMicroformatRenderer"]["thumbnail"]["thumbnails"])
         .or_else(|| best_thumb(&d["thumbnail"]["thumbnails"]));
-    Some(web_track(id, title, d["author"].as_str().map(str::to_owned), duration, thumb, music))
+    Some(web_track(
+        id,
+        title,
+        d["author"].as_str().map(str::to_owned),
+        duration,
+        thumb,
+        music,
+    ))
 }
 
 fn playlist_title(v: &Value) -> Option<String> {
@@ -326,7 +380,8 @@ fn parse_lockup(l: &Value, music: bool) -> Option<TrackInfo> {
     let id = l["contentId"].as_str()?;
     let meta = &l["metadata"]["lockupMetadataViewModel"];
     let title = meta["title"]["content"].as_str()?.to_owned();
-    let channel = meta["metadata"]["contentMetadataViewModel"]["metadataRows"][0]["metadataParts"][0]["text"]["content"]
+    let channel = meta["metadata"]["contentMetadataViewModel"]["metadataRows"][0]["metadataParts"][0]["text"]
+        ["content"]
         .as_str()
         .map(str::to_owned);
     let mut badges = Vec::new();
@@ -343,25 +398,45 @@ fn parse_playlist_video_renderer(r: &Value, music: bool) -> Option<TrackInfo> {
     }
     let id = r["videoId"].as_str()?;
     let title = text_of(&r["title"])?;
-    let duration = r["lengthSeconds"].as_str().and_then(|s| s.parse::<u64>().ok()).map(|s| s * 1000);
-    Some(web_track(id, title, text_of(&r["shortBylineText"]), duration, best_thumb(&r["thumbnail"]["thumbnails"]), music))
+    let duration = r["lengthSeconds"]
+        .as_str()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|s| s * 1000);
+    Some(web_track(
+        id,
+        title,
+        text_of(&r["shortBylineText"]),
+        duration,
+        best_thumb(&r["thumbnail"]["thumbnails"]),
+        music,
+    ))
 }
 
 pub(crate) fn parse_web_search(v: &Value) -> Vec<TrackInfo> {
     // Only the primary results; shelves ("People also watched") live under the same section list,
     // so take the top-level itemSectionRenderer entries.
     let mut out = Vec::new();
-    let sections = v["contents"]["twoColumnSearchResultsRenderer"]["primaryContents"]["sectionListRenderer"]["contents"]
+    let sections = v["contents"]["twoColumnSearchResultsRenderer"]["primaryContents"]["sectionListRenderer"]
+        ["contents"]
         .as_array();
     for sec in sections.into_iter().flatten() {
         for it in sec["itemSectionRenderer"]["contents"].as_array().into_iter().flatten() {
             let r = &it["videoRenderer"];
             let Some(id) = r["videoId"].as_str() else { continue };
             // Live streams have no length; skip upcoming/live entries.
-            let Some(duration) = text_of(&r["lengthText"]).and_then(|t| parse_clock(&t)) else { continue };
+            let Some(duration) = text_of(&r["lengthText"]).and_then(|t| parse_clock(&t)) else {
+                continue;
+            };
             let Some(title) = text_of(&r["title"]) else { continue };
             let channel = text_of(&r["ownerText"]).or_else(|| text_of(&r["longBylineText"]));
-            out.push(web_track(id, title, channel, Some(duration), best_thumb(&r["thumbnail"]["thumbnails"]), false));
+            out.push(web_track(
+                id,
+                title,
+                channel,
+                Some(duration),
+                best_thumb(&r["thumbnail"]["thumbnails"]),
+                false,
+            ));
         }
     }
     dedup(&mut out);
@@ -382,7 +457,11 @@ fn parse_music_item(it: &Value) -> Option<TrackInfo> {
     let title: String = title_runs.iter().filter_map(|r| r["text"].as_str()).collect();
     let id = it["playlistItemData"]["videoId"]
         .as_str()
-        .or_else(|| title_runs.iter().find_map(|r| r["navigationEndpoint"]["watchEndpoint"]["videoId"].as_str()))
+        .or_else(|| {
+            title_runs
+                .iter()
+                .find_map(|r| r["navigationEndpoint"]["watchEndpoint"]["videoId"].as_str())
+        })
         .or_else(|| {
             it["overlay"]["musicItemThumbnailOverlayRenderer"]["content"]["musicPlayButtonRenderer"]
                 ["playNavigationEndpoint"]["watchEndpoint"]["videoId"]
@@ -491,7 +570,10 @@ mod tests {
         assert_eq!(r[0].title, "Tití Me Preguntó");
         assert_eq!(r[0].artists, vec!["Bad Bunny"]);
         assert_eq!(r[0].duration_ms, Some(244_000));
-        assert_eq!(r[0].thumbnail.as_deref(), Some("https://lh3.googleusercontent.com/abc=w544-h544-l90-rj"));
+        assert_eq!(
+            r[0].thumbnail.as_deref(),
+            Some("https://lh3.googleusercontent.com/abc=w544-h544-l90-rj")
+        );
         assert_eq!(r[0].url, "https://music.youtube.com/watch?v=juRFjpB5Ppg");
         assert_eq!(r[0].origin, TrackOrigin::YoutubeMusic);
         assert_eq!(r[1].artists, vec!["Arcángel", "Bad Bunny"]);
@@ -559,9 +641,11 @@ mod tests {
         assert_eq!(tracks[0].duration_ms, Some(235_000));
         assert_eq!(token.as_deref(), Some("NEXT"));
 
-        let legacy = vec![json!({ "playlistVideoRenderer": { "videoId": "ccccccccccc", "title": { "runs": [ { "text": "Three" } ] },
+        let legacy = vec![
+            json!({ "playlistVideoRenderer": { "videoId": "ccccccccccc", "title": { "runs": [ { "text": "Three" } ] },
             "shortBylineText": { "runs": [ { "text": "Chan" } ] }, "lengthSeconds": "61", "thumbnail": { "thumbnails": [] } } }),
-            json!({ "playlistVideoRenderer": { "videoId": "ddddddddddd", "isPlayable": false, "title": { "simpleText": "[Deleted video]" } } })];
+            json!({ "playlistVideoRenderer": { "videoId": "ddddddddddd", "isPlayable": false, "title": { "simpleText": "[Deleted video]" } } }),
+        ];
         let (tracks, token) = parse_playlist_page(Some(&legacy), true);
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0].duration_ms, Some(61_000));
@@ -579,14 +663,23 @@ mod tests {
         let t = parse_video_details(&v, false).unwrap();
         assert_eq!(t.duration_ms, Some(213_000));
         assert_eq!(t.artists, vec!["Rick Astley"]);
-        assert_eq!(t.thumbnail.as_deref(), Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"));
+        assert_eq!(
+            t.thumbnail.as_deref(),
+            Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg")
+        );
         assert!(parse_video_details(&json!({}), false).is_none());
     }
 
     #[test]
     fn thumb_upscale() {
-        assert_eq!(upscale_music_thumb("https://x/abc=w120-h120-l90-rj"), "https://x/abc=w544-h544-l90-rj");
-        assert_eq!(upscale_music_thumb("https://i.ytimg.com/vi/x/hq.jpg"), "https://i.ytimg.com/vi/x/hq.jpg");
+        assert_eq!(
+            upscale_music_thumb("https://x/abc=w120-h120-l90-rj"),
+            "https://x/abc=w544-h544-l90-rj"
+        );
+        assert_eq!(
+            upscale_music_thumb("https://i.ytimg.com/vi/x/hq.jpg"),
+            "https://i.ytimg.com/vi/x/hq.jpg"
+        );
     }
 
     // ---- network (run with: cargo test -- --ignored innertube_)
@@ -598,9 +691,15 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn innertube_web_search() {
-        let r = yt().search_videos("rick astley never gonna give you up", 5).await.unwrap();
+        let r = yt()
+            .search_videos("rick astley never gonna give you up", 5)
+            .await
+            .unwrap();
         assert!(!r.is_empty());
-        assert!(r.iter().any(|t| t.youtube_id.as_deref() == Some("dQw4w9WgXcQ")), "{r:#?}");
+        assert!(
+            r.iter().any(|t| t.youtube_id.as_deref() == Some("dQw4w9WgXcQ")),
+            "{r:#?}"
+        );
     }
 
     #[tokio::test]
@@ -618,10 +717,16 @@ mod tests {
     #[ignore]
     async fn innertube_playlist_all_pages() {
         // Large public playlist (> 100 items) to exercise continuations.
-        let p = yt().playlist("PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI", false, 1000).await.unwrap();
+        let p = yt()
+            .playlist("PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI", false, 1000)
+            .await
+            .unwrap();
         assert!(p.title.is_some());
         assert!(p.tracks.len() > 100, "only {} tracks", p.tracks.len());
-        let p2 = yt().playlist("PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI", false, 150).await.unwrap();
+        let p2 = yt()
+            .playlist("PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI", false, 150)
+            .await
+            .unwrap();
         assert_eq!(p2.tracks.len(), 150);
         // Same order as the full fetch.
         assert_eq!(p2.tracks[120].youtube_id, p.tracks[120].youtube_id);

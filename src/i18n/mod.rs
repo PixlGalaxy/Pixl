@@ -24,8 +24,15 @@ impl I18n {
 
     /// Translate `key`, replacing `{name}` placeholders. Missing keys fall back to English, then to the key.
     pub fn t(&self, key: &str, args: &[(&str, &str)]) -> String {
-        let template = self.strings.get(key).or_else(|| self.fallback.get(key)).map(String::as_str).unwrap_or(key);
-        args.iter().fold(template.to_owned(), |acc, (name, value)| acc.replace(&format!("{{{name}}}"), value))
+        let template = self
+            .strings
+            .get(key)
+            .or_else(|| self.fallback.get(key))
+            .map(String::as_str)
+            .unwrap_or(key);
+        args.iter().fold(template.to_owned(), |acc, (name, value)| {
+            acc.replace(&format!("{{{name}}}"), value)
+        })
     }
 }
 
@@ -35,7 +42,11 @@ fn flatten(raw: &str) -> Result<HashMap<String, String>> {
         match value {
             serde_json::Value::Object(map) => {
                 for (k, v) in map {
-                    let key = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+                    let key = if prefix.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{prefix}.{k}")
+                    };
                     walk(&key, v, out);
                 }
             }
@@ -60,5 +71,33 @@ mod tests {
         let i18n = I18n::load("es").unwrap();
         assert!(!i18n.t("common.error", &[]).is_empty());
         assert_eq!(i18n.t("does.not.exist", &[]), "does.not.exist");
+    }
+}
+
+#[cfg(test)]
+mod parity {
+    use super::*;
+
+    #[test]
+    fn every_locale_has_the_same_keys() {
+        let en = flatten(EN).unwrap();
+        let es = flatten(ES).unwrap();
+        let mut missing: Vec<_> = en.keys().filter(|k| !es.contains_key(*k)).collect();
+        missing.extend(es.keys().filter(|k| !en.contains_key(*k)));
+        assert!(missing.is_empty(), "keys missing in a locale: {missing:?}");
+        // Placeholders must match too.
+        for (k, v) in &en {
+            let ph = |s: &str| {
+                let mut p: Vec<String> = s
+                    .split('{')
+                    .skip(1)
+                    .filter_map(|x| x.split('}').next())
+                    .map(String::from)
+                    .collect();
+                p.sort();
+                p
+            };
+            assert_eq!(ph(v), ph(&es[k]), "placeholders differ for {k}");
+        }
     }
 }

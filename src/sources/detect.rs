@@ -4,8 +4,14 @@ use reqwest::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
-    YoutubeVideo { id: String, music: bool },
-    YoutubePlaylist { id: String, music: bool },
+    YoutubeVideo {
+        id: String,
+        music: bool,
+    },
+    YoutubePlaylist {
+        id: String,
+        music: bool,
+    },
     SpotifyTrack(String),
     SpotifyAlbum(String),
     SpotifyPlaylist(String),
@@ -25,7 +31,11 @@ pub fn detect(raw: &str) -> Input {
     let Some(url) = parse_url(q) else {
         return Input::Search(q.to_owned());
     };
-    let host = url.host_str().unwrap_or("").trim_start_matches("www.").to_ascii_lowercase();
+    let host = url
+        .host_str()
+        .unwrap_or("")
+        .trim_start_matches("www.")
+        .to_ascii_lowercase();
     match host.as_str() {
         "youtube.com" | "m.youtube.com" | "music.youtube.com" | "youtube-nocookie.com" | "youtu.be" => {
             youtube(&url, &host).unwrap_or_else(|| Input::Url(url.to_string()))
@@ -47,7 +57,10 @@ fn parse_url(q: &str) -> Option<Url> {
     // Bare "youtube.com/watch?v=..." style input.
     let head = q.split(['/', '?']).next().unwrap_or("");
     let looks_like_host = head.contains('.')
-        && head.rsplit('.').next().is_some_and(|tld| tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic()))
+        && head
+            .rsplit('.')
+            .next()
+            .is_some_and(|tld| tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic()))
         && head.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
     if looks_like_host && q.contains('/') {
         return Url::parse(&format!("https://{q}")).ok();
@@ -56,7 +69,10 @@ fn parse_url(q: &str) -> Option<Url> {
 }
 
 fn query(url: &Url, key: &str) -> Option<String> {
-    url.query_pairs().find(|(k, _)| k == key).map(|(_, v)| v.into_owned()).filter(|v| !v.is_empty())
+    url.query_pairs()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.into_owned())
+        .filter(|v| !v.is_empty())
 }
 
 pub fn is_video_id(s: &str) -> bool {
@@ -69,7 +85,10 @@ fn is_playlist_id(s: &str) -> bool {
 
 fn youtube(url: &Url, host: &str) -> Option<Input> {
     let music = host == "music.youtube.com";
-    let segs: Vec<&str> = url.path_segments().map(|s| s.filter(|p| !p.is_empty()).collect()).unwrap_or_default();
+    let segs: Vec<&str> = url
+        .path_segments()
+        .map(|s| s.filter(|p| !p.is_empty()).collect())
+        .unwrap_or_default();
     let list = query(url, "list").filter(|l| is_playlist_id(l));
     let video = if host == "youtu.be" {
         segs.first().map(|s| s.to_string())
@@ -89,19 +108,25 @@ fn youtube(url: &Url, host: &str) -> Option<Input> {
         (Some(id), None) => Some(Input::YoutubeVideo { id, music }),
         (None, None) => match segs.as_slice() {
             // music.youtube.com/browse/VL<playlist>
-            ["browse", b] if b.starts_with("VL") && b.len() > 2 => {
-                Some(Input::YoutubePlaylist { id: b[2..].to_owned(), music })
-            }
+            ["browse", b] if b.starts_with("VL") && b.len() > 2 => Some(Input::YoutubePlaylist {
+                id: b[2..].to_owned(),
+                music,
+            }),
             _ => None,
         },
     }
 }
 
 fn spotify(url: &Url) -> Input {
-    let segs: Vec<&str> = url.path_segments().map(|s| s.filter(|p| !p.is_empty()).collect()).unwrap_or_default();
+    let segs: Vec<&str> = url
+        .path_segments()
+        .map(|s| s.filter(|p| !p.is_empty()).collect())
+        .unwrap_or_default();
     // Drop locale prefixes ("intl-es") and the embed prefix.
-    let segs: Vec<&str> =
-        segs.into_iter().skip_while(|s| s.starts_with("intl-") || *s == "embed").collect();
+    let segs: Vec<&str> = segs
+        .into_iter()
+        .skip_while(|s| s.starts_with("intl-") || *s == "embed")
+        .collect();
     // Legacy user playlist URLs: /user/{u}/playlist/{id}
     let segs = match segs.as_slice() {
         ["user", _, rest @ ..] if !rest.is_empty() => rest.to_vec(),
@@ -165,26 +190,46 @@ mod tests {
         ] {
             assert_eq!(detect(u), video("dQw4w9WgXcQ", false), "{u}");
         }
-        assert_eq!(detect("https://music.youtube.com/watch?v=dQw4w9WgXcQ&feature=share"), video("dQw4w9WgXcQ", true));
+        assert_eq!(
+            detect("https://music.youtube.com/watch?v=dQw4w9WgXcQ&feature=share"),
+            video("dQw4w9WgXcQ", true)
+        );
     }
 
     #[test]
     fn youtube_playlists() {
         let id = "PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI";
-        assert_eq!(detect(&format!("https://www.youtube.com/playlist?list={id}")), playlist(id, false));
-        assert_eq!(detect(&format!("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list={id}&index=3")), playlist(id, false));
-        assert_eq!(detect(&format!("https://youtu.be/dQw4w9WgXcQ?list={id}")), playlist(id, false));
+        assert_eq!(
+            detect(&format!("https://www.youtube.com/playlist?list={id}")),
+            playlist(id, false)
+        );
+        assert_eq!(
+            detect(&format!(
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list={id}&index=3"
+            )),
+            playlist(id, false)
+        );
+        assert_eq!(
+            detect(&format!("https://youtu.be/dQw4w9WgXcQ?list={id}")),
+            playlist(id, false)
+        );
         assert_eq!(
             detect("https://music.youtube.com/playlist?list=OLAK5uy_kq0yXm5W2-Bf3Lr0b8YRZ9b2b3Q_Y8rXo"),
             playlist("OLAK5uy_kq0yXm5W2-Bf3Lr0b8YRZ9b2b3Q_Y8rXo", true)
         );
-        assert_eq!(detect(&format!("https://music.youtube.com/browse/VL{id}")), playlist(id, true));
+        assert_eq!(
+            detect(&format!("https://music.youtube.com/browse/VL{id}")),
+            playlist(id, true)
+        );
         // Mix with a video: play the video.
         assert_eq!(
             detect("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&start_radio=1"),
             video("dQw4w9WgXcQ", false)
         );
-        assert_eq!(detect("https://www.youtube.com/playlist?list=RDCLAK5uy_abc"), playlist("RDCLAK5uy_abc", false));
+        assert_eq!(
+            detect("https://www.youtube.com/playlist?list=RDCLAK5uy_abc"),
+            playlist("RDCLAK5uy_abc", false)
+        );
     }
 
     #[test]
@@ -196,29 +241,65 @@ mod tests {
     #[test]
     fn spotify_urls_and_uris() {
         let id = "4uLU6hMCjMI75M1A2tKUQC";
-        assert_eq!(detect(&format!("https://open.spotify.com/track/{id}?si=x")), Input::SpotifyTrack(id.into()));
-        assert_eq!(detect(&format!("https://open.spotify.com/intl-es/track/{id}")), Input::SpotifyTrack(id.into()));
-        assert_eq!(detect(&format!("https://open.spotify.com/intl-pt-BR/album/{id}")), Input::SpotifyAlbum(id.into()));
-        assert_eq!(detect(&format!("https://open.spotify.com/playlist/{id}")), Input::SpotifyPlaylist(id.into()));
-        assert_eq!(detect(&format!("https://open.spotify.com/embed/playlist/{id}")), Input::SpotifyPlaylist(id.into()));
+        assert_eq!(
+            detect(&format!("https://open.spotify.com/track/{id}?si=x")),
+            Input::SpotifyTrack(id.into())
+        );
+        assert_eq!(
+            detect(&format!("https://open.spotify.com/intl-es/track/{id}")),
+            Input::SpotifyTrack(id.into())
+        );
+        assert_eq!(
+            detect(&format!("https://open.spotify.com/intl-pt-BR/album/{id}")),
+            Input::SpotifyAlbum(id.into())
+        );
+        assert_eq!(
+            detect(&format!("https://open.spotify.com/playlist/{id}")),
+            Input::SpotifyPlaylist(id.into())
+        );
+        assert_eq!(
+            detect(&format!("https://open.spotify.com/embed/playlist/{id}")),
+            Input::SpotifyPlaylist(id.into())
+        );
         assert_eq!(
             detect(&format!("https://open.spotify.com/user/someone/playlist/{id}")),
             Input::SpotifyPlaylist(id.into())
         );
-        assert_eq!(detect(&format!("open.spotify.com/album/{id}")), Input::SpotifyAlbum(id.into()));
+        assert_eq!(
+            detect(&format!("open.spotify.com/album/{id}")),
+            Input::SpotifyAlbum(id.into())
+        );
         assert_eq!(detect(&format!("spotify:track:{id}")), Input::SpotifyTrack(id.into()));
         assert_eq!(detect(&format!("spotify:album:{id}")), Input::SpotifyAlbum(id.into()));
-        assert_eq!(detect(&format!("spotify:user:someone:playlist:{id}")), Input::SpotifyPlaylist(id.into()));
-        assert!(matches!(detect(&format!("https://open.spotify.com/artist/{id}")), Input::SpotifyUnsupported(_)));
+        assert_eq!(
+            detect(&format!("spotify:user:someone:playlist:{id}")),
+            Input::SpotifyPlaylist(id.into())
+        );
+        assert!(matches!(
+            detect(&format!("https://open.spotify.com/artist/{id}")),
+            Input::SpotifyUnsupported(_)
+        ));
         assert!(matches!(detect("spotify:track:bad"), Input::SpotifyUnsupported(_)));
-        assert!(matches!(detect("https://spotify.link/AbCdEf"), Input::SpotifyShortLink(_)));
+        assert!(matches!(
+            detect("https://spotify.link/AbCdEf"),
+            Input::SpotifyShortLink(_)
+        ));
     }
 
     #[test]
     fn other_urls_and_search() {
-        assert_eq!(detect("https://soundcloud.com/a/b"), Input::Url("https://soundcloud.com/a/b".into()));
-        assert_eq!(detect("bandcamp.com/track/x"), Input::Url("https://bandcamp.com/track/x".into()));
-        assert_eq!(detect("bad bunny titi me pregunto"), Input::Search("bad bunny titi me pregunto".into()));
+        assert_eq!(
+            detect("https://soundcloud.com/a/b"),
+            Input::Url("https://soundcloud.com/a/b".into())
+        );
+        assert_eq!(
+            detect("bandcamp.com/track/x"),
+            Input::Url("https://bandcamp.com/track/x".into())
+        );
+        assert_eq!(
+            detect("bad bunny titi me pregunto"),
+            Input::Search("bad bunny titi me pregunto".into())
+        );
         assert_eq!(detect("despacito"), Input::Search("despacito".into()));
         assert_eq!(detect("AC/DC"), Input::Search("AC/DC".into()));
         assert_eq!(detect("Mr. Brightside"), Input::Search("Mr. Brightside".into()));

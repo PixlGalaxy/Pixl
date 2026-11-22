@@ -70,7 +70,10 @@ pub struct SessionRecord {
 
 impl SessionRecord {
     pub fn key(&self) -> SessionKey {
-        SessionKey { guild_id: self.guild_id, voice_channel_id: self.voice_channel_id }
+        SessionKey {
+            guild_id: self.guild_id,
+            voice_channel_id: self.voice_channel_id,
+        }
     }
 }
 
@@ -141,7 +144,10 @@ async fn write_session(conn: &mut SqliteConnection, s: &SessionRecord, tracks: O
         .await?;
     // 6 binds per row; 500 rows stay far below SQLite's parameter limit.
     for (chunk_no, chunk) in tracks.chunks(500).enumerate() {
-        let encoded = chunk.iter().map(|t| serde_json::to_string(&t.info)).collect::<Result<Vec<_>, _>>()?;
+        let encoded = chunk
+            .iter()
+            .map(|t| serde_json::to_string(&t.info))
+            .collect::<Result<Vec<_>, _>>()?;
         let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
             "INSERT INTO session_tracks (guild_id, voice_channel_id, position, uid, info, requested_by) ",
         );
@@ -200,18 +206,30 @@ impl Store {
         .bind(sf(key.voice_channel_id))
         .fetch_all(self.pool())
         .await?;
-        let tracks = rows.into_iter().filter_map(|(uid, info, by)| decode_track(uid, &info, by)).collect();
-        Ok(Some(SavedSession { session: session_from_row(row), tracks }))
+        let tracks = rows
+            .into_iter()
+            .filter_map(|(uid, info, by)| decode_track(uid, &info, by))
+            .collect();
+        Ok(Some(SavedSession {
+            session: session_from_row(row),
+            tracks,
+        }))
     }
 
     /// Every saved session with its tracks (boot-time resume). Two queries regardless of the count.
     pub async fn list_sessions(&self) -> Result<Vec<SavedSession>> {
-        let rows: Vec<SessionRow> =
-            sqlx::query_as(&format!("SELECT {SESSION_COLUMNS} FROM sessions ORDER BY guild_id, voice_channel_id"))
-                .fetch_all(self.pool())
-                .await?;
-        let mut out: Vec<SavedSession> =
-            rows.into_iter().map(|r| SavedSession { session: session_from_row(r), tracks: Vec::new() }).collect();
+        let rows: Vec<SessionRow> = sqlx::query_as(&format!(
+            "SELECT {SESSION_COLUMNS} FROM sessions ORDER BY guild_id, voice_channel_id"
+        ))
+        .fetch_all(self.pool())
+        .await?;
+        let mut out: Vec<SavedSession> = rows
+            .into_iter()
+            .map(|r| SavedSession {
+                session: session_from_row(r),
+                tracks: Vec::new(),
+            })
+            .collect();
         let index: HashMap<SessionKey, usize> = out.iter().enumerate().map(|(i, s)| (s.session.key(), i)).collect();
 
         let tracks: Vec<(u64, u64, String, String, u64)> = sqlx::query_as(
@@ -221,9 +239,13 @@ impl Store {
         .fetch_all(self.pool())
         .await?;
         for (guild_id, voice_channel_id, uid, info, by) in tracks {
-            if let (Some(&i), Some(t)) =
-                (index.get(&SessionKey { guild_id, voice_channel_id }), decode_track(uid, &info, by))
-            {
+            if let (Some(&i), Some(t)) = (
+                index.get(&SessionKey {
+                    guild_id,
+                    voice_channel_id,
+                }),
+                decode_track(uid, &info, by),
+            ) {
                 out[i].tracks.push(t);
             }
         }
@@ -233,7 +255,11 @@ impl Store {
 
 fn decode_track(uid: String, info: &str, requested_by: u64) -> Option<SessionTrack> {
     match serde_json::from_str::<TrackInfo>(info) {
-        Ok(info) => Some(SessionTrack { uid, info, requested_by }),
+        Ok(info) => Some(SessionTrack {
+            uid,
+            info,
+            requested_by,
+        }),
         Err(e) => {
             warn!(%uid, error = %e, "dropping undecodable saved track");
             None
@@ -264,9 +290,10 @@ fn coalesce(old: PendingOp, new: PendingOp) -> PendingOp {
             PendingOp::Upsert { session, tracks }
         }
         // Delete then a metadata-only upsert: the old tracks must not survive.
-        (PendingOp::Delete, PendingOp::Upsert { session, tracks: None }) => {
-            PendingOp::Upsert { session, tracks: Some(Vec::new()) }
-        }
+        (PendingOp::Delete, PendingOp::Upsert { session, tracks: None }) => PendingOp::Upsert {
+            session,
+            tracks: Some(Vec::new()),
+        },
     }
 }
 
@@ -309,7 +336,9 @@ impl SessionWriter {
     /// Write everything queued so far and wait for it. Returns how many sessions were written.
     pub async fn flush_now(&self) -> Result<usize> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send(Msg::Flush(tx)).map_err(|_| anyhow!("session writer stopped"))?;
+        self.tx
+            .send(Msg::Flush(tx))
+            .map_err(|_| anyhow!("session writer stopped"))?;
         rx.await.map_err(|_| anyhow!("session writer stopped"))?
     }
 }
@@ -415,7 +444,13 @@ mod tests {
     }
 
     fn tracks(n: usize) -> Vec<SessionTrack> {
-        (0..n).map(|i| SessionTrack { uid: format!("u{i}"), info: track(&format!("v{i}")), requested_by: 42 }).collect()
+        (0..n)
+            .map(|i| SessionTrack {
+                uid: format!("u{i}"),
+                info: track(&format!("v{i}")),
+                requested_by: 42,
+            })
+            .collect()
     }
 
     #[tokio::test]
@@ -443,7 +478,10 @@ mod tests {
 
         assert!(store.delete_session(s.key()).await.unwrap());
         assert!(store.get_session(s.key()).await.unwrap().is_none());
-        let n: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM session_tracks").fetch_one(store.pool()).await.unwrap();
+        let n: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM session_tracks")
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
         assert_eq!(n.0, 2, "cascade removed the deleted session's tracks");
     }
 
@@ -451,7 +489,14 @@ mod tests {
     async fn large_queue_chunks() {
         let store = Store::open_in_memory().await.unwrap();
         store.save_session_full(&record(1, 1, 0), &tracks(1203)).await.unwrap();
-        let got = store.get_session(SessionKey { guild_id: 1, voice_channel_id: 1 }).await.unwrap().unwrap();
+        let got = store
+            .get_session(SessionKey {
+                guild_id: 1,
+                voice_channel_id: 1,
+            })
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(got.tracks.len(), 1203);
         assert_eq!(got.tracks[1202].uid, "u1202");
     }
@@ -466,23 +511,50 @@ mod tests {
         }
         writer.save(record(2, 2, 0), Some(tracks(1)));
         writer.save(record(3, 3, 0), Some(tracks(1)));
-        writer.delete(SessionKey { guild_id: 3, voice_channel_id: 3 });
+        writer.delete(SessionKey {
+            guild_id: 3,
+            voice_channel_id: 3,
+        });
 
         // Nothing written before the flush (interval is an hour).
         assert!(store.list_sessions().await.unwrap().is_empty());
         assert_eq!(writer.flush_now().await.unwrap(), 3);
 
-        let s = store.get_session(SessionKey { guild_id: 1, voice_channel_id: 1 }).await.unwrap().unwrap();
+        let s = store
+            .get_session(SessionKey {
+                guild_id: 1,
+                voice_channel_id: 1,
+            })
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(s.session.current_index, 99);
         assert_eq!(s.tracks.len(), 5, "metadata-only upserts kept the earlier track list");
-        assert!(store.get_session(SessionKey { guild_id: 3, voice_channel_id: 3 }).await.unwrap().is_none());
+        assert!(store
+            .get_session(SessionKey {
+                guild_id: 3,
+                voice_channel_id: 3
+            })
+            .await
+            .unwrap()
+            .is_none());
         assert_eq!(store.list_sessions().await.unwrap().len(), 2);
 
         // Delete then metadata-only upsert drops the old tracks.
-        writer.delete(SessionKey { guild_id: 1, voice_channel_id: 1 });
+        writer.delete(SessionKey {
+            guild_id: 1,
+            voice_channel_id: 1,
+        });
         writer.save(record(1, 1, 0), None);
         assert_eq!(writer.flush_now().await.unwrap(), 1);
-        let s = store.get_session(SessionKey { guild_id: 1, voice_channel_id: 1 }).await.unwrap().unwrap();
+        let s = store
+            .get_session(SessionKey {
+                guild_id: 1,
+                voice_channel_id: 1,
+            })
+            .await
+            .unwrap()
+            .unwrap();
         assert!(s.tracks.is_empty());
 
         assert_eq!(writer.flush_now().await.unwrap(), 0);
@@ -496,24 +568,44 @@ mod tests {
         let (writer, handle) = SessionWriter::spawn_with_interval(store.clone(), Duration::from_millis(50));
         writer.save(record(1, 1, 7), Some(tracks(2)));
         tokio::time::sleep(Duration::from_millis(400)).await;
-        let s = store.get_session(SessionKey { guild_id: 1, voice_channel_id: 1 }).await.unwrap().unwrap();
+        let s = store
+            .get_session(SessionKey {
+                guild_id: 1,
+                voice_channel_id: 1,
+            })
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(s.session.current_index, 7);
 
         let (writer2, handle2) = SessionWriter::spawn_with_interval(store.clone(), Duration::from_secs(3600));
         writer2.save(record(4, 4, 1), None);
         drop(writer2);
         handle2.await.unwrap();
-        assert!(store.get_session(SessionKey { guild_id: 4, voice_channel_id: 4 }).await.unwrap().is_some());
+        assert!(store
+            .get_session(SessionKey {
+                guild_id: 4,
+                voice_channel_id: 4
+            })
+            .await
+            .unwrap()
+            .is_some());
         drop(writer);
         handle.await.unwrap();
     }
 
     #[test]
     fn coalesce_rules() {
-        let up = |i, t: Option<usize>| PendingOp::Upsert { session: record(1, 1, i), tracks: t.map(tracks) };
+        let up = |i, t: Option<usize>| PendingOp::Upsert {
+            session: record(1, 1, i),
+            tracks: t.map(tracks),
+        };
         assert!(matches!(coalesce(up(0, Some(1)), PendingOp::Delete), PendingOp::Delete));
         match coalesce(up(0, Some(3)), up(1, None)) {
-            PendingOp::Upsert { session, tracks: Some(t) } => {
+            PendingOp::Upsert {
+                session,
+                tracks: Some(t),
+            } => {
                 assert_eq!(session.current_index, 1);
                 assert_eq!(t.len(), 3);
             }

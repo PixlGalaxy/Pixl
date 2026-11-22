@@ -71,7 +71,11 @@ pub struct VoteSkip {
 
 impl Default for VoteSkip {
     fn default() -> Self {
-        Self { enabled: false, mode: VoteSkipMode::Percent, value: 50 }
+        Self {
+            enabled: false,
+            mode: VoteSkipMode::Percent,
+            value: 50,
+        }
     }
 }
 
@@ -162,7 +166,11 @@ type SettingsRow = (String, bool, String, u32, u32, u16);
 fn from_row(r: SettingsRow) -> GuildSettings {
     GuildSettings {
         control_mode: ControlMode::parse(&r.0),
-        vote_skip: VoteSkip { enabled: r.1, mode: VoteSkipMode::parse(&r.2), value: r.3 },
+        vote_skip: VoteSkip {
+            enabled: r.1,
+            mode: VoteSkipMode::parse(&r.2),
+            value: r.3,
+        },
         max_queue_length: r.4,
         default_volume: r.5,
     }
@@ -220,7 +228,10 @@ impl Store {
 
     /// Forget a guild's settings (back to defaults).
     pub async fn reset_guild_settings(&self, guild_id: u64) -> Result<()> {
-        sqlx::query("DELETE FROM guild_settings WHERE guild_id = ?").bind(sf(guild_id)).execute(self.pool()).await?;
+        sqlx::query("DELETE FROM guild_settings WHERE guild_id = ?")
+            .bind(sf(guild_id))
+            .execute(self.pool())
+            .await?;
         Ok(())
     }
 }
@@ -242,16 +253,30 @@ mod tests {
     #[tokio::test]
     async fn partial_update_keeps_other_fields() {
         let store = Store::open_in_memory().await.unwrap();
-        let patch = GuildSettingsPatch { control_mode: Some(ControlMode::Dj), ..Default::default() };
+        let patch = GuildSettingsPatch {
+            control_mode: Some(ControlMode::Dj),
+            ..Default::default()
+        };
         store.update_guild_settings(7, &patch).await.unwrap();
         let patch = GuildSettingsPatch {
-            vote_skip: Some(VoteSkipPatch { enabled: Some(true), mode: Some(VoteSkipMode::Count), value: Some(3) }),
+            vote_skip: Some(VoteSkipPatch {
+                enabled: Some(true),
+                mode: Some(VoteSkipMode::Count),
+                value: Some(3),
+            }),
             ..Default::default()
         };
         let s = store.update_guild_settings(7, &patch).await.unwrap();
         assert_eq!(s, store.guild_settings(7).await.unwrap());
         assert_eq!(s.control_mode, ControlMode::Dj);
-        assert_eq!(s.vote_skip, VoteSkip { enabled: true, mode: VoteSkipMode::Count, value: 3 });
+        assert_eq!(
+            s.vote_skip,
+            VoteSkip {
+                enabled: true,
+                mode: VoteSkipMode::Count,
+                value: 3
+            }
+        );
         assert_eq!(s.max_queue_length, 500);
         // Other guilds untouched.
         assert_eq!(store.guild_settings(8).await.unwrap(), GuildSettings::default());
@@ -260,7 +285,10 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid() {
         let store = Store::open_in_memory().await.unwrap();
-        let patch = GuildSettingsPatch { default_volume: Some(500), ..Default::default() };
+        let patch = GuildSettingsPatch {
+            default_volume: Some(500),
+            ..Default::default()
+        };
         assert!(store.update_guild_settings(1, &patch).await.is_err());
         assert_eq!(store.guild_settings(1).await.unwrap(), GuildSettings::default());
     }

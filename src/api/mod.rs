@@ -10,7 +10,9 @@ use tracing::info;
 use crate::AppState;
 
 pub async fn serve(state: AppState) -> Result<()> {
-    let web_dir = std::env::var("WEB_DIR").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("./web/dist"));
+    let web_dir = std::env::var("WEB_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./web/dist"));
     let static_files = ServeDir::new(&web_dir).fallback(ServeFile::new(web_dir.join("index.html")));
 
     let app = Router::new()
