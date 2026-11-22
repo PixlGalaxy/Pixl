@@ -280,16 +280,17 @@ pub fn now_playing(v: &NowPlaying, i18n: &I18n) -> Message {
 
     let tag = v.track_tag;
     children.push(Component::Row(vec![
+        // Colors grouped like the second row: primary, danger, then the neutral ones.
         toggle_button(v.paused, vc, tag, i18n),
-        Button::new(
-            ButtonStyle::Secondary,
-            i18n.t("bot.button.skip", &[]),
-            CustomId::np(NpAction::Skip, vc, tag),
-        ),
         Button::new(
             ButtonStyle::Danger,
             i18n.t("bot.button.stop", &[]),
             CustomId::np(NpAction::Stop, vc, tag),
+        ),
+        Button::new(
+            ButtonStyle::Secondary,
+            i18n.t("bot.button.skip", &[]),
+            CustomId::np(NpAction::Skip, vc, tag),
         ),
         Button::new(
             ButtonStyle::Secondary,
@@ -1073,8 +1074,8 @@ mod tests {
             custom_ids(&json),
             vec![
                 "np:pause:77:tag",
-                "np:skip:77:tag",
                 "np:stop:77:tag",
+                "np:skip:77:tag",
                 "np:queue:77:tag",
                 "np:like:77:tag",
                 "np:dislike:77:tag",
