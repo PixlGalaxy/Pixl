@@ -155,6 +155,7 @@ mod tests {
             is_opus: true,
             needs_ytdlp: false,
             duration_ms: None,
+            available_at: None,
         }
     }
 
