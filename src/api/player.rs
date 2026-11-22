@@ -228,8 +228,8 @@ pub struct VolumeBody {
 }
 
 pub async fn volume(State(st): State<ApiState>, m: Member, Body(b): Body<VolumeBody>) -> ApiResult<StatusCode> {
-    if b.volume > crate::store::MAX_VOLUME {
-        return Err(ApiError::invalid("volume must be 0-100"));
+    if !(crate::store::MIN_VOLUME..=crate::store::MAX_VOLUME).contains(&b.volume) {
+        return Err(ApiError::invalid("volume must be 10-100"));
     }
     control(&st, &m, &b.channel_id)
         .await?

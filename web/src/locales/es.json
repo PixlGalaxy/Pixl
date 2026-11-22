@@ -374,7 +374,7 @@
         "example": "/loop mode:queue"
       },
       "volume": {
-        "description": "Cambia el volumen de 0 a 100. Con 100 el audio suena sin cambios.",
+        "description": "Cambia el volumen de 10 a 100. Con 100 el audio suena sin cambios.",
         "example": "/volume level:80"
       },
       "lyrics": {

@@ -270,7 +270,7 @@
       },
       "volume": {
         "description": "Cambia el volumen",
-        "value": "Volumen de 0 a 100 (100 es el original)"
+        "value": "Volumen de 10 a 100 (100 es el original)"
       },
       "lyrics": {
         "description": "Muestra la letra de la canción actual o de una búsqueda",

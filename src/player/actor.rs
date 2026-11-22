@@ -33,7 +33,7 @@ use crate::{
     discord::registry::BotInfo,
     procs::ProcOwner,
     sources::{Playable, SourceError},
-    store::{track_key, GuildSettings, SessionKey, SessionRecord, MAX_VOLUME},
+    store::{track_key, GuildSettings, SessionKey, SessionRecord, MAX_VOLUME, MIN_VOLUME},
 };
 
 /// Prefetch the next track this long before the current one ends.
@@ -193,7 +193,7 @@ pub async fn run(s: Spawn) {
         events: s.events,
         slot: s.snapshot,
         queue: Queue::new(),
-        volume: s.req.settings.default_volume.min(MAX_VOLUME),
+        volume: s.req.settings.default_volume.clamp(MIN_VOLUME, MAX_VOLUME),
         settings: s.req.settings,
         started_by: s.req.started_by,
         text_channel: s.req.text_channel_id,
@@ -252,7 +252,7 @@ impl Player {
     async fn boot(&mut self, restore: Option<Restore>) {
         if let Some(r) = restore {
             self.queue = super::queue::Queue::restore(r.tracks, r.index, r.loop_mode);
-            self.volume = r.volume.min(MAX_VOLUME);
+            self.volume = r.volume.clamp(MIN_VOLUME, MAX_VOLUME);
             self.back_online = r.after_restart;
             self.persist(true);
             if self.humans.is_empty() {
@@ -364,7 +364,7 @@ impl Player {
             }
             Command::Volume { volume, reply } => {
                 let prev = self.volume;
-                self.volume = volume.min(MAX_VOLUME);
+                self.volume = volume.clamp(MIN_VOLUME, MAX_VOLUME);
                 if let Some(p) = &self.playing {
                     // 1.0 keeps Opus passthrough; songbird only re-encodes when the volume differs.
                     let _ = p.handle.set_volume(f32::from(self.volume) / 100.0);
@@ -444,7 +444,7 @@ impl Player {
                 let _ = reply.send(removed.len());
             }
             Command::Settings(s) => {
-                self.volume = self.volume.min(MAX_VOLUME);
+                self.volume = self.volume.clamp(MIN_VOLUME, MAX_VOLUME);
                 self.settings = s;
                 self.publish();
             }

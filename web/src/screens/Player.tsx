@@ -102,12 +102,13 @@ function VolumeControl({ state }: { state: PlayerState }) {
   const { channelId, permissions, run, setState } = useLynx()
   const [drag, setDrag] = useState<number | null>(null)
   const value = drag ?? state.volume
-  const Icon = value === 0 ? VolumeX : value < 70 ? Volume1 : Volume2
+  const Icon = value <= 10 ? VolumeX : value < 70 ? Volume1 : Volume2
   return (
     <div className="flex items-center gap-2.5">
       <Icon size={16} className="shrink-0 text-muted" />
       <Slider
         value={value}
+        min={10}
         max={100}
         step={5}
         label={t('player.volume')}

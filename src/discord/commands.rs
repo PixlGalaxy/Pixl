@@ -55,7 +55,7 @@ pub fn definitions(i18n: &I18n, entry_point: bool, ai: bool) -> Value {
         { "name": d("bot.cmd.loop.queue"), "value": "queue" },
     ]);
     let mut volume = opt(INTEGER, "value", d("bot.cmd.volume.value"), true);
-    volume["min_value"] = json!(0);
+    volume["min_value"] = json!(10);
     volume["max_value"] = json!(100);
     let mut lyrics_query = opt(STRING, "query", d("bot.cmd.lyrics.query"), false);
     lyrics_query["max_length"] = json!(200);
