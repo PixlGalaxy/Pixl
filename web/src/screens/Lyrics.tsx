@@ -1,7 +1,7 @@
 import { MicVocal } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card, Empty, PageSpinner } from '../components/ui'
+import { Card, Empty, PageSpinner, TileArtwork } from '../components/ui'
 import { api } from '../lib/api'
 import { cx } from '../lib/format'
 import { usePosition } from '../lib/live'
@@ -107,14 +107,19 @@ export function LyricsScreen() {
 
   return (
     <Card
-      title={track.title}
+      title={t('lyrics.title')}
       description={
-        <>
-          {track.artists.join(', ')}
-          {lyrics && <span className="ml-1.5 font-mono text-[11px]">· {t('lyrics.source', { source: 'LRCLIB' })}</span>}
-        </>
+        <span className="flex min-w-0 items-baseline gap-1.5">
+          <span className="truncate" title={[track.title, track.artists.join(', ')].filter(Boolean).join(' · ')}>
+            <span className="font-medium text-fg/80">{track.title}</span>
+            {track.artists.length > 0 && <> · {track.artists.join(', ')}</>}
+          </span>
+          {lyrics && (
+            <span className="shrink-0 font-mono text-[11px]">· {t('lyrics.source', { source: 'LRCLIB' })}</span>
+          )}
+        </span>
       }
-      icon={<MicVocal size={18} />}
+      media={<TileArtwork url={track.artworkUrl} fallback={<MicVocal size={18} />} />}
       actions={synced ? <span className="text-xs text-muted">{t('lyrics.synced')}</span> : undefined}
       bodyClassName=""
     >

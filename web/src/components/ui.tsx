@@ -104,10 +104,33 @@ export function Toggle({
   )
 }
 
+/** The `size-9 rounded-xl` accent tile that marks a card header. */
+export function IconTile({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/10 text-sky-500">{children}</div>
+  )
+}
+
+/** Artwork in place of a card's icon tile (same size and corners); the tile with `fallback` when it has none. */
+export function TileArtwork({ url, fallback }: { url: string | null | undefined; fallback: ReactNode }) {
+  const [broken, setBroken] = useState<string | null>(null)
+  const src = mediaUrl(url)
+  if (!src || broken === src) return <IconTile>{fallback}</IconTile>
+  return (
+    <img
+      src={src}
+      alt=""
+      onError={() => setBroken(src)}
+      className="size-9 shrink-0 rounded-xl border border-line bg-surface-2 object-cover"
+    />
+  )
+}
+
 export function Card({
   title,
   description,
   icon,
+  media,
   actions,
   children,
   bodyClassName = 'space-y-5 p-4',
@@ -115,6 +138,8 @@ export function Card({
   title: ReactNode
   description?: ReactNode
   icon?: ReactNode
+  /** Replaces the icon tile (e.g. `TileArtwork`). */
+  media?: ReactNode
   actions?: ReactNode
   children: ReactNode
   bodyClassName?: string
@@ -122,11 +147,7 @@ export function Card({
   return (
     <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-4">
-        {icon && (
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/10 text-sky-500">
-            {icon}
-          </div>
-        )}
+        {media ?? (icon && <IconTile>{icon}</IconTile>)}
         <div className="min-w-0 flex-1">
           <h2 className="font-semibold">{title}</h2>
           {description && <p className="text-xs text-muted">{description}</p>}
