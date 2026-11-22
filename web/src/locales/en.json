@@ -419,7 +419,8 @@
       "privacy": "Privacy policy",
       "support": "Support"
     },
-    "developedBy": "Developed by"
+    "developedBy": "Developed by",
+    "hostedOn": "Hosted on"
   },
   "support": {
     "eyebrow": "A note from Pixl",
