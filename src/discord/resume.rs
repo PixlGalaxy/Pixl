@@ -57,6 +57,7 @@ pub fn decide(
 pub async fn boot(lynx: Arc<Lynx>) {
     lynx.bots.wait_synced(SYNC_TIMEOUT).await;
     info!("all bots loaded their guilds");
+    super::legacy::cleanup(&lynx).await;
     commands::reconcile_nodes(&lynx).await;
 
     let sessions = match lynx.store.list_sessions().await {

@@ -9,6 +9,7 @@ pub mod emojis;
 pub mod ids;
 pub mod interactions;
 pub mod jam;
+pub mod legacy;
 pub mod play;
 pub mod registry;
 pub mod respond;

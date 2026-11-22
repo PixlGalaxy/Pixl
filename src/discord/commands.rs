@@ -10,7 +10,7 @@ use tracing::{info, warn};
 use super::{registry::BotInfo, ui::cards, Lynx};
 use crate::i18n::I18n;
 
-const META_COMMANDS_HASH: &str = "commands_hash";
+pub(crate) const META_COMMANDS_HASH: &str = "commands_hash";
 const TIMEOUT: Duration = Duration::from_secs(30);
 
 const STRING: u8 = 3;
