@@ -509,6 +509,15 @@ impl Player {
                 if let Some(r) = self.radio.as_mut() {
                     r.job_done(id, result, current);
                 }
+                // A radio that ends with nothing to play (e.g. "no songs found" on a fresh player)
+                // must not keep the bot in the channel forever: arm the normal idle leave.
+                if self.queue.current().is_none()
+                    && self.playing.is_none()
+                    && self.loading.is_none()
+                    && self.idle_leave_at.is_none()
+                {
+                    self.idle_leave_at = Some(Instant::now() + QUEUE_END_LEAVE_AFTER);
+                }
                 self.publish();
             }
         }
@@ -715,7 +724,10 @@ impl Player {
         match result {
             Ok(playable) => {
                 // Lazy Spotify match: keep the matched video in the queue (and the saved session).
-                let entry = if playable.track.youtube_id != entry.info.youtube_id {
+                // Also keep the YouTube Music metadata found while preparing (playlist entries).
+                let entry = if playable.track.youtube_id != entry.info.youtube_id
+                    || playable.track.music != entry.info.music
+                {
                     let updated = Arc::new(QueueEntry {
                         info: playable.track.clone(),
                         ..(*entry).clone()
