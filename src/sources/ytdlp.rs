@@ -117,38 +117,17 @@ impl Ytdlp {
     /// `work_dir`. Spawn it with `ProcessRegistry::spawn_stream`.
     pub fn stream_spec(&self, page_url: &str, owner: &ProcOwner, work_dir: &Path, max_duration: Duration) -> ProcSpec {
         let mut args = self.base_args(work_dir);
-        args.extend([
-            "--quiet".into(),
-            "-f".into(),
-            FORMAT.into(),
-            "-o".into(),
-            "-".into(),
-            page_url.into(),
-        ]);
-        ProcSpec::new(self.binary(), owner.clone(), max_duration)
-            .args(args)
-            .current_dir(work_dir)
+        args.extend(["--quiet".into(), "-f".into(), FORMAT.into(), "-o".into(), "-".into(), page_url.into()]);
+        ProcSpec::new(self.binary(), owner.clone(), max_duration).args(args).current_dir(work_dir)
     }
 
     /// Run yt-dlp under the semaphore, in the owner's stream dir. Returns stdout.
     async fn run(&self, owner: &ProcOwner, args: Vec<String>, timeout: Duration) -> SourceResult<Vec<u8>> {
-        let _permit = self
-            .inner
-            .sem
-            .acquire()
-            .await
-            .map_err(|_| SourceError::Other("shutting down".into()))?;
-        let dir = self
-            .inner
-            .dirs
-            .create_for(owner)
-            .await
-            .map_err(|e| SourceError::Other(e.to_string()))?;
+        let _permit = self.inner.sem.acquire().await.map_err(|_| SourceError::Other("shutting down".into()))?;
+        let dir = self.inner.dirs.create_for(owner).await.map_err(|e| SourceError::Other(e.to_string()))?;
         let mut full = self.base_args(&dir);
         full.extend(args);
-        let spec = ProcSpec::new(self.binary(), owner.clone(), timeout)
-            .args(full)
-            .current_dir(&dir);
+        let spec = ProcSpec::new(self.binary(), owner.clone(), timeout).args(full).current_dir(&dir);
         let res = self.inner.procs.run(spec).await;
         if owner.track_uid.is_none() {
             // One-off dir; track dirs are removed by the player when the track ends.
@@ -180,11 +159,7 @@ impl Ytdlp {
         ];
         let out = self.run(owner, args, RESOLVE_TIMEOUT).await?;
         let line = String::from_utf8_lossy(&out);
-        let line = line
-            .lines()
-            .rev()
-            .find(|l| l.trim_start().starts_with('{'))
-            .unwrap_or("");
+        let line = line.lines().rev().find(|l| l.trim_start().starts_with('{')).unwrap_or("");
         let v: Value =
             serde_json::from_str(line).map_err(|_| SourceError::Other("yt-dlp returned no stream info".into()))?;
         let info = parse_stream(&v, now_secs()).ok_or_else(|| SourceError::Unavailable("No audio stream".into()))?;
@@ -194,10 +169,7 @@ impl Ytdlp {
 
     fn cached(&self, key: &str) -> Option<StreamInfo> {
         let cache = self.inner.cache.lock().unwrap();
-        cache
-            .get(key)
-            .filter(|s| s.expires_at - now_secs() > STREAM_MIN_REMAINING)
-            .cloned()
+        cache.get(key).filter(|s| s.expires_at - now_secs() > STREAM_MIN_REMAINING).cloned()
     }
 
     fn store(&self, key: &str, info: StreamInfo) {
@@ -222,12 +194,7 @@ impl Ytdlp {
     }
 
     /// Metadata for any yt-dlp supported URL (single item or flat playlist).
-    pub async fn probe(
-        &self,
-        url: &str,
-        limit: usize,
-        owner: &ProcOwner,
-    ) -> SourceResult<(Vec<TrackInfo>, Option<String>)> {
+    pub async fn probe(&self, url: &str, limit: usize, owner: &ProcOwner) -> SourceResult<(Vec<TrackInfo>, Option<String>)> {
         let args = vec![
             "--dump-single-json".into(),
             "--flat-playlist".into(),
@@ -237,8 +204,7 @@ impl Ytdlp {
             url.into(),
         ];
         let out = self.run(owner, args, PROBE_TIMEOUT).await?;
-        let v: Value =
-            serde_json::from_slice(&out).map_err(|_| SourceError::Other("yt-dlp returned invalid JSON".into()))?;
+        let v: Value = serde_json::from_slice(&out).map_err(|_| SourceError::Other("yt-dlp returned invalid JSON".into()))?;
         let (mut tracks, name) = parse_probe(&v);
         tracks.truncate(limit);
         if tracks.is_empty() {
@@ -250,10 +216,7 @@ impl Ytdlp {
     pub async fn version(&self) -> Option<String> {
         let spec = ProcSpec::new(self.binary(), ProcOwner::system(), VERSION_TIMEOUT).arg("--version");
         let out = self.inner.procs.run(spec).await.ok()?;
-        out.status
-            .success()
-            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
-            .filter(|v| !v.is_empty())
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned()).filter(|v| !v.is_empty())
     }
 
     /// Download the latest standalone yt-dlp into `bin/` if it differs from the current one.
@@ -418,27 +381,19 @@ pub(crate) fn parse_stream(v: &Value, now: i64) -> Option<StreamInfo> {
     let url = v["url"].as_str().filter(|u| !u.is_empty())?.to_owned();
     let mut http_headers: Vec<(String, String)> = v["http_headers"]
         .as_object()
-        .map(|m| {
-            m.iter()
-                .filter_map(|(k, x)| x.as_str().map(|s| (k.clone(), s.to_owned())))
-                .collect()
-        })
+        .map(|m| m.iter().filter_map(|(k, x)| x.as_str().map(|s| (k.clone(), s.to_owned()))).collect())
         .unwrap_or_default();
     http_headers.sort();
     let expires_at = reqwest::Url::parse(&url)
         .ok()
-        .and_then(|u| {
-            u.query_pairs()
-                .find(|(k, _)| k == "expire")
-                .and_then(|(_, x)| x.parse::<i64>().ok())
-        })
+        .and_then(|u| u.query_pairs().find(|(k, _)| k == "expire").and_then(|(_, x)| x.parse::<i64>().ok()))
         .unwrap_or(now + DEFAULT_URL_TTL);
     let codec = v["acodec"].as_str().filter(|c| *c != "none").map(str::to_owned);
     let container = v["ext"].as_str().map(str::to_owned);
     let protocol = v["protocol"].as_str().map(str::to_owned);
     let is_opus = codec.as_deref().is_some_and(|c| c.starts_with("opus")) && container.as_deref() == Some("webm");
-    let needs_ytdlp =
-        v["is_live"].as_bool() == Some(true) || !matches!(protocol.as_deref(), None | Some("https") | Some("http"));
+    let needs_ytdlp = v["is_live"].as_bool() == Some(true)
+        || !matches!(protocol.as_deref(), None | Some("https") | Some("http"));
     Some(StreamInfo {
         url,
         http_headers,
@@ -464,33 +419,18 @@ fn thumb_of(v: &Value) -> Option<String> {
 }
 
 fn entry_to_track(e: &Value) -> Option<TrackInfo> {
-    let extractor = e["ie_key"]
-        .as_str()
-        .or_else(|| e["extractor_key"].as_str())
-        .unwrap_or("");
+    let extractor = e["ie_key"].as_str().or_else(|| e["extractor_key"].as_str()).unwrap_or("");
     let is_yt = extractor.eq_ignore_ascii_case("youtube");
     let id = e["id"].as_str();
     let url = e["webpage_url"]
         .as_str()
         .or_else(|| e["url"].as_str())
         .map(str::to_owned)
-        .or_else(|| {
-            is_yt
-                .then(|| id.map(|i| format!("https://www.youtube.com/watch?v={i}")))
-                .flatten()
-        })?;
-    let title = e["track"]
-        .as_str()
-        .or_else(|| e["title"].as_str())
-        .unwrap_or(&url)
-        .to_owned();
+        .or_else(|| is_yt.then(|| id.map(|i| format!("https://www.youtube.com/watch?v={i}"))).flatten())?;
+    let title = e["track"].as_str().or_else(|| e["title"].as_str()).unwrap_or(&url).to_owned();
     let artists: Vec<String> = e["artists"]
         .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str().map(str::to_owned))
-                .collect::<Vec<_>>()
-        })
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect::<Vec<_>>())
         .filter(|a| !a.is_empty())
         .or_else(|| {
             e["artist"]
@@ -506,11 +446,7 @@ fn entry_to_track(e: &Value) -> Option<TrackInfo> {
         duration_ms: e["duration"].as_f64().filter(|d| *d > 0.0).map(|d| (d * 1000.0) as u64),
         thumbnail: thumb_of(e),
         url,
-        origin: if is_yt {
-            TrackOrigin::Youtube
-        } else {
-            TrackOrigin::Other
-        },
+        origin: if is_yt { TrackOrigin::Youtube } else { TrackOrigin::Other },
         youtube_id: if is_yt { id.map(str::to_owned) } else { None },
         spotify_id: None,
         isrc: e["isrc"].as_str().map(str::to_owned),
@@ -519,10 +455,7 @@ fn entry_to_track(e: &Value) -> Option<TrackInfo> {
 
 pub(crate) fn parse_probe(v: &Value) -> (Vec<TrackInfo>, Option<String>) {
     if v["_type"].as_str() == Some("playlist") {
-        let tracks = v["entries"]
-            .as_array()
-            .map(|a| a.iter().filter_map(entry_to_track).collect())
-            .unwrap_or_default();
+        let tracks = v["entries"].as_array().map(|a| a.iter().filter_map(entry_to_track).collect()).unwrap_or_default();
         (tracks, v["title"].as_str().map(str::to_owned))
     } else {
         (entry_to_track(v).into_iter().collect(), None)
@@ -540,18 +473,9 @@ mod tests {
             short_reason("WARNING: x\nERROR: [youtube] abc: Sign in to confirm you\u{2019}re not a bot. Use --cookies"),
             "Sign in to confirm you're not a bot"
         );
-        assert_eq!(
-            short_reason("ERROR: [youtube] dQw4w9WgXcQ: Video unavailable. This video is private"),
-            "Private video"
-        );
-        assert_eq!(
-            short_reason("ERROR: [youtube] dQw4w9WgXcQ: Video unavailable"),
-            "Video unavailable"
-        );
-        assert_eq!(
-            short_reason("ERROR: [generic] Something odd happened here"),
-            "Something odd happened here"
-        );
+        assert_eq!(short_reason("ERROR: [youtube] dQw4w9WgXcQ: Video unavailable. This video is private"), "Private video");
+        assert_eq!(short_reason("ERROR: [youtube] dQw4w9WgXcQ: Video unavailable"), "Video unavailable");
+        assert_eq!(short_reason("ERROR: [generic] Something odd happened here"), "Something odd happened here");
         assert_eq!(short_reason(""), "yt-dlp failed");
         assert!(short_reason(&"x".repeat(1000)).len() <= 160);
     }
@@ -624,32 +548,16 @@ mod tests {
     async fn ytdlp_resolve_youtube_opus() {
         let (y, root) = ytdlp();
         let owner = ProcOwner::new(1, 2, Some(uuid::Uuid::new_v4()));
-        let s = y
-            .resolve_stream("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ", &owner)
-            .await
-            .unwrap();
-        println!(
-            "format={:?} codec={:?} container={:?} opus={} expires_in={}s",
-            s.format_id,
-            s.codec,
-            s.container,
-            s.is_opus,
-            s.expires_at - now_secs()
-        );
+        let s = y.resolve_stream("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ", &owner).await.unwrap();
+        println!("format={:?} codec={:?} container={:?} opus={} expires_in={}s", s.format_id, s.codec, s.container, s.is_opus, s.expires_at - now_secs());
         assert!(s.url.starts_with("https://"));
         assert!(s.expires_at > now_secs() + 3600);
         assert!(!s.needs_ytdlp);
         // Cached: second call does not spawn.
-        let again = y
-            .resolve_stream("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ", &owner)
-            .await
-            .unwrap();
+        let again = y.resolve_stream("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ", &owner).await.unwrap();
         assert_eq!(again, s);
         // The track dir was used as work dir and still exists for the player to remove.
-        assert!(root
-            .join("streams/1/2")
-            .join(owner.track_uid.unwrap().to_string())
-            .is_dir());
+        assert!(root.join("streams/1/2").join(owner.track_uid.unwrap().to_string()).is_dir());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -657,14 +565,7 @@ mod tests {
     #[ignore]
     async fn ytdlp_unavailable_reason() {
         let (y, root) = ytdlp();
-        let err = y
-            .resolve_stream(
-                "https://www.youtube.com/watch?v=aaaaaaaaaaa",
-                "aaaaaaaaaaa",
-                &ProcOwner::system(),
-            )
-            .await
-            .unwrap_err();
+        let err = y.resolve_stream("https://www.youtube.com/watch?v=aaaaaaaaaaa", "aaaaaaaaaaa", &ProcOwner::system()).await.unwrap_err();
         println!("{err}");
         assert!(matches!(err, SourceError::Unavailable(_)), "{err:?}");
         let _ = std::fs::remove_dir_all(root);
@@ -674,10 +575,7 @@ mod tests {
     #[ignore]
     async fn ytdlp_probe_other_url() {
         let (y, root) = ytdlp();
-        let (t, _) = y
-            .probe("https://soundcloud.com/forss/flickermood", 10, &ProcOwner::system())
-            .await
-            .unwrap();
+        let (t, _) = y.probe("https://soundcloud.com/forss/flickermood", 10, &ProcOwner::system()).await.unwrap();
         println!("{t:#?}");
         assert_eq!(t.len(), 1);
         assert!(t[0].duration_ms.is_some());
@@ -696,11 +594,7 @@ mod tests {
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(y.version().await.as_deref(), Some("2000.01.01"));
         let r = y.update().await.unwrap();
-        println!(
-            "update result: {r:?}, binary: {}, version now {:?}",
-            y.binary().display(),
-            y.version().await
-        );
+        println!("update result: {r:?}, binary: {}, version now {:?}", y.binary().display(), y.version().await);
         assert!(r.is_some());
         assert_eq!(y.version().await, r);
         // No temp files left behind.

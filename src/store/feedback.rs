@@ -63,9 +63,7 @@ impl Store {
                 .await?;
             }
             None => {
-                let Some(track_id) = lookup_track_id(&mut tx, &track_key(info)).await? else {
-                    return Ok(());
-                };
+                let Some(track_id) = lookup_track_id(&mut tx, &track_key(info)).await? else { return Ok(()) };
                 sqlx::query("DELETE FROM user_feedback WHERE user_id = ? AND track_id = ?")
                     .bind(uid)
                     .bind(track_id)
@@ -145,10 +143,7 @@ mod tests {
     #[tokio::test]
     async fn ignored_when_history_off() {
         let store = Store::open_in_memory().await.unwrap();
-        let patch = UserPrefsPatch {
-            locale: None,
-            history_enabled: Some(false),
-        };
+        let patch = UserPrefsPatch { locale: None, history_enabled: Some(false) };
         store.update_user_prefs(7, &patch).await.unwrap();
         store.set_feedback(7, &track("a"), Some(Feedback::Like)).await.unwrap();
         assert!(store.get_feedback(7, &track("a")).await.unwrap().is_none());
@@ -160,19 +155,10 @@ mod tests {
         assert!(store.get_feedback(1, &track("a")).await.unwrap().is_none());
         store.set_feedback(1, &track("a"), Some(Feedback::Like)).await.unwrap();
         assert_eq!(store.get_feedback(1, &track("a")).await.unwrap(), Some(Feedback::Like));
-        store
-            .set_feedback(1, &track("a"), Some(Feedback::Dislike))
-            .await
-            .unwrap();
-        store
-            .set_feedback(2, &track("b"), Some(Feedback::Dislike))
-            .await
-            .unwrap();
+        store.set_feedback(1, &track("a"), Some(Feedback::Dislike)).await.unwrap();
+        store.set_feedback(2, &track("b"), Some(Feedback::Dislike)).await.unwrap();
         store.set_feedback(3, &track("c"), Some(Feedback::Like)).await.unwrap();
-        assert_eq!(
-            store.get_feedback(1, &track("a")).await.unwrap(),
-            Some(Feedback::Dislike)
-        );
+        assert_eq!(store.get_feedback(1, &track("a")).await.unwrap(), Some(Feedback::Dislike));
 
         let disliked = store.disliked_tracks(&[1, 2, 3]).await.unwrap();
         assert_eq!(disliked.len(), 2);

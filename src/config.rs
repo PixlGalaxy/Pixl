@@ -111,10 +111,7 @@ impl Config {
 }
 
 fn optional(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .map(|v| v.trim().to_owned())
-        .filter(|v| !v.is_empty())
+    env::var(key).ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
 }
 
 fn required(key: &str) -> Result<String> {
@@ -123,12 +120,7 @@ fn required(key: &str) -> Result<String> {
 
 fn list(key: &str) -> Vec<String> {
     optional(key)
-        .map(|v| {
-            v.split(',')
-                .map(|s| s.trim().to_owned())
-                .filter(|s| !s.is_empty())
-                .collect()
-        })
+        .map(|v| v.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect())
         .unwrap_or_default()
 }
 

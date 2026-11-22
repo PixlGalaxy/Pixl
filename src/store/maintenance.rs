@@ -35,14 +35,9 @@ impl Store {
 
     /// Copy the WAL back into the database and truncate it.
     pub async fn wal_checkpoint(&self) -> Result<CheckpointStats> {
-        let (busy, log_pages, checkpointed_pages): (i64, i64, i64) = sqlx::query_as("PRAGMA wal_checkpoint(TRUNCATE)")
-            .fetch_one(self.pool())
-            .await?;
-        Ok(CheckpointStats {
-            busy: busy != 0,
-            log_pages,
-            checkpointed_pages,
-        })
+        let (busy, log_pages, checkpointed_pages): (i64, i64, i64) =
+            sqlx::query_as("PRAGMA wal_checkpoint(TRUNCATE)").fetch_one(self.pool()).await?;
+        Ok(CheckpointStats { busy: busy != 0, log_pages, checkpointed_pages })
     }
 }
 
@@ -94,19 +89,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let store = Store::open(&dir.join("lynx.db")).await.unwrap();
 
-        store
-            .cache_put("ns", "live", &1, Duration::from_secs(3600))
-            .await
-            .unwrap();
+        store.cache_put("ns", "live", &1, Duration::from_secs(3600)).await.unwrap();
         store.cache_put("ns", "dead", &1, Duration::ZERO).await.unwrap();
         assert_eq!(store.sweep(Duration::from_secs(3600)).await.unwrap(), 1);
         assert_eq!(store.cache_get::<i32>("ns", "live").await.unwrap(), Some(1));
 
         // WAL mode is on and checkpoints work with concurrent writers.
-        let (mode,): (String,) = sqlx::query_as("PRAGMA journal_mode")
-            .fetch_one(store.pool())
-            .await
-            .unwrap();
+        let (mode,): (String,) = sqlx::query_as("PRAGMA journal_mode").fetch_one(store.pool()).await.unwrap();
         assert_eq!(mode, "wal");
         let (writer, handle) = SessionWriter::spawn(store.clone());
         writer.save(
@@ -130,14 +119,7 @@ mod tests {
         store.optimize().await.unwrap();
         let stats = store.wal_checkpoint().await.unwrap();
         assert!(!stats.busy);
-        assert!(store
-            .get_session(SessionKey {
-                guild_id: 1,
-                voice_channel_id: 2
-            })
-            .await
-            .unwrap()
-            .is_some());
+        assert!(store.get_session(SessionKey { guild_id: 1, voice_channel_id: 2 }).await.unwrap().is_some());
 
         let token = CancellationToken::new();
         let task = spawn_maintenance(store.clone(), Duration::from_secs(3600), token.clone());

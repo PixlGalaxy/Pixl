@@ -49,14 +49,7 @@ impl Store {
         .bind(sf(guild_id))
         .fetch_all(self.pool())
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(user_id, added_by, added_at)| DjEntry {
-                user_id,
-                added_by,
-                added_at,
-            })
-            .collect())
+        Ok(rows.into_iter().map(|(user_id, added_by, added_at)| DjEntry { user_id, added_by, added_at }).collect())
     }
 
     pub async fn is_dj(&self, guild_id: u64, user_id: u64) -> Result<bool> {

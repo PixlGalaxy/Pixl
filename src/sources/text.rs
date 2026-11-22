@@ -33,11 +33,7 @@ pub fn normalize(s: &str) -> String {
 }
 
 pub fn tokens(s: &str) -> Vec<String> {
-    normalize(s)
-        .split(' ')
-        .filter(|t| !t.is_empty())
-        .map(str::to_owned)
-        .collect()
+    normalize(s).split(' ').filter(|t| !t.is_empty()).map(str::to_owned).collect()
 }
 
 /// Whole-word (or whole-phrase) containment on normalized text.

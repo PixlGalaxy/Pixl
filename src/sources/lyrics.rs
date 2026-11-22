@@ -129,24 +129,13 @@ fn pick_search<'a>(list: &'a [Value], title: &str, secs: Option<u64>) -> Option<
 
 fn to_lyrics(v: &Value) -> Option<Lyrics> {
     let synced = v["syncedLyrics"].as_str().map(parse_lrc).filter(|l| !l.is_empty());
-    let plain = v["plainLyrics"]
-        .as_str()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .or_else(|| {
-            synced
-                .as_ref()
-                .map(|l| l.iter().map(|x| x.line.as_str()).collect::<Vec<_>>().join("\n"))
-        });
+    let plain = v["plainLyrics"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).or_else(|| {
+        synced.as_ref().map(|l| l.iter().map(|x| x.line.as_str()).collect::<Vec<_>>().join("\n"))
+    });
     if synced.is_none() && plain.is_none() {
         return None;
     }
-    Some(Lyrics {
-        synced,
-        plain,
-        source: "lrclib".into(),
-    })
+    Some(Lyrics { synced, plain, source: "lrclib".into() })
 }
 
 /// Parse LRC text: `[mm:ss.xx]` stamps (several per line allowed), `[offset:+/-ms]`, metadata tags skipped.
@@ -170,10 +159,7 @@ pub fn parse_lrc(lrc: &str) -> Vec<LyricLine> {
         for ms in stamps {
             // LRC offset: positive means lyrics come earlier.
             let t = (ms as i64 - offset).max(0) as u64;
-            out.push(LyricLine {
-                time_ms: t,
-                line: text.clone(),
-            });
+            out.push(LyricLine { time_ms: t, line: text.clone() });
         }
     }
     out.sort_by_key(|l| l.time_ms);
@@ -231,20 +217,8 @@ mod tests {
                    [01:02.5][00:30.00]Chorus\n[00:40.123]\n";
         let l = parse_lrc(lrc);
         assert_eq!(l.len(), 5);
-        assert_eq!(
-            l[0],
-            LyricLine {
-                time_ms: 18_680,
-                line: "We're no strangers to love".into()
-            }
-        );
-        assert_eq!(
-            l[2],
-            LyricLine {
-                time_ms: 30_000,
-                line: "Chorus".into()
-            }
-        );
+        assert_eq!(l[0], LyricLine { time_ms: 18_680, line: "We're no strangers to love".into() });
+        assert_eq!(l[2], LyricLine { time_ms: 30_000, line: "Chorus".into() });
         assert_eq!(l[3].line, "");
         assert_eq!(l[3].time_ms, 40_123);
         assert_eq!(l[4].time_ms, 62_500);
@@ -286,16 +260,10 @@ mod tests {
     #[test]
     fn strips_artist_prefix_and_noise() {
         assert_eq!(
-            strip_artist_prefix(
-                "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
-                "Rick Astley"
-            ),
+            strip_artist_prefix("Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)", "Rick Astley"),
             "Never Gonna Give You Up"
         );
-        assert_eq!(
-            strip_artist_prefix("Here Comes The Sun - Remastered 2009", "The Beatles"),
-            "Here Comes The Sun - Remastered 2009"
-        );
+        assert_eq!(strip_artist_prefix("Here Comes The Sun - Remastered 2009", "The Beatles"), "Here Comes The Sun - Remastered 2009");
     }
 
     #[tokio::test]
@@ -314,11 +282,7 @@ mod tests {
             spotify_id: None,
             isrc: None,
         };
-        let l = Lrclib::new(reqwest::Client::new())
-            .lyrics(&store, Duration::from_secs(60), &t)
-            .await
-            .unwrap()
-            .unwrap();
+        let l = Lrclib::new(reqwest::Client::new()).lyrics(&store, Duration::from_secs(60), &t).await.unwrap().unwrap();
         let synced = l.synced.unwrap();
         println!("{} synced lines, first: {:?}", synced.len(), synced.first());
         assert!(synced.len() > 10);

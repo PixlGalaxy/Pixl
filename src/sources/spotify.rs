@@ -65,15 +65,10 @@ impl Spotify {
             .send()
             .await?;
         if !res.status().is_success() {
-            return Err(SourceError::Http(format!(
-                "Spotify token request failed ({})",
-                res.status()
-            )));
+            return Err(SourceError::Http(format!("Spotify token request failed ({})", res.status())));
         }
         let v: Value = res.json().await?;
-        let tok = v["access_token"]
-            .as_str()
-            .ok_or_else(|| SourceError::Http("Spotify token missing".into()))?;
+        let tok = v["access_token"].as_str().ok_or_else(|| SourceError::Http("Spotify token missing".into()))?;
         let ttl = v["expires_in"].as_u64().unwrap_or(3600);
         *guard = Some((tok.to_owned(), Instant::now() + Duration::from_secs(ttl)));
         Ok(tok.to_owned())
@@ -85,13 +80,7 @@ impl Spotify {
         let mut retries = 0;
         loop {
             let tok = self.token(false).await?;
-            let res = self
-                .http
-                .get(url)
-                .bearer_auth(&tok)
-                .timeout(Duration::from_secs(20))
-                .send()
-                .await?;
+            let res = self.http.get(url).bearer_auth(&tok).timeout(Duration::from_secs(20)).send().await?;
             let status = res.status();
             if status == StatusCode::UNAUTHORIZED && !refreshed {
                 refreshed = true;
@@ -152,9 +141,7 @@ impl Spotify {
 
     pub async fn playlist(&self, id: &str, limit: usize) -> SourceResult<Collection> {
         // Metadata first: a 404 here is the clear "editorial/algorithmic playlist" case.
-        let meta = self
-            .get_ok(&format!("{API}/playlists/{id}?fields=name"), "playlist")
-            .await?;
+        let meta = self.get_ok(&format!("{API}/playlists/{id}?fields=name"), "playlist").await?;
         let name = meta["name"].as_str().map(str::to_owned);
         let mut tracks = Vec::new();
         let mut next = Some(format!("{API}/playlists/{id}/tracks?limit=100&offset=0"));
@@ -207,11 +194,7 @@ fn collect_page(page: &Value, cover: Option<&str>, out: &mut Vec<TrackInfo>, kin
             Kind::Album => parse_track(it, cover),
             // Playlist entries wrap the track (`track`, or `item` in newer revisions).
             Kind::Playlist => {
-                let inner = if it["track"].is_object() {
-                    &it["track"]
-                } else {
-                    &it["item"]
-                };
+                let inner = if it["track"].is_object() { &it["track"] } else { &it["item"] };
                 if it["is_local"].as_bool() == Some(true) || inner["is_local"].as_bool() == Some(true) {
                     None
                 } else {

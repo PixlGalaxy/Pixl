@@ -21,80 +21,17 @@ pub const CONFIDENT: i32 = 85;
 
 /// Words that mark a different recording when the source title does not have them.
 const VARIANTS: &[&str] = &[
-    "live",
-    "en vivo",
-    "ao vivo",
-    "en directo",
-    "cover",
-    "remix",
-    "sped up",
-    "speed up",
-    "slowed",
-    "reverb",
-    "nightcore",
-    "8d",
-    "karaoke",
-    "instrumental",
-    "acoustic",
-    "acustico",
-    "unplugged",
-    "mashup",
-    "bass boosted",
-    "extended",
-    "tribute",
-    "reaction",
-    "1 hour",
-    "loop",
-    "piano version",
-    "demo",
-    "chipmunk",
-    "daycore",
+    "live", "en vivo", "ao vivo", "en directo", "cover", "remix", "sped up", "speed up", "slowed", "reverb",
+    "nightcore", "8d", "karaoke", "instrumental", "acoustic", "acustico", "unplugged", "mashup", "bass boosted",
+    "extended", "tribute", "reaction", "1 hour", "loop", "piano version", "demo", "chipmunk", "daycore",
 ];
 
 /// Bracketed or dashed segments that carry no identity ("Official Video", "Remastered 2011").
 const NOISE: &[&str] = &[
-    "official",
-    "video",
-    "audio",
-    "music",
-    "lyric",
-    "lyrics",
-    "letra",
-    "oficial",
-    "visualizer",
-    "visualiser",
-    "hd",
-    "hq",
-    "4k",
-    "remaster",
-    "remastered",
-    "version",
-    "mv",
-    "clip",
-    "videoclip",
-    "explicit",
-    "clean",
-    "radio",
-    "edit",
-    "original",
-    "mix",
-    "single",
-    "album",
-    "from",
-    "the",
-    "en",
-    "con",
-    "with",
-    "lyricvideo",
-    "remasterizado",
-    "remasterizada",
-    "stereo",
-    "mono",
-    "full",
-    "color",
-    "coded",
-    "sub",
-    "subtitulado",
+    "official", "video", "audio", "music", "lyric", "lyrics", "letra", "oficial", "visualizer", "visualiser",
+    "hd", "hq", "4k", "remaster", "remastered", "version", "mv", "clip", "videoclip", "explicit", "clean",
+    "radio", "edit", "original", "mix", "single", "album", "from", "the", "en", "con", "with", "lyricvideo",
+    "remasterizado", "remasterizada", "stereo", "mono", "full", "color", "coded", "sub", "subtitulado",
 ];
 
 #[derive(Debug, Clone)]
@@ -107,11 +44,7 @@ pub struct Candidate {
 
 impl Candidate {
     pub fn new(track: TrackInfo) -> Self {
-        Self {
-            track,
-            channel: None,
-            from_isrc: false,
-        }
+        Self { track, channel: None, from_isrc: false }
     }
 }
 
@@ -176,16 +109,11 @@ fn is_noise_or_credit(group: &str) -> bool {
     if matches!(t[0].as_str(), "feat" | "ft" | "featuring" | "with" | "prod" | "con") {
         return true;
     }
-    t.iter()
-        .all(|w| NOISE.contains(&w.as_str()) || w.chars().all(|c| c.is_ascii_digit()))
+    t.iter().all(|w| NOISE.contains(&w.as_str()) || w.chars().all(|c| c.is_ascii_digit()))
 }
 
 fn variants_in(normalized: &str) -> HashSet<&'static str> {
-    VARIANTS
-        .iter()
-        .copied()
-        .filter(|v| contains_phrase(normalized, v))
-        .collect()
+    VARIANTS.iter().copied().filter(|v| contains_phrase(normalized, v)).collect()
 }
 
 fn dice(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
@@ -214,12 +142,7 @@ pub fn score(src: &TrackInfo, cand: &Candidate) -> i32 {
     }
 
     // Artists: candidate artists, channel and (for "Artist - Title" uploads) the title itself.
-    let src_artists: Vec<String> = src
-        .artists
-        .iter()
-        .map(|a| normalize(a))
-        .filter(|a| !a.is_empty())
-        .collect();
+    let src_artists: Vec<String> = src.artists.iter().map(|a| normalize(a)).filter(|a| !a.is_empty()).collect();
     let channel_raw = cand.channel.as_deref().unwrap_or("");
     let is_topic = channel_raw.trim_end().ends_with("- Topic") || c.origin == TrackOrigin::YoutubeMusic;
     let cand_artist_text = normalize(&format!("{} {}", c.artists.join(" "), channel_raw));
@@ -240,15 +163,8 @@ pub fn score(src: &TrackInfo, cand: &Candidate) -> i32 {
 
     // Title similarity on cleaned tokens. Artist names in the candidate title ("Artist - Song")
     // are ignored unless the source title contains them too.
-    let src_clean: HashSet<String> = clean_title(&src.title)
-        .split(' ')
-        .filter(|t| !t.is_empty())
-        .map(str::to_owned)
-        .collect();
-    let artist_tokens: HashSet<String> = src_artists
-        .iter()
-        .flat_map(|a| a.split(' ').map(str::to_owned))
-        .collect();
+    let src_clean: HashSet<String> = clean_title(&src.title).split(' ').filter(|t| !t.is_empty()).map(str::to_owned).collect();
+    let artist_tokens: HashSet<String> = src_artists.iter().flat_map(|a| a.split(' ').map(str::to_owned)).collect();
     let cand_clean: HashSet<String> = clean_title(&c.title)
         .split(' ')
         .filter(|t| !t.is_empty())
@@ -299,10 +215,7 @@ pub fn query_for(src: &TrackInfo) -> String {
         rest = &rest[close + 1..];
     }
     title.push_str(rest);
-    let title = strip_inline_credit(title.trim())
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let title = strip_inline_credit(title.trim()).split_whitespace().collect::<Vec<_>>().join(" ");
     match src.artists.first() {
         Some(a) => format!("{a} {title}"),
         None => title,
@@ -335,11 +248,7 @@ pub async fn find(yt: &YouTube, store: &Store, ttl: Duration, src: &TrackInfo) -
     let mut cands: Vec<Candidate> = Vec::new();
     if let Some(isrc) = &src.isrc {
         match yt.search_songs(isrc, 5).await {
-            Ok(r) => cands.extend(r.into_iter().map(|t| Candidate {
-                track: t,
-                channel: None,
-                from_isrc: true,
-            })),
+            Ok(r) => cands.extend(r.into_iter().map(|t| Candidate { track: t, channel: None, from_isrc: true })),
             Err(e) => debug!(error = %e, "ISRC search failed"),
         }
     }
@@ -352,33 +261,18 @@ pub async fn find(yt: &YouTube, store: &Store, ttl: Duration, src: &TrackInfo) -
             if let Ok(r) = yt.search_videos(&q, 8).await {
                 cands.extend(r.into_iter().map(|t| {
                     let channel = t.artists.first().cloned();
-                    Candidate {
-                        track: t,
-                        channel,
-                        from_isrc: false,
-                    }
+                    Candidate { track: t, channel, from_isrc: false }
                 }));
             }
         }
     }
     let Some((winner, sc)) = best(src, &cands) else {
-        return Err(SourceError::NotFound(format!(
-            "No YouTube match for \"{}\"",
-            query_for(src)
-        )));
+        return Err(SourceError::NotFound(format!("No YouTube match for \"{}\"", query_for(src))));
     };
-    let vid = winner
-        .track
-        .youtube_id
-        .clone()
-        .ok_or_else(|| SourceError::Other("candidate without id".into()))?;
+    let vid = winner.track.youtube_id.clone().ok_or_else(|| SourceError::Other("candidate without id".into()))?;
     debug!(score = sc, title = %winner.track.title, %vid, "spotify match");
     if let Some(k) = &key {
-        let entry = CachedMatch {
-            video_id: vid.clone(),
-            title: winner.track.title.clone(),
-            duration_ms: winner.track.duration_ms,
-        };
+        let entry = CachedMatch { video_id: vid.clone(), title: winner.track.title.clone(), duration_ms: winner.track.duration_ms };
         let _ = store.cache_put(CACHE_NS, k, &entry, ttl).await;
     }
     Ok(with_video(src, &vid))
@@ -419,11 +313,7 @@ mod tests {
         let mut t = src(title, &[channel.trim_end_matches(" - Topic")], secs);
         t.origin = TrackOrigin::Youtube;
         t.youtube_id = Some(id.into());
-        Candidate {
-            track: t,
-            channel: Some(channel.into()),
-            from_isrc: false,
-        }
+        Candidate { track: t, channel: Some(channel.into()), from_isrc: false }
     }
 
     fn pick(s: &TrackInfo, c: &[Candidate]) -> Option<String> {
@@ -432,39 +322,22 @@ mod tests {
 
     #[test]
     fn clean_title_strips_credits_and_noise() {
-        assert_eq!(
-            clean_title("Me Porto Bonito (feat. Chencho Corleone)"),
-            "me porto bonito"
-        );
+        assert_eq!(clean_title("Me Porto Bonito (feat. Chencho Corleone)"), "me porto bonito");
         assert_eq!(clean_title("Song ft. Someone Else"), "song");
-        assert_eq!(
-            clean_title("Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)"),
-            "rick astley never gonna give you up"
-        );
-        assert_eq!(
-            clean_title("Here Comes The Sun - Remastered 2009"),
-            "here comes the sun"
-        );
+        assert_eq!(clean_title("Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)"), "rick astley never gonna give you up");
+        assert_eq!(clean_title("Here Comes The Sun - Remastered 2009"), "here comes the sun");
         assert_eq!(clean_title("Song (Remix)"), "song remix");
         assert_eq!(clean_title("Song - Live at Wembley"), "song live at wembley");
         assert_eq!(clean_title("Tití Me Preguntó [Video Oficial]"), "titi me pregunto");
         assert_eq!(clean_title("Canción (con Otro Artista)"), "cancion");
-        assert_eq!(
-            clean_title("Lose Yourself [From \"8 Mile\"]"),
-            "lose yourself from 8 mile"
-        );
+        assert_eq!(clean_title("Lose Yourself [From \"8 Mile\"]"), "lose yourself from 8 mile");
     }
 
     #[test]
     fn prefers_original_over_remix_and_sped_up() {
         let s = src("Blinding Lights", &["The Weeknd"], 200);
         let c = [
-            song(
-                "remix000000",
-                "Blinding Lights (Major Lazer Remix)",
-                &["The Weeknd", "Major Lazer"],
-                201,
-            ),
+            song("remix000000", "Blinding Lights (Major Lazer Remix)", &["The Weeknd", "Major Lazer"], 201),
             song("spedup00000", "Blinding Lights (Sped Up)", &["The Weeknd"], 160),
             song("orig0000000", "Blinding Lights", &["The Weeknd"], 200),
             song("nightcore00", "Blinding Lights - Nightcore", &["Nightcore Bros"], 170),
@@ -474,19 +347,10 @@ mod tests {
 
     #[test]
     fn picks_remix_when_the_source_is_the_remix() {
-        let s = src(
-            "Blinding Lights - Major Lazer Remix",
-            &["The Weeknd", "Major Lazer"],
-            201,
-        );
+        let s = src("Blinding Lights - Major Lazer Remix", &["The Weeknd", "Major Lazer"], 201);
         let c = [
             song("orig0000000", "Blinding Lights", &["The Weeknd"], 200),
-            song(
-                "remix000000",
-                "Blinding Lights (Major Lazer Remix)",
-                &["The Weeknd", "Major Lazer"],
-                201,
-            ),
+            song("remix000000", "Blinding Lights (Major Lazer Remix)", &["The Weeknd", "Major Lazer"], 201),
         ];
         assert_eq!(pick(&s, &c).as_deref(), Some("remix000000"));
     }
@@ -496,12 +360,7 @@ mod tests {
         let s = src("Bohemian Rhapsody", &["Queen"], 354);
         let c = [
             song("live0000000", "Bohemian Rhapsody (Live Aid 1985)", &["Queen"], 356),
-            video(
-                "liveyt00000",
-                "Queen - Bohemian Rhapsody (Live at Wembley '86)",
-                "Queen Official",
-                354,
-            ),
+            video("liveyt00000", "Queen - Bohemian Rhapsody (Live at Wembley '86)", "Queen Official", 354),
             song("studio00000", "Bohemian Rhapsody (Remastered 2011)", &["Queen"], 355),
         ];
         assert_eq!(pick(&s, &c).as_deref(), Some("studio00000"));
@@ -519,41 +378,17 @@ mod tests {
 
     #[test]
     fn feat_variations_match() {
-        let s = src(
-            "Me Porto Bonito (feat. Chencho Corleone)",
-            &["Bad Bunny", "Chencho Corleone"],
-            178,
-        );
+        let s = src("Me Porto Bonito (feat. Chencho Corleone)", &["Bad Bunny", "Chencho Corleone"], 178);
         let c = [
-            song(
-                "karaoke0000",
-                "Me Porto Bonito (Karaoke Version)",
-                &["Karaoke Hits"],
-                178,
-            ),
-            song(
-                "right000000",
-                "Me Porto Bonito",
-                &["Bad Bunny", "Chencho Corleone"],
-                179,
-            ),
-            video(
-                "video000000",
-                "BAD BUNNY ft. CHENCHO CORLEONE - ME PORTO BONITO (Video Oficial)",
-                "Bad Bunny",
-                190,
-            ),
+            song("karaoke0000", "Me Porto Bonito (Karaoke Version)", &["Karaoke Hits"], 178),
+            song("right000000", "Me Porto Bonito", &["Bad Bunny", "Chencho Corleone"], 179),
+            video("video000000", "BAD BUNNY ft. CHENCHO CORLEONE - ME PORTO BONITO (Video Oficial)", "Bad Bunny", 190),
         ];
         assert_eq!(pick(&s, &c).as_deref(), Some("right000000"));
 
         // Spotify lists the featured artist only in the title; YouTube lists both as artists.
         let s = src("Taki Taki (with Selena Gomez, Ozuna & Cardi B)", &["DJ Snake"], 213);
-        let c = [song(
-            "taki0000000",
-            "Taki Taki (feat. Selena Gomez, Ozuna & Cardi B)",
-            &["DJ Snake", "Selena Gomez"],
-            213,
-        )];
+        let c = [song("taki0000000", "Taki Taki (feat. Selena Gomez, Ozuna & Cardi B)", &["DJ Snake", "Selena Gomez"], 213)];
         assert_eq!(pick(&s, &c).as_deref(), Some("taki0000000"));
     }
 
@@ -562,30 +397,15 @@ mod tests {
         let s = src("Tití Me Preguntó", &["Bad Bunny"], 243);
         let c = [
             song("cover000000", "Titi Me Pregunto (Soul Cover)", &["soulgenic"], 187),
-            song(
-                "karaoke0000",
-                "Tití Me Preguntó (By Bad Bunny) (Instrumental Karaoke Version)",
-                &["ZZang KARAOKE"],
-                242,
-            ),
-            song(
-                "other000000",
-                "Tití Me Preguntó",
-                &["DJ Zaro", "Vandal On Da Track"],
-                108,
-            ),
+            song("karaoke0000", "Tití Me Preguntó (By Bad Bunny) (Instrumental Karaoke Version)", &["ZZang KARAOKE"], 242),
+            song("other000000", "Tití Me Preguntó", &["DJ Zaro", "Vandal On Da Track"], 108),
             song("juRFjpB5Ppg", "Titi Me Pregunto", &["Bad Bunny"], 244),
         ];
         assert_eq!(pick(&s, &c).as_deref(), Some("juRFjpB5Ppg"));
 
         let s = src("Despacito", &["Luis Fonsi", "Daddy Yankee"], 229);
         let c = [
-            video(
-                "kJQP7kiw5Fk",
-                "Luis Fonsi - Despacito ft. Daddy Yankee",
-                "Luis Fonsi",
-                282,
-            ),
+            video("kJQP7kiw5Fk", "Luis Fonsi - Despacito ft. Daddy Yankee", "Luis Fonsi", 282),
             video("topic000000", "Despacito", "Luis Fonsi - Topic", 229),
         ];
         assert_eq!(pick(&s, &c).as_deref(), Some("topic000000"));
@@ -594,12 +414,7 @@ mod tests {
     #[test]
     fn music_video_with_long_intro_still_matches_when_nothing_better() {
         let s = src("Despacito", &["Luis Fonsi", "Daddy Yankee"], 229);
-        let c = [video(
-            "kJQP7kiw5Fk",
-            "Luis Fonsi - Despacito ft. Daddy Yankee",
-            "Luis Fonsi",
-            282,
-        )];
+        let c = [video("kJQP7kiw5Fk", "Luis Fonsi - Despacito ft. Daddy Yankee", "Luis Fonsi", 282)];
         // 53 s off: weak, but artist + exact title still clear the bar.
         assert_eq!(pick(&s, &c).as_deref(), Some("kJQP7kiw5Fk"));
     }

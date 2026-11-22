@@ -18,10 +18,7 @@ pub struct StreamDirs {
 
 impl StreamDirs {
     pub fn new(root: impl Into<PathBuf>, max_mb: u64) -> Self {
-        Self {
-            root: root.into(),
-            max_bytes: max_mb.saturating_mul(1024 * 1024),
-        }
+        Self { root: root.into(), max_bytes: max_mb.saturating_mul(1024 * 1024) }
     }
 
     pub fn root(&self) -> &Path {
@@ -33,8 +30,7 @@ impl StreamDirs {
     }
 
     pub fn track_path(&self, guild_id: u64, voice_channel_id: u64, track_uid: Uuid) -> PathBuf {
-        self.channel_path(guild_id, voice_channel_id)
-            .join(track_uid.to_string())
+        self.channel_path(guild_id, voice_channel_id).join(track_uid.to_string())
     }
 
     /// Create (if needed) and return the work dir for `owner`. Owners without a track get a
@@ -71,9 +67,7 @@ impl StreamDirs {
     {
         let root = self.root.clone();
         let max = self.max_bytes;
-        tokio::task::spawn_blocking(move || enforce_limit_blocking(&root, max, protect))
-            .await
-            .unwrap_or(0)
+        tokio::task::spawn_blocking(move || enforce_limit_blocking(&root, max, protect)).await.unwrap_or(0)
     }
 }
 
@@ -102,12 +96,7 @@ fn enforce_limit_blocking<F: Fn(u64, u64, &str) -> bool>(root: &Path, max: u64, 
                     (Ok(g), Ok(c)) => protect(g, c, &t),
                     _ => false,
                 };
-                dirs.push(TrackDir {
-                    path: tpath,
-                    bytes,
-                    modified,
-                    protected,
-                });
+                dirs.push(TrackDir { path: tpath, bytes, modified, protected });
             }
         }
     }
@@ -130,9 +119,7 @@ fn enforce_limit_blocking<F: Fn(u64, u64, &str) -> bool>(root: &Path, max: u64, 
 }
 
 fn subdirs(p: &Path) -> Vec<(String, PathBuf)> {
-    let Ok(rd) = std::fs::read_dir(p) else {
-        return Vec::new();
-    };
+    let Ok(rd) = std::fs::read_dir(p) else { return Vec::new() };
     rd.flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
@@ -142,9 +129,7 @@ fn subdirs(p: &Path) -> Vec<(String, PathBuf)> {
 /// Total size and newest modification time of everything under `p`.
 fn dir_usage(p: &Path) -> (u64, SystemTime) {
     let mut bytes = 0;
-    let mut newest = std::fs::metadata(p)
-        .and_then(|m| m.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let mut newest = std::fs::metadata(p).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
     let mut stack = vec![p.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(rd) = std::fs::read_dir(&dir) else { continue };

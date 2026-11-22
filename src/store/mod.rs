@@ -61,10 +61,7 @@ impl Store {
             .foreign_keys(true)
             .pragma("temp_store", "memory")
             .pragma("cache_size", "-8000");
-        let pool = SqlitePoolOptions::new()
-            .max_connections(8)
-            .connect_with(options)
-            .await?;
+        let pool = SqlitePoolOptions::new().max_connections(8).connect_with(options).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         Ok(Self { pool })
     }
@@ -130,19 +127,13 @@ impl Store {
 
     /// Delete expired cache entries; returns how many were removed.
     pub async fn cache_sweep(&self) -> Result<u64> {
-        let res = sqlx::query("DELETE FROM cache WHERE expires_at <= ?")
-            .bind(now_secs())
-            .execute(&self.pool)
-            .await?;
+        let res = sqlx::query("DELETE FROM cache WHERE expires_at <= ?").bind(now_secs()).execute(&self.pool).await?;
         Ok(res.rows_affected())
     }
 }
 
 pub fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 /// Snowflake to SQLite INTEGER.

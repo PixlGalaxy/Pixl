@@ -165,10 +165,7 @@ impl Store {
         .bind(limit)
         .fetch_all(self.pool())
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(genre, weight)| GenreWeight { genre, weight })
-            .collect())
+        Ok(rows.into_iter().map(|(genre, weight)| GenreWeight { genre, weight }).collect())
     }
 
     /// Delete everything personal about a user: history, feedback, taste and neighbor rows in both
@@ -176,18 +173,9 @@ impl Store {
     pub async fn delete_user_data(&self, user_id: u64) -> Result<DeletedUserData> {
         let uid = sf(user_id);
         let mut tx = self.begin_write().await?;
-        let history = sqlx::query("DELETE FROM user_history WHERE user_id = ?")
-            .bind(uid)
-            .execute(&mut *tx)
-            .await?;
-        let feedback = sqlx::query("DELETE FROM user_feedback WHERE user_id = ?")
-            .bind(uid)
-            .execute(&mut *tx)
-            .await?;
-        let taste = sqlx::query("DELETE FROM user_taste WHERE user_id = ?")
-            .bind(uid)
-            .execute(&mut *tx)
-            .await?;
+        let history = sqlx::query("DELETE FROM user_history WHERE user_id = ?").bind(uid).execute(&mut *tx).await?;
+        let feedback = sqlx::query("DELETE FROM user_feedback WHERE user_id = ?").bind(uid).execute(&mut *tx).await?;
+        let taste = sqlx::query("DELETE FROM user_taste WHERE user_id = ?").bind(uid).execute(&mut *tx).await?;
         let neighbors = sqlx::query("DELETE FROM user_neighbors WHERE user_id = ?1 OR neighbor_id = ?1")
             .bind(uid)
             .execute(&mut *tx)
@@ -244,10 +232,7 @@ mod tests {
         let store = Store::open_in_memory().await.unwrap();
         let n = HISTORY_CAP as i64 + 5;
         for i in 0..n {
-            store
-                .record_play_at(1, &track(&format!("t{i}")), 1000 + i)
-                .await
-                .unwrap();
+            store.record_play_at(1, &track(&format!("t{i}")), 1000 + i).await.unwrap();
         }
         assert_eq!(store.history_len(1).await.unwrap(), HISTORY_CAP);
         // t0..t4 were the oldest and got evicted; replaying t5 makes it the newest.
@@ -272,16 +257,7 @@ mod tests {
     #[tokio::test]
     async fn respects_history_opt_out() {
         let store = Store::open_in_memory().await.unwrap();
-        store
-            .update_user_prefs(
-                1,
-                &UserPrefsPatch {
-                    locale: None,
-                    history_enabled: Some(false),
-                },
-            )
-            .await
-            .unwrap();
+        store.update_user_prefs(1, &UserPrefsPatch { locale: None, history_enabled: Some(false) }).await.unwrap();
         assert!(store.record_play(1, &track("a")).await.unwrap().is_none());
         assert_eq!(store.history_len(1).await.unwrap(), 0);
         assert!(store.track_id("a").await.unwrap().is_none());
@@ -293,24 +269,11 @@ mod tests {
         let a = store.record_play_at(1, &track("a"), 1).await.unwrap().unwrap();
         store.record_play_at(1, &track("a"), 2).await.unwrap();
         let b = store.record_play_at(1, &track("b"), 3).await.unwrap().unwrap();
-        let t = |tag: &str, weight| Tag {
-            tag: tag.into(),
-            weight,
-            source: TagSource::Lastfm,
-        };
+        let t = |tag: &str, weight| Tag { tag: tag.into(), weight, source: TagSource::Lastfm };
         store.write_track_tags(a, &[t("rock", 1.0)]).await.unwrap();
-        store
-            .write_track_tags(b, &[t("jazz", 1.0), t("rock", 0.5)])
-            .await
-            .unwrap();
+        store.write_track_tags(b, &[t("jazz", 1.0), t("rock", 0.5)]).await.unwrap();
         let g = store.top_genres(1, 10).await.unwrap();
-        assert_eq!(
-            g[0],
-            GenreWeight {
-                genre: "rock".into(),
-                weight: 2.5
-            }
-        );
+        assert_eq!(g[0], GenreWeight { genre: "rock".into(), weight: 2.5 });
         assert_eq!(g[1].genre, "jazz");
     }
 
@@ -320,33 +283,16 @@ mod tests {
         store.record_play(1, &track("a")).await.unwrap();
         store.record_play(2, &track("a")).await.unwrap();
         store.set_feedback(1, &track("a"), Some(Feedback::Like)).await.unwrap();
-        store
-            .put_taste(1, &[("rock".into(), 1.0)].into_iter().collect(), 1)
-            .await
-            .unwrap();
+        store.put_taste(1, &[("rock".into(), 1.0)].into_iter().collect(), 1).await.unwrap();
         store.replace_neighbors(1, &[(2, 0.9)]).await.unwrap();
         store.replace_neighbors(2, &[(1, 0.9)]).await.unwrap();
         store
-            .update_user_prefs(
-                1,
-                &UserPrefsPatch {
-                    locale: Some(Some("es".into())),
-                    history_enabled: None,
-                },
-            )
+            .update_user_prefs(1, &UserPrefsPatch { locale: Some(Some("es".into())), history_enabled: None })
             .await
             .unwrap();
 
         let d = store.delete_user_data(1).await.unwrap();
-        assert_eq!(
-            d,
-            DeletedUserData {
-                history: 1,
-                feedback: 1,
-                taste: 1,
-                neighbors: 2
-            }
-        );
+        assert_eq!(d, DeletedUserData { history: 1, feedback: 1, taste: 1, neighbors: 2 });
         assert_eq!(store.history_len(1).await.unwrap(), 0);
         assert!(store.get_feedback(1, &track("a")).await.unwrap().is_none());
         assert!(store.get_taste(1).await.unwrap().is_none());
