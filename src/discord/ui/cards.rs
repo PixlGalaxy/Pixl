@@ -1206,7 +1206,7 @@ mod tests {
             text.contains("Position 4 in the queue · Plays in about 9 minutes"),
             "{text}"
         );
-        assert!(all_text(&added_single(&track(&a), 0, None, &i).to_json()).contains("Starting now"));
+        assert!(all_text(&added_single(&track(&a), 0, None, &i).to_json()).contains("Starting in a few seconds"));
 
         let preview: Vec<(usize, TrackCard)> = (5..10).map(|p| (p, track(&a))).collect();
         let list = AddedList {
