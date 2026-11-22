@@ -11,11 +11,11 @@ const REPO = 'https://github.com/PixlGalaxy/Pixl'
 export function SupportCard() {
   const { t } = useTranslation()
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-line bg-gradient-to-br from-sky-500/10 via-surface to-violet-500/10 shadow-sm">
-      <div className="pointer-events-none absolute -top-24 -left-24 size-72 rounded-full bg-sky-500/10 blur-3xl" />
+    <section className="relative overflow-hidden rounded-2xl border border-line bg-gradient-to-br from-accent-500/10 via-surface to-violet-500/10 shadow-sm">
+      <div className="pointer-events-none absolute -top-24 -left-24 size-72 rounded-full bg-accent-500/10 blur-3xl" />
       <div className="relative flex flex-col items-center gap-6 p-6 sm:flex-row sm:items-stretch sm:p-8">
         <div className="flex flex-1 flex-col justify-center text-center sm:text-left">
-          <p className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold tracking-wider text-sky-600 uppercase sm:justify-start dark:text-sky-400">
+          <p className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold tracking-wider text-accent-600 uppercase sm:justify-start dark:text-accent-400">
             <Heart size={13} className="fill-current" /> {t('support.eyebrow')}
           </p>
           <h2 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl">{t('support.title')}</h2>
@@ -39,7 +39,7 @@ export function SupportCard() {
           <button
             type="button"
             onClick={() => openExternal(REPO)}
-            className="mt-3 self-center font-mono text-xs text-muted hover:text-sky-600 sm:self-start dark:hover:text-sky-400"
+            className="mt-3 self-center font-mono text-xs text-muted hover:text-accent-600 sm:self-start dark:hover:text-accent-400"
           >
             github.com/PixlGalaxy/Pixl
           </button>

@@ -254,7 +254,7 @@ mod tests {
         store.set_feedback(1, &track("hated"), Some(Feedback::Dislike)).await.unwrap();
 
         store.replace_neighbors(1, &[(2, 0.8), (3, 0.5), (1, 1.0)]).await.unwrap();
-        store.update_user_prefs(3, &UserPrefsPatch { locale: None, history_enabled: Some(false) }).await.unwrap();
+        store.update_user_prefs(3, &UserPrefsPatch { history_enabled: Some(false), ..Default::default() }).await.unwrap();
 
         let n = store.neighbors(1, 10).await.unwrap();
         assert_eq!(n, vec![Neighbor { user_id: 2, score: 0.8 }]);

@@ -143,7 +143,7 @@ mod tests {
     #[tokio::test]
     async fn ignored_when_history_off() {
         let store = Store::open_in_memory().await.unwrap();
-        let patch = UserPrefsPatch { locale: None, history_enabled: Some(false) };
+        let patch = UserPrefsPatch { history_enabled: Some(false), ..Default::default() };
         store.update_user_prefs(7, &patch).await.unwrap();
         store.set_feedback(7, &track("a"), Some(Feedback::Like)).await.unwrap();
         assert!(store.get_feedback(7, &track("a")).await.unwrap().is_none());

@@ -42,7 +42,7 @@ export function ConnectingScreen({ step, error }: { step: LoginStep | null; erro
                   ) : failed ? (
                     <CircleAlert size={16} className="text-red-500" />
                   ) : active ? (
-                    <Spinner size={16} className="text-sky-500" />
+                    <Spinner size={16} className="text-accent-500" />
                   ) : (
                     <Circle size={8} className="fill-current text-line" />
                   )}
@@ -72,7 +72,7 @@ function Message({ title, body, icon }: { title: string; body: string; icon: Rea
     <GateLayout>
       <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
         <div className="flex items-center gap-3 px-4 py-4">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/10 text-sky-500">{icon}</div>
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent-500/10 text-accent-500">{icon}</div>
           <div className="min-w-0">
             <h1 className="font-semibold">{title}</h1>
             <p className="text-xs text-muted">{body}</p>

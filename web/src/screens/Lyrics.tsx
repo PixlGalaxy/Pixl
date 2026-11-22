@@ -60,7 +60,7 @@ function SyncedLyrics({ lines }: { lines: LyricLine[] }) {
               className={cx(
                 'block w-full text-left text-lg leading-snug font-semibold tracking-tight transition-colors disabled:cursor-default',
                 i === current ? 'text-fg' : i < current ? 'text-muted/60' : 'text-muted',
-                canSeek && 'hover:text-sky-500',
+                canSeek && 'hover:text-accent-500',
               )}
             >
               {l.line || <span className="text-muted/50">···</span>}

@@ -78,7 +78,7 @@ export function HelpScreen() {
           {COMMANDS.filter((c) => !c.ai || aiEnabled).map((c) => (
             <li key={c.name} className="space-y-1.5 border-t border-line px-4 py-3">
               <div className="flex flex-wrap items-center gap-2">
-                <code className="font-mono text-sm font-medium text-sky-600 dark:text-sky-400">/{c.name}</code>
+                <code className="font-mono text-sm font-medium text-accent-600 dark:text-accent-400">/{c.name}</code>
                 <Tag tone={ACCESS_TONE[c.access]}>{t(`help.access.${c.access}`)}</Tag>
               </div>
               <p className="text-sm text-muted">{t(`help.commands.${c.name}.description`)}</p>

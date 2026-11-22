@@ -14,10 +14,16 @@
   --color-line: var(--line);
   --color-fg: var(--fg);
   --color-muted: var(--muted);
+  --color-accent-50: var(--accent-50);
+  --color-accent-100: var(--accent-100);
+  --color-accent-200: var(--accent-200);
   --color-accent-300: var(--accent-300);
   --color-accent-400: var(--accent-400);
   --color-accent-500: var(--accent-500);
   --color-accent-600: var(--accent-600);
+  --color-accent-700: var(--accent-700);
+  --color-accent-800: var(--accent-800);
+  --color-accent-900: var(--accent-900);
 }
 
 :root {
@@ -27,11 +33,6 @@
   --line: #e3e6eb;
   --fg: #111827;
   --muted: #6b7280;
-  /* accent = Tailwind sky */
-  --accent-300: #7dd3fc;
-  --accent-400: #38bdf8;
-  --accent-500: #0ea5e9;
-  --accent-600: #0284c7;
   color-scheme: light;
 }
 
@@ -43,6 +44,327 @@
   --fg: #e6e8ee;
   --muted: #8a92a6;
   color-scheme: dark;
+}
+
+/*
+ * Accent palettes (Account > Appearance), the same set and mechanism as WebinCloud's skins: each is a
+ * full Tailwind color-family scale behind the --accent-* variables, picked with `data-accent` on
+ * <html>. Every accent utility (`bg-accent-500`, `text-accent-600`...) reads them, so swapping the
+ * attribute re-hues the whole panel. Sky is the default. Ids match web/src/lib/appearance.ts and the
+ * API's list (src/api/me.rs).
+ */
+
+:root,
+[data-accent='sky'] {
+  --accent-50: #f0f9ff;
+  --accent-100: #e0f2fe;
+  --accent-200: #bae6fd;
+  --accent-300: #7dd3fc;
+  --accent-400: #38bdf8;
+  --accent-500: #0ea5e9;
+  --accent-600: #0284c7;
+  --accent-700: #0369a1;
+  --accent-800: #075985;
+  --accent-900: #0c4a6e;
+}
+
+[data-accent='indigo'] {
+  --accent-50: #eef2ff;
+  --accent-100: #e0e7ff;
+  --accent-200: #c7d2fe;
+  --accent-300: #a5b4fc;
+  --accent-400: #818cf8;
+  --accent-500: #6366f1;
+  --accent-600: #4f46e5;
+  --accent-700: #4338ca;
+  --accent-800: #3730a3;
+  --accent-900: #312e81;
+}
+
+[data-accent='ocean'] {
+  --accent-50: #ecfeff;
+  --accent-100: #cffafe;
+  --accent-200: #a5f3fc;
+  --accent-300: #67e8f9;
+  --accent-400: #22d3ee;
+  --accent-500: #06b6d4;
+  --accent-600: #0891b2;
+  --accent-700: #0e7490;
+  --accent-800: #155e75;
+  --accent-900: #164e63;
+}
+
+[data-accent='sunset'] {
+  --accent-50: #fff7ed;
+  --accent-100: #ffedd5;
+  --accent-200: #fed7aa;
+  --accent-300: #fdba74;
+  --accent-400: #fb923c;
+  --accent-500: #f97316;
+  --accent-600: #ea580c;
+  --accent-700: #c2410c;
+  --accent-800: #9a3412;
+  --accent-900: #7c2d12;
+}
+
+[data-accent='forest'] {
+  --accent-50: #ecfdf5;
+  --accent-100: #d1fae5;
+  --accent-200: #a7f3d0;
+  --accent-300: #6ee7b7;
+  --accent-400: #34d399;
+  --accent-500: #10b981;
+  --accent-600: #059669;
+  --accent-700: #047857;
+  --accent-800: #065f46;
+  --accent-900: #064e3b;
+}
+
+[data-accent='grape'] {
+  --accent-50: #f5f3ff;
+  --accent-100: #ede9fe;
+  --accent-200: #ddd6fe;
+  --accent-300: #c4b5fd;
+  --accent-400: #a78bfa;
+  --accent-500: #8b5cf6;
+  --accent-600: #7c3aed;
+  --accent-700: #6d28d9;
+  --accent-800: #5b21b6;
+  --accent-900: #4c1d95;
+}
+
+[data-accent='crimson'] {
+  --accent-50: #fff1f2;
+  --accent-100: #ffe4e6;
+  --accent-200: #fecdd3;
+  --accent-300: #fda4af;
+  --accent-400: #fb7185;
+  --accent-500: #f43f5e;
+  --accent-600: #e11d48;
+  --accent-700: #be123c;
+  --accent-800: #9f1239;
+  --accent-900: #881337;
+}
+
+[data-accent='solar'] {
+  --accent-50: #fffbeb;
+  --accent-100: #fef3c7;
+  --accent-200: #fde68a;
+  --accent-300: #fcd34d;
+  --accent-400: #fbbf24;
+  --accent-500: #f59e0b;
+  --accent-600: #d97706;
+  --accent-700: #b45309;
+  --accent-800: #92400e;
+  --accent-900: #78350f;
+}
+
+[data-accent='mint'] {
+  --accent-50: #f0fdfa;
+  --accent-100: #ccfbf1;
+  --accent-200: #99f6e4;
+  --accent-300: #5eead4;
+  --accent-400: #2dd4bf;
+  --accent-500: #14b8a6;
+  --accent-600: #0d9488;
+  --accent-700: #0f766e;
+  --accent-800: #115e59;
+  --accent-900: #134e4a;
+}
+
+[data-accent='blossom'] {
+  --accent-50: #fdf4ff;
+  --accent-100: #fae8ff;
+  --accent-200: #f5d0fe;
+  --accent-300: #f0abfc;
+  --accent-400: #e879f9;
+  --accent-500: #d946ef;
+  --accent-600: #c026d3;
+  --accent-700: #a21caf;
+  --accent-800: #86198f;
+  --accent-900: #701a75;
+}
+
+[data-accent='ares'] {
+  --accent-50: #fef2f2;
+  --accent-100: #fee2e2;
+  --accent-200: #fecaca;
+  --accent-300: #fca5a5;
+  --accent-400: #f87171;
+  --accent-500: #ef4444;
+  --accent-600: #dc2626;
+  --accent-700: #b91c1c;
+  --accent-800: #991b1b;
+  --accent-900: #7f1d1d;
+}
+
+[data-accent='poseidon'] {
+  --accent-50: #eff6ff;
+  --accent-100: #dbeafe;
+  --accent-200: #bfdbfe;
+  --accent-300: #93c5fd;
+  --accent-400: #60a5fa;
+  --accent-500: #3b82f6;
+  --accent-600: #2563eb;
+  --accent-700: #1d4ed8;
+  --accent-800: #1e40af;
+  --accent-900: #1e3a8a;
+}
+
+[data-accent='zeus'] {
+  --accent-50: #fefce8;
+  --accent-100: #fef9c3;
+  --accent-200: #fef08a;
+  --accent-300: #fde047;
+  --accent-400: #facc15;
+  --accent-500: #eab308;
+  --accent-600: #ca8a04;
+  --accent-700: #a16207;
+  --accent-800: #854d0e;
+  --accent-900: #713f12;
+}
+
+[data-accent='jade'] {
+  --accent-50: #f0fdf4;
+  --accent-100: #dcfce7;
+  --accent-200: #bbf7d0;
+  --accent-300: #86efac;
+  --accent-400: #4ade80;
+  --accent-500: #22c55e;
+  --accent-600: #16a34a;
+  --accent-700: #15803d;
+  --accent-800: #166534;
+  --accent-900: #14532d;
+}
+
+[data-accent='verdigris'] {
+  --accent-50: #f7fee7;
+  --accent-100: #ecfccb;
+  --accent-200: #d9f99d;
+  --accent-300: #bef264;
+  --accent-400: #a3e635;
+  --accent-500: #84cc16;
+  --accent-600: #65a30d;
+  --accent-700: #4d7c0f;
+  --accent-800: #3f6212;
+  --accent-900: #365314;
+}
+
+[data-accent='nebula'] {
+  --accent-50: #faf5ff;
+  --accent-100: #f3e8ff;
+  --accent-200: #e9d5ff;
+  --accent-300: #d8b4fe;
+  --accent-400: #c084fc;
+  --accent-500: #a855f7;
+  --accent-600: #9333ea;
+  --accent-700: #7e22ce;
+  --accent-800: #6b21a8;
+  --accent-900: #581c87;
+}
+
+[data-accent='sakura'] {
+  --accent-50: #fdf2f8;
+  --accent-100: #fce7f3;
+  --accent-200: #fbcfe8;
+  --accent-300: #f9a8d4;
+  --accent-400: #f472b6;
+  --accent-500: #ec4899;
+  --accent-600: #db2777;
+  --accent-700: #be185d;
+  --accent-800: #9d174d;
+  --accent-900: #831843;
+}
+
+[data-accent='slate'] {
+  --accent-50: #f8fafc;
+  --accent-100: #f1f5f9;
+  --accent-200: #e2e8f0;
+  --accent-300: #cbd5e1;
+  --accent-400: #94a3b8;
+  --accent-500: #64748b;
+  --accent-600: #475569;
+  --accent-700: #334155;
+  --accent-800: #1e293b;
+  --accent-900: #0f172a;
+}
+
+[data-accent='mono'] {
+  --accent-50: #f9fafb;
+  --accent-100: #f3f4f6;
+  --accent-200: #e5e7eb;
+  --accent-300: #d1d5db;
+  --accent-400: #9ca3af;
+  --accent-500: #6b7280;
+  --accent-600: #4b5563;
+  --accent-700: #374151;
+  --accent-800: #1f2937;
+  --accent-900: #111827;
+}
+
+[data-accent='graphite'] {
+  --accent-50: #fafafa;
+  --accent-100: #f4f4f5;
+  --accent-200: #e4e4e7;
+  --accent-300: #d4d4d8;
+  --accent-400: #a1a1aa;
+  --accent-500: #71717a;
+  --accent-600: #52525b;
+  --accent-700: #3f3f46;
+  --accent-800: #27272a;
+  --accent-900: #18181b;
+}
+
+[data-accent='ash'] {
+  --accent-50: #fafafa;
+  --accent-100: #f5f5f5;
+  --accent-200: #e5e5e5;
+  --accent-300: #d4d4d4;
+  --accent-400: #a3a3a3;
+  --accent-500: #737373;
+  --accent-600: #525252;
+  --accent-700: #404040;
+  --accent-800: #262626;
+  --accent-900: #171717;
+}
+
+[data-accent='terracotta'] {
+  --accent-50: #fafaf9;
+  --accent-100: #f5f5f4;
+  --accent-200: #e7e5e4;
+  --accent-300: #d6d3d1;
+  --accent-400: #a8a29e;
+  --accent-500: #78716c;
+  --accent-600: #57534e;
+  --accent-700: #44403c;
+  --accent-800: #292524;
+  --accent-900: #1c1917;
+}
+
+[data-accent='olive'] {
+  --accent-50: #f6faef;
+  --accent-100: #ebf5db;
+  --accent-200: #daebbc;
+  --accent-300: #c2df90;
+  --accent-400: #a8d161;
+  --accent-500: #8cbe37;
+  --accent-600: #759e2e;
+  --accent-700: #608226;
+  --accent-800: #4c671e;
+  --accent-900: #384b16;
+}
+
+[data-accent='maroon'] {
+  --accent-50: #f9f0f1;
+  --accent-100: #f2dedf;
+  --accent-200: #e7c0c3;
+  --accent-300: #d8979d;
+  --accent-400: #c76b73;
+  --accent-500: #b1434c;
+  --accent-600: #943840;
+  --accent-700: #7a2e35;
+  --accent-800: #602429;
+  --accent-900: #461b1e;
 }
 
 body {

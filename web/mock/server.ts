@@ -26,6 +26,7 @@ import type {
   Track,
   TrackReason,
 } from '../src/lib/types'
+import { ACCENTS } from '../src/lib/appearance'
 
 type Flags = {
   ai: boolean
@@ -184,7 +185,12 @@ const s = {
     voiceChannels: [],
   } as GuildSettings,
   djs: [USERS[2]!] as Member[],
-  prefs: { locale: null as string | null, historyEnabled: true },
+  prefs: {
+    locale: null as string | null,
+    historyEnabled: true,
+    theme: null as 'light' | 'dark' | 'system' | null,
+    accent: null as string | null,
+  },
   aiTimer: null as ReturnType<typeof setTimeout> | null,
   /** Voice channel the mock user is in (the panel follows it). */
   voice: '100' as string | null,
@@ -576,6 +582,11 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
     case 'GET /me/prefs':
       return s.prefs
     case 'PUT /me/prefs':
+      // Same checks as the API (src/api/me.rs).
+      if (body.theme != null && !['light', 'dark', 'system'].includes(String(body.theme))) {
+        throw new HttpError(400, 'invalid')
+      }
+      if (body.accent != null && !ACCENTS.some((a) => a.id === body.accent)) throw new HttpError(400, 'invalid')
       s.prefs = { ...s.prefs, ...(body as Partial<typeof s.prefs>) }
       return s.prefs
     case 'GET /me/taste':

@@ -9,7 +9,7 @@ type Toast = { id: number; tone: ToneName; message: string }
 const TONES = {
   success: { icon: CircleCheck, cls: 'text-emerald-500' },
   error: { icon: CircleAlert, cls: 'text-red-500' },
-  info: { icon: Info, cls: 'text-sky-500' },
+  info: { icon: Info, cls: 'text-accent-500' },
 } as const
 
 type ToastApi = { push: (tone: ToneName, message: string) => void }

@@ -171,7 +171,7 @@ function SkipVotes({ votes }: { votes: { current: number; required: number } }) 
         </span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-line">
-        <div className="h-full rounded-full bg-sky-500 transition-[width] duration-700 ease-out" style={{ width: `${pct}%` }} />
+        <div className="h-full rounded-full bg-accent-500 transition-[width] duration-700 ease-out" style={{ width: `${pct}%` }} />
       </div>
     </div>
   )
@@ -205,7 +205,7 @@ function Controls({ state }: { state: PlayerState }) {
           setState((s) => (s ? { ...s, status: next, pausedReason: next === 'paused' ? 'user' : null } : s))
           void run(() => (playing ? api.pause(channelId) : api.resume(channelId)))
         }}
-        className="inline-flex size-12 items-center justify-center rounded-full bg-sky-600 text-white shadow-sm shadow-sky-600/25 transition-colors hover:bg-sky-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 disabled:pointer-events-none disabled:opacity-50"
+        className="inline-flex size-12 items-center justify-center rounded-full bg-accent-600 text-white shadow-sm shadow-accent-600/25 transition-colors hover:bg-accent-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500 disabled:pointer-events-none disabled:opacity-50"
       >
         {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="translate-x-px" />}
       </button>

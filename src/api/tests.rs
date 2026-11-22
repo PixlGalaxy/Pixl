@@ -655,7 +655,10 @@ async fn history_disabled_blocks_feedback() {
         )
         .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(v, json!({ "locale": null, "historyEnabled": false }));
+    assert_eq!(
+        v,
+        json!({ "locale": null, "historyEnabled": false, "theme": null, "accent": null })
+    );
     let (s, v) = h.call("POST", "/api/tracks/feedback", Some(&ana), body()).await;
     assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "history_disabled"));
 
@@ -663,7 +666,10 @@ async fn history_disabled_blocks_feedback() {
         .call("PUT", "/api/me/prefs", Some(&ana), Some(json!({ "locale": "es" })))
         .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(v, json!({ "locale": "es", "historyEnabled": false }));
+    assert_eq!(
+        v,
+        json!({ "locale": "es", "historyEnabled": false, "theme": null, "accent": null })
+    );
     let (s, _) = h
         .call(
             "PUT",
@@ -978,4 +984,34 @@ async fn sessions_survive_a_restart_and_store_only_a_hash() {
     let restarted = ApiState::new(short.state.app.clone(), short.fake.clone(), Options::default()).unwrap();
     assert!(restarted.sessions.get(&dead).await.is_none());
     assert_eq!(short.state.app.store.sweep_panel_sessions().await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn appearance_prefs_are_validated() {
+    let h = harness().await;
+    let (ana, _) = h.login("ana", None).await;
+    let (s, v) = h
+        .call(
+            "PUT",
+            "/api/me/prefs",
+            Some(&ana),
+            Some(json!({ "theme": "system", "accent": "forest" })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((&v["theme"], &v["accent"]), (&json!("system"), &json!("forest")));
+    for body in [
+        json!({ "accent": "neon" }),
+        json!({ "theme": "sepia" }),
+        json!({ "accent": "" }),
+    ] {
+        let (s, v) = h.call("PUT", "/api/me/prefs", Some(&ana), Some(body)).await;
+        assert_eq!((s, code(&v)), (StatusCode::BAD_REQUEST, "invalid"));
+    }
+    let (_, v) = h
+        .call("PUT", "/api/me/prefs", Some(&ana), Some(json!({ "accent": null })))
+        .await;
+    assert_eq!((&v["theme"], &v["accent"]), (&json!("system"), &Value::Null));
+    let (_, v) = h.call("GET", "/api/me/prefs", Some(&ana), None).await;
+    assert_eq!(v["theme"], "system");
 }
