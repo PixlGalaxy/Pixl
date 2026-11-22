@@ -12,11 +12,13 @@ RUN pnpm build
 FROM rust:1-bookworm AS bot
 RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config libopus-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY src/ src/
 COPY migrations/ migrations/
 COPY assets/ assets/
 COPY locales/ locales/
+# Commit shown by /about (the build context has no .git). Empty: no commit is shown.
+ARG LYNX_COMMIT=
 RUN cargo build --release --locked
 
 # --- Runtime ----------------------------------------------------------------

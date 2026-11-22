@@ -44,7 +44,10 @@
       "invite_node": "Add another Lynx",
       "invite_main": "Invite Lynx",
       "cancel": "Cancel",
-      "stop_radio": "Stop radio"
+      "stop_radio": "Stop radio",
+      "source": "Source code",
+      "support": "Support server",
+      "website": "Website"
     },
     "now_playing": {
       "title_in": "Now playing in {channel}",
@@ -163,6 +166,27 @@
       "body": "Lynx is already playing in {busy}. Add another Lynx so it can play in {channel} at the same time.",
       "body_generic": "Add another Lynx so it can play in {channel} at the same time.",
       "no_more": "Every Lynx bot is already playing in another voice channel, and there are no more bots to add. Try again when one of them is free to play in {channel}."
+    },
+    "invite": {
+      "title": "Invite Lynx",
+      "body": "Add Lynx to a server to play music in its voice channels. Anyone with the Manage Server permission there can add it."
+    },
+    "about": {
+      "tagline": "Music for your voice channels, with a panel that opens right in Discord.",
+      "version": "Version {version}",
+      "uptime": "Uptime",
+      "ping": "Gateway ping",
+      "measuring": "measuring",
+      "servers": "Servers",
+      "bots": "Lynx bots",
+      "voice_channels": "Voice channels",
+      "playing": "Playing now",
+      "memory": "Memory",
+      "checking": "checking",
+      "unavailable": "unavailable",
+      "license": "AGPL-3.0 with Commons Clause",
+      "developed_by": "Developed by {name}",
+      "hosted_on": "Hosted on {host}"
     },
     "add_main": {
       "title": "Add the main Lynx",
@@ -326,6 +350,8 @@
         "mix": "Your favorites, a balance or new music (default: balanced)",
         "blend": "Blend the taste of everyone in the channel (default: on)"
       },
+      "invite": { "description": "Invite Lynx to a server" },
+      "about": { "description": "Show information about Lynx" },
       "panel": { "description": "Open the Lynx panel" },
       "launch": { "description": "Open the Lynx panel" }
     }

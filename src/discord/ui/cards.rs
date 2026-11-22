@@ -7,7 +7,10 @@ use super::{
 };
 use crate::{
     ai::AiPhase,
-    discord::ids::{CustomId, NpAction, NO_TRACK},
+    discord::{
+        about::{YtdlpLine, DEVELOPER_URL, HOST_URL, SOURCE_URL},
+        ids::{CustomId, NpAction, NO_TRACK},
+    },
     i18n::I18n,
     sources::TrackOrigin,
     store::LoopMode,
@@ -1161,6 +1164,155 @@ pub fn node_notice(invite_url: &str, i18n: &I18n) -> Message {
     add_main(invite_url, i18n).ephemeral(false)
 }
 
+// ---------------------------------------------------------------------------
+// Invite and about
+// ---------------------------------------------------------------------------
+
+/// Link buttons to the support server and the website, when they are configured.
+fn info_links(support_url: Option<&str>, website_url: Option<&str>, i18n: &I18n) -> Vec<Button> {
+    let ok = |u: &&str| u.starts_with("https://") || u.starts_with("http://");
+    let mut out = Vec::new();
+    if let Some(u) = support_url.filter(ok) {
+        out.push(Button::link(i18n.t("bot.button.support", &[]), u));
+    }
+    if let Some(u) = website_url.filter(ok) {
+        out.push(Button::link(i18n.t("bot.button.website", &[]), u));
+    }
+    out
+}
+
+/// Ephemeral reply to `/invite`.
+pub fn invite(invite_url: &str, support_url: Option<&str>, website_url: Option<&str>, i18n: &I18n) -> Message {
+    let mut row = vec![Button::link(i18n.t("bot.button.invite_main", &[]), invite_url)];
+    row.extend(info_links(support_url, website_url, i18n));
+    container(
+        Tone::Info,
+        vec![
+            Component::text(format!(
+                "**{}**
+{}",
+                i18n.t("bot.invite.title", &[]),
+                i18n.t("bot.invite.body", &[])
+            )),
+            Component::Row(row),
+        ],
+    )
+    .ephemeral(true)
+}
+
+/// Everything `/about` shows.
+#[derive(Debug, Clone)]
+pub struct About<'a> {
+    pub version: &'a str,
+    pub commit: Option<&'a str>,
+    /// The main bot's avatar.
+    pub avatar: Option<&'a str>,
+    pub uptime: std::time::Duration,
+    /// Gateway heartbeat latency; None until the first heartbeat is acknowledged.
+    pub ping: Option<std::time::Duration>,
+    pub servers: usize,
+    /// Every Lynx bot in this process.
+    pub bots: usize,
+    /// Voice channels with a player, and how many of them are playing right now.
+    pub voice_channels: usize,
+    pub playing: usize,
+    pub memory_bytes: Option<u64>,
+    pub ytdlp: YtdlpLine,
+    pub invite_url: &'a str,
+    pub support_url: Option<&'a str>,
+    pub website_url: Option<&'a str>,
+}
+
+/// `3d 4h 12m`, `4h 12m`, `12m 5s`, `5s`.
+pub fn format_uptime(d: std::time::Duration) -> String {
+    let s = d.as_secs();
+    let (days, h, m, sec) = (s / 86_400, (s / 3600) % 24, (s / 60) % 60, s % 60);
+    match (days, h, m) {
+        (0, 0, 0) => format!("{sec}s"),
+        (0, 0, _) => format!("{m}m {sec}s"),
+        (0, _, _) => format!("{h}h {m}m"),
+        _ => format!("{days}d {h}h {m}m"),
+    }
+}
+
+/// `85 MB`, `1.2 GB`.
+pub fn format_bytes(bytes: u64) -> String {
+    let mb = bytes as f64 / (1024.0 * 1024.0);
+    if mb >= 1024.0 {
+        format!("{:.1} GB", mb / 1024.0)
+    } else {
+        format!("{mb:.0} MB")
+    }
+}
+
+/// Reply to `/about`: version, live numbers, credits and links (ephemeral).
+pub fn about(v: &About, i18n: &I18n) -> Message {
+    let t = |key: &str| i18n.t(&format!("bot.about.{key}"), &[]);
+    let stat = |key: &str, value: &str| format!("{}: **{value}**", t(key));
+    let mut build = i18n.t("bot.about.version", &[("version", v.version)]);
+    if let Some(c) = v.commit {
+        build.push_str(&format!(" · `{c}`"));
+    }
+    let head = vec![format!(
+        "### Lynx
+{}
+-# {build}",
+        t("tagline")
+    )];
+    let mut children = Component::section_or_text(head, v.avatar);
+    children.push(Component::separator());
+
+    let ping = match v.ping {
+        Some(d) => format!("{} ms", d.as_millis()),
+        None => t("measuring"),
+    };
+    let ytdlp = match &v.ytdlp {
+        YtdlpLine::Known(version) => escape(&truncate(version, 40)),
+        YtdlpLine::Checking => t("checking"),
+        YtdlpLine::Unavailable => t("unavailable"),
+    };
+    let mut last = Vec::new();
+    if let Some(b) = v.memory_bytes {
+        last.push(stat("memory", &format_bytes(b)));
+    }
+    last.push(format!("yt-dlp: **{ytdlp}**"));
+    let lines = [
+        [stat("uptime", &format_uptime(v.uptime)), stat("ping", &ping)].join(" · "),
+        [
+            stat("servers", &v.servers.to_string()),
+            stat("bots", &v.bots.to_string()),
+        ]
+        .join(" · "),
+        [
+            stat("voice_channels", &v.voice_channels.to_string()),
+            stat("playing", &v.playing.to_string()),
+        ]
+        .join(" · "),
+        last.join(" · "),
+    ];
+    children.push(Component::text(lines.join(
+        "
+",
+    )));
+    children.push(Component::separator());
+    let credits = [
+        t("license"),
+        i18n.t(
+            "bot.about.developed_by",
+            &[("name", &link("PixlGalaxy", DEVELOPER_URL))],
+        ),
+        i18n.t("bot.about.hosted_on", &[("host", &link("ItzGalaxy.com", HOST_URL))]),
+    ];
+    children.push(Component::text(format!("-# {}", credits.join(" · "))));
+    let mut row = vec![
+        Button::link(i18n.t("bot.button.source", &[]), SOURCE_URL),
+        Button::link(i18n.t("bot.button.invite_main", &[]), v.invite_url),
+    ];
+    row.extend(info_links(v.support_url, v.website_url, i18n));
+    children.push(Component::Row(row));
+    container(Tone::Info, children).ephemeral(true)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
@@ -1780,5 +1932,141 @@ mod tests {
             types(&l.to_json()["components"][0]["components"]),
             vec![9, 14, 10, 14, 10, 1]
         );
+    }
+
+    fn about_info(ping: Option<std::time::Duration>, memory: Option<u64>, ytdlp: YtdlpLine) -> About<'static> {
+        About {
+            version: "0.1.0",
+            commit: Some("abc1234"),
+            avatar: Some("https://cdn.discordapp.com/avatars/1/a.png"),
+            uptime: std::time::Duration::from_secs(3 * 86_400 + 4 * 3600 + 12 * 60 + 9),
+            ping,
+            servers: 120,
+            bots: 3,
+            voice_channels: 5,
+            playing: 2,
+            memory_bytes: memory,
+            ytdlp,
+            invite_url: "https://discord.com/oauth2/authorize?client_id=1",
+            support_url: Some("https://discord.gg/support"),
+            website_url: Some("https://lynx.example"),
+        }
+    }
+
+    fn link_urls(json: &Value) -> Vec<String> {
+        let mut out = Vec::new();
+        collect(json, "url", &mut out);
+        out.retain(|u| !u.contains("cdn.discordapp.com"));
+        out
+    }
+
+    #[test]
+    fn invite_and_about_cards() {
+        for lang in ["en", "es"] {
+            let i = I18n::load(lang).unwrap();
+            let inv = invite(
+                "https://discord.com/x",
+                Some("https://discord.gg/s"),
+                Some("https://w"),
+                &i,
+            )
+            .to_json();
+            assert_eq!(inv["flags"], FLAG_COMPONENTS_V2 | FLAG_EPHEMERAL);
+            assert_eq!(types(&inv["components"][0]["components"]), vec![10, 1]);
+            assert_eq!(
+                link_urls(&inv),
+                vec!["https://discord.com/x", "https://discord.gg/s", "https://w"]
+            );
+            check_text(&all_text(&inv));
+
+            for v in [
+                about_info(
+                    Some(std::time::Duration::from_millis(42)),
+                    Some(85 * 1024 * 1024),
+                    YtdlpLine::Known("2025.10.22".into()),
+                ),
+                about_info(None, None, YtdlpLine::Checking),
+                about_info(None, None, YtdlpLine::Unavailable),
+            ] {
+                let json = about(&v, &i).to_json();
+                assert_eq!(json["flags"], FLAG_COMPONENTS_V2 | FLAG_EPHEMERAL);
+                let text = all_text(&json);
+                check_text(&text);
+                assert!(!text.to_lowercase().contains("node"), "{text}");
+                assert!(about(&v, &i).text_len() <= MAX_TEXT_TOTAL);
+            }
+        }
+        // No support or website configured: only the invite (and source code) buttons.
+        let i = i18n();
+        let inv = invite("https://discord.com/x", None, Some("not a url"), &i).to_json();
+        assert_eq!(link_urls(&inv), vec!["https://discord.com/x"]);
+        assert_eq!(look(invite("https://d", None, None, &i)), vec!["5 -"]);
+
+        let v = about_info(
+            Some(std::time::Duration::from_millis(42)),
+            Some(85 * 1024 * 1024),
+            YtdlpLine::Known("2025.10.22".into()),
+        );
+        let json = about(&v, &i).to_json();
+        let c = &json["components"][0]["components"];
+        // section with the avatar, separator, stats, separator, credits, links
+        assert_eq!(types(c), vec![9, 14, 10, 14, 10, 1]);
+        let text = all_text(&json);
+        assert!(
+            text.contains("### Lynx") && text.contains("-# Version 0.1.0 · `abc1234`"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Uptime: **3d 4h 12m** · Gateway ping: **42 ms**"),
+            "{text}"
+        );
+        assert!(text.contains("Servers: **120** · Lynx bots: **3**"), "{text}");
+        assert!(text.contains("Voice channels: **5** · Playing now: **2**"), "{text}");
+        assert!(text.contains("Memory: **85 MB** · yt-dlp: **2025.10.22**"), "{text}");
+        assert!(text.contains("AGPL-3.0 with Commons Clause · Developed by [PixlGalaxy](<https://github.com/PixlGalaxy>) · Hosted on [ItzGalaxy.com](<https://itzgalaxy.com>)"), "{text}");
+        assert_eq!(
+            link_urls(&json),
+            vec![
+                SOURCE_URL,
+                "https://discord.com/oauth2/authorize?client_id=1",
+                "https://discord.gg/support",
+                "https://lynx.example"
+            ]
+        );
+        // Link buttons carry no icon of ours.
+        assert_eq!(look(about(&v, &i)), vec!["5 -", "5 -", "5 -", "5 -"]);
+
+        let early = about(&about_info(None, None, YtdlpLine::Checking), &i).to_json();
+        let text = all_text(&early);
+        assert!(text.contains("Gateway ping: **measuring**"), "{text}");
+        assert!(
+            text.contains(
+                "
+yt-dlp: **checking**"
+            ) && !text.contains("Memory"),
+            "{text}"
+        );
+        let es = all_text(
+            &about(
+                &about_info(None, None, YtdlpLine::Unavailable),
+                &I18n::load("es").unwrap(),
+            )
+            .to_json(),
+        );
+        assert!(
+            es.contains("Versión 0.1.0") && es.contains("yt-dlp: **no disponible**"),
+            "{es}"
+        );
+    }
+
+    #[test]
+    fn uptime_and_memory_format() {
+        use std::time::Duration;
+        assert_eq!(format_uptime(Duration::from_secs(5)), "5s");
+        assert_eq!(format_uptime(Duration::from_secs(12 * 60 + 5)), "12m 5s");
+        assert_eq!(format_uptime(Duration::from_secs(4 * 3600 + 12 * 60 + 5)), "4h 12m");
+        assert_eq!(format_uptime(Duration::from_secs(86_400 + 5)), "1d 0h 0m");
+        assert_eq!(format_bytes(85 * 1024 * 1024 + 300_000), "85 MB");
+        assert_eq!(format_bytes(1229 * 1024 * 1024), "1.2 GB");
     }
 }

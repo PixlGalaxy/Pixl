@@ -303,6 +303,20 @@ async fn command(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
     if inv.guild_id == 0 {
         return inv.send(inv.err("guild_only", &[])).await;
     }
+    match cmd.data.name.as_str() {
+        "invite" => {
+            let c = &lynx.config;
+            let msg = cards::invite(
+                &lynx.main_invite(),
+                c.support_url.as_deref(),
+                c.landing_url.as_deref(),
+                &lynx.i18n,
+            );
+            return inv.send(msg).await;
+        }
+        "about" => return inv.send(super::about::card(lynx).await).await,
+        _ => {}
+    }
     if lynx.players.is_closing() {
         return inv.send(inv.err("restarting", &[])).await;
     }

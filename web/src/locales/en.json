@@ -476,6 +476,14 @@
         "description": "Shows the lyrics of the current song.",
         "example": "/lyrics"
       },
+      "invite": {
+        "description": "Shows a link to add Lynx to another server, plus the support server and website when they are set.",
+        "example": "/invite"
+      },
+      "about": {
+        "description": "Shows the version, uptime, gateway ping, how many servers and voice channels Lynx is in, and links to the source code.",
+        "example": "/about"
+      },
       "panel": {
         "description": "Opens this panel.",
         "example": "/panel"

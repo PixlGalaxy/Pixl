@@ -75,6 +75,8 @@ pub fn definitions(i18n: &I18n, entry_point: bool, ai: bool) -> Value {
         cmd("loop", i18n, vec![mode]),
         cmd("volume", i18n, vec![volume]),
         cmd("lyrics", i18n, vec![lyrics_query]),
+        cmd("invite", i18n, vec![]),
+        cmd("about", i18n, vec![]),
     ];
     if ai {
         list.push(ai_command(i18n));
@@ -270,6 +272,8 @@ mod tests {
                 "loop",
                 "volume",
                 "lyrics",
+                "invite",
+                "about",
                 "panel",
                 "launch"
             ]

@@ -44,7 +44,10 @@
       "invite_node": "Añadir otro Lynx",
       "invite_main": "Invitar Lynx",
       "cancel": "Cancelar",
-      "stop_radio": "Apagar radio"
+      "stop_radio": "Apagar radio",
+      "source": "Código fuente",
+      "support": "Servidor de soporte",
+      "website": "Sitio web"
     },
     "now_playing": {
       "title_in": "Sonando en {channel}",
@@ -163,6 +166,27 @@
       "body": "Lynx ya está sonando en {busy}. Añade otro Lynx para que pueda sonar en {channel} a la vez.",
       "body_generic": "Añade otro Lynx para que pueda sonar en {channel} a la vez.",
       "no_more": "Todos los bots de Lynx ya están sonando en otros canales de voz y no hay más bots para añadir. Inténtalo cuando uno quede libre para sonar en {channel}."
+    },
+    "invite": {
+      "title": "Invita a Lynx",
+      "body": "Añade Lynx a un servidor para poner música en sus canales de voz. Puede añadirlo cualquiera que tenga el permiso Gestionar servidor allí."
+    },
+    "about": {
+      "tagline": "Música para tus canales de voz, con un panel que se abre dentro de Discord.",
+      "version": "Versión {version}",
+      "uptime": "Tiempo activo",
+      "ping": "Latencia del gateway",
+      "measuring": "midiendo",
+      "servers": "Servidores",
+      "bots": "Bots de Lynx",
+      "voice_channels": "Canales de voz",
+      "playing": "Sonando ahora",
+      "memory": "Memoria",
+      "checking": "comprobando",
+      "unavailable": "no disponible",
+      "license": "AGPL-3.0 con Commons Clause",
+      "developed_by": "Desarrollado por {name}",
+      "hosted_on": "Alojado en {host}"
     },
     "add_main": {
       "title": "Añade el Lynx principal",
@@ -326,6 +350,8 @@
         "mix": "Tus favoritas, un equilibrio o música nueva (por defecto: equilibrado)",
         "blend": "Mezcla los gustos de todos en el canal (por defecto: sí)"
       },
+      "invite": { "description": "Invita a Lynx a un servidor" },
+      "about": { "description": "Muestra información sobre Lynx" },
       "panel": { "description": "Abre el panel de Lynx" },
       "launch": { "description": "Abre el panel de Lynx" }
     }

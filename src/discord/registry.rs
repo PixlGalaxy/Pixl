@@ -13,6 +13,7 @@ use dashmap::DashMap;
 use serenity::{
     all::{ChannelId, GuildId, UserId},
     cache::Cache,
+    gateway::ShardManager,
     http::Http,
     model::Permissions,
 };
@@ -44,6 +45,8 @@ pub struct BotInfo {
     /// Guilds announced in READY that have not arrived yet (GUILD_CREATE).
     pending: Mutex<HashSet<u64>>,
     synced: AtomicBool,
+    /// The client's shard manager (gateway latency for `/about`).
+    shards: OnceLock<Arc<ShardManager>>,
 }
 
 impl BotInfo {
@@ -60,7 +63,20 @@ impl BotInfo {
             shards_ready: AtomicU32::new(0),
             pending: Mutex::new(HashSet::new()),
             synced: AtomicBool::new(false),
+            shards: OnceLock::new(),
         }
+    }
+
+    pub fn set_shard_manager(&self, shards: Arc<ShardManager>) {
+        let _ = self.shards.set(shards);
+    }
+
+    /// Average heartbeat latency of the bot's shards; None until the first heartbeat is acknowledged.
+    pub async fn gateway_latency(&self) -> Option<std::time::Duration> {
+        let shards = self.shards.get()?;
+        let runners = shards.runners.lock().await;
+        let known: Vec<_> = runners.values().filter_map(|r| r.latency).collect();
+        (!known.is_empty()).then(|| known.iter().sum::<std::time::Duration>() / known.len() as u32)
     }
 
     pub fn is_main(&self) -> bool {

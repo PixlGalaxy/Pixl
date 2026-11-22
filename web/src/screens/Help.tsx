@@ -24,6 +24,8 @@ const COMMANDS: Array<{ name: string; access: Access; ai?: boolean }> = [
   { name: 'loop', access: 'control' },
   { name: 'volume', access: 'control' },
   { name: 'lyrics', access: 'anyone' },
+  { name: 'invite', access: 'anyone' },
+  { name: 'about', access: 'anyone' },
   { name: 'panel', access: 'anyone' },
   { name: 'ai', access: 'anyone', ai: true },
 ]
