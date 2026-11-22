@@ -1,0 +1,397 @@
+{
+  "common": {
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "retry": "Try again",
+    "dismiss": "Dismiss",
+    "clear": "Clear"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "network": "Could not reach Lynx. Check your connection.",
+    "not_in_channel": "Join the voice channel to do that.",
+    "no_permission": "You don't have permission to do that here.",
+    "not_found": "That track or item no longer exists.",
+    "queue_full": "The queue is full.",
+    "no_results": "Nothing found for that search.",
+    "rate_limited": "Slow down a little and try again.",
+    "bot_unavailable": "No Lynx bot is free for this channel right now.",
+    "invalid": "That request was not valid."
+  },
+  "login": {
+    "title": "Connecting to Lynx",
+    "subtitle": "This only takes a moment.",
+    "failedTitle": "Could not connect",
+    "failedHint": "The step marked below failed.",
+    "steps": {
+      "config": "Loading configuration",
+      "ready": "Connecting to Discord",
+      "authorize": "Authorizing",
+      "signin": "Signing in to Lynx",
+      "authenticate": "Finishing Discord sign-in"
+    }
+  },
+  "gate": {
+    "outsideTitle": "Open Lynx from Discord",
+    "outsideBody": "This panel runs as a Discord Activity. Join a voice channel and start Lynx from the app launcher, or use /panel.",
+    "noGuildTitle": "Open Lynx in a server",
+    "noGuildBody": "The panel controls music in a server voice channel. Launch it from a voice channel in a server.",
+    "expiredTitle": "Your session ended",
+    "expiredBody": "Sign in again to keep using the panel."
+  },
+  "topbar": {
+    "language": "Language",
+    "lightTheme": "Light theme",
+    "darkTheme": "Dark theme",
+    "sections": "Sections"
+  },
+  "tabs": {
+    "player": "Now playing",
+    "queue": "Queue",
+    "lyrics": "Lyrics",
+    "radio": "Radio",
+    "settings": "Settings",
+    "privacy": "Privacy",
+    "help": "Help"
+  },
+  "player": {
+    "emptyChannelTitle": "Paused: nobody is in the voice channel",
+    "emptyChannelCountdown": "The queue will be cleared in",
+    "emptyChannelBody": "Music resumes when someone joins.",
+    "live": "Live",
+    "seek": "Seek",
+    "volume": "Volume",
+    "like": "Like",
+    "liked": "Liked",
+    "dislike": "Dislike",
+    "disliked": "Disliked",
+    "skipVotes": "Votes to skip",
+    "voteSkip": "Vote to skip",
+    "voteSent": "Your vote to skip was counted.",
+    "next": "Next",
+    "previous": "Previous",
+    "shuffle": "Shuffle",
+    "pause": "Pause",
+    "play": "Play",
+    "loopLabel": "Loop",
+    "loop": {
+      "off": "Off",
+      "track": "Track",
+      "queue": "Queue"
+    },
+    "openQueue_one": "{{count}} in queue",
+    "openQueue_other": "{{count}} in queue",
+    "nothingTitle": "Nothing playing",
+    "nothingBody": "Add a song below or use /play in Discord.",
+    "nothingNoAdd": "Use /play in Discord to start the music.",
+    "status": {
+      "playing": "Playing",
+      "paused": "Paused",
+      "loading": "Loading",
+      "idle": "Idle"
+    },
+    "nodeBot": "Playing through this Lynx bot",
+    "unknownArtist": "Unknown artist",
+    "requestedBy": "Requested by {{name}}",
+    "genres": "Genres",
+    "stop": "Stop",
+    "stopQuestion": "Stop and clear the queue?"
+  },
+  "queue": {
+    "upNext": "Up next",
+    "emptyUpcoming": "Nothing queued after this song.",
+    "added_one": "Added {{count}} track to the queue.",
+    "added_other": "Added {{count}} tracks to the queue.",
+    "addTitle": "Add to queue",
+    "addHint": "Paste a YouTube or Spotify link, or search for a song.",
+    "addPlaceholder": "Link or song name",
+    "add": "Add",
+    "addThis": "Add {{title}}",
+    "searching": "Searching",
+    "noResults": "No results.",
+    "dragHandle": "Drag to reorder {{title}}",
+    "remove": "Remove {{title}}",
+    "more_one": "{{count}} more track",
+    "more_other": "{{count}} more tracks",
+    "summary_one": "{{count}} track, {{duration}}",
+    "summary_other": "{{count}} tracks, {{duration}}",
+    "clear": "Clear",
+    "clearQuestion": "Clear the whole queue?",
+    "history": "History",
+    "historyHint": "The last songs played in this channel.",
+    "emptyHistory": "No songs played yet.",
+    "addAgain": "Add {{title}} again"
+  },
+  "reason": {
+    "tag": "Radio",
+    "fallback": "Picked by the radio",
+    "because_you_like": "Because you like {{name}}",
+    "similar_listeners": "Popular with listeners like you",
+    "your_favorite": "One of your favorites",
+    "matches_prompt": "Matches \"{{prompt}}\""
+  },
+  "ai": {
+    "title": "AI radio",
+    "description": "A continuous mix based on your taste and the people in the channel.",
+    "on": "On",
+    "off": "Off",
+    "startedByYou": "You started the radio. It keeps adding songs until it is stopped.",
+    "startedBySomeone": "Someone in the channel started the radio. It keeps adding songs until it is stopped.",
+    "stop": "Stop radio",
+    "noPermission": "You can't start the radio in this channel.",
+    "noChannel": "Launch the panel from a voice channel to use the radio.",
+    "promptLabel": "What do you feel like? (optional)",
+    "promptPlaceholder": "Leave empty to use your taste",
+    "examples": {
+      "study": "calm music to study",
+      "gym": "high energy for the gym",
+      "evening": "slow evening songs",
+      "party": "party hits"
+    },
+    "startHint": "The first song starts right away.",
+    "start": "Start radio",
+    "progressTitle": "Radio is picking songs",
+    "progressHint": "Working for {{seconds}} s",
+    "failedHint": "The radio could not pick songs this time. It will try again.",
+    "phase": {
+      "queued": "Waiting in line",
+      "loading_model": "Loading model",
+      "reading_taste": "Reading your taste",
+      "finding_songs": "Finding songs",
+      "thinking": "Thinking",
+      "resolving": "Resolving tracks",
+      "ready": "Ready",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "picksTitle": "Why these songs",
+    "picksHint": "Songs the radio queued, with the reason it picked them.",
+    "noPicks": "The radio has not queued anything yet.",
+    "result": {
+      "ready": "Radio added new songs",
+      "failed": "Radio could not pick songs",
+      "cancelled": "Radio job cancelled"
+    },
+    "resultHint": {
+      "ready": "They are at the end of the queue.",
+      "failed": "Nothing was added.",
+      "cancelled": "Nothing was added."
+    }
+  },
+  "lyrics": {
+    "title": "Lyrics",
+    "nothingPlaying": "Lyrics show up here when a song is playing.",
+    "source": "from {{source}}",
+    "synced": "Synced",
+    "jump": "Jump to this line",
+    "error": "Could not load lyrics.",
+    "none": "No lyrics found for this song."
+  },
+  "settings": {
+    "title": "Server settings",
+    "subtitle": "Only server managers can see and change these.",
+    "control": "Who controls the music",
+    "controlHint": "Applies to the panel and to the slash commands.",
+    "controlMode": "Control mode",
+    "modeEveryone": "Everyone",
+    "modeDj": "DJs only",
+    "modeEveryoneHint": "Anyone in the voice channel can pause, skip, seek, reorder and remove.",
+    "modeDjHint": "Only DJs and managers control playback. Others can add songs and remove their own.",
+    "djs": "DJs",
+    "djsHint": "People who can always control playback, in any mode.",
+    "noDjs": "No DJs yet.",
+    "removeDj": "Remove {{name}} as DJ",
+    "addDj": "Add a DJ",
+    "searchMembers": "Search members",
+    "noCandidates": "Nobody to add. People in voice channels show up here.",
+    "makeDj": "Make DJ",
+    "djAdded": "{{name}} is now a DJ.",
+    "voteSkip": "Vote to skip",
+    "voteSkipHint": "When on, skipping needs votes from the channel. DJs and managers skip right away.",
+    "voteSkipEnabled": "Require votes to skip",
+    "voteMode": "Votes needed as",
+    "voteCount": "Count",
+    "votePercent": "Percent",
+    "voteCountHint": "A fixed number of votes.",
+    "votePercentHint": "A share of the people listening.",
+    "votesNeeded": "Votes needed",
+    "percentNeeded": "Share of listeners",
+    "limits": "Limits",
+    "limitsHint": "Defaults for new sessions in this server.",
+    "maxQueue": "Max queue length",
+    "maxQueueHint": "Songs allowed in one queue.",
+    "defaultVolume": "Default volume",
+    "defaultVolumeHint": "100% plays the audio untouched.",
+    "savedAutomatically": "Changes are saved automatically."
+  },
+  "privacy": {
+    "title": "Privacy",
+    "subtitle": "What Lynx keeps about you, and how to turn it off.",
+    "subtitleNoAi": "Lynx does not keep a listening history on this bot.",
+    "history": "Listening history",
+    "historyHint": "Used for the radio and for recommendations, shared anonymously across servers.",
+    "historyToggle": "Keep my listening history",
+    "historyOn": "Songs you request are counted.",
+    "historyOff": "Nothing is recorded and you are left out of recommendations.",
+    "taste": "Your taste",
+    "tasteHint": "Built from your history and your likes. Nobody else can see it.",
+    "tasteEmpty": "Not enough history yet. Play a few songs first.",
+    "topGenres": "Top genres",
+    "topTracks": "Most played",
+    "plays_one": "{{count}} play",
+    "plays_other": "{{count}} plays",
+    "data": "Your data",
+    "dataHint": "Removal is immediate and cannot be undone.",
+    "delete": "Delete my data",
+    "deleteHint": "Removes your history, likes, dislikes and taste.",
+    "deleteHintNoAi": "Removes anything Lynx stored about you.",
+    "deleteButton": "Delete",
+    "deleteQuestion": "Delete everything?",
+    "deleteConfirm": "Delete",
+    "deleted": "Your data was deleted.",
+    "policy": "Read the privacy policy",
+    "noHistoryNote": "Only your panel language is stored."
+  },
+  "help": {
+    "title": "Help",
+    "subtitle": "How the panel works, every command and who can do what.",
+    "panelTitle": "The panel",
+    "panelHint": "Everything you can do from here.",
+    "panel": {
+      "player": {
+        "title": "Now playing",
+        "body": "Cover, title, artists, who asked for it and the genres when they are known. Below: the position slider, previous, play or pause, next, loop (off, queue, track), shuffle and volume. Stop clears the queue after a confirmation."
+      },
+      "queue": {
+        "title": "Queue",
+        "body": "Paste a link or search to add songs. Drag the handle to reorder, use the cross to remove a song and Clear to empty the queue. History lists the last songs played and lets you add one again."
+      },
+      "lyrics": {
+        "title": "Lyrics",
+        "body": "Lyrics come from LRCLIB. Synced lyrics highlight the current line and follow the song; tap a line to jump to it. Some songs only have plain lyrics, and some have none."
+      },
+      "radio": {
+        "title": "Radio",
+        "body": "Starts an endless mix from your history, your likes and similar listeners. You can add a short prompt such as \"calm music to study\". While it picks songs, the queue shows each step and you can cancel it."
+      },
+      "settings": {
+        "title": "Settings",
+        "body": "Only for server managers: control mode, the DJ list, vote to skip, the queue limit and the default volume."
+      },
+      "privacy": {
+        "title": "Privacy",
+        "body": "Turn your listening history on or off, see your top genres and songs, and delete your data."
+      },
+      "language": {
+        "title": "Language",
+        "body": "The selector at the top changes the panel language for you only. The bot's messages in the channel keep the server's language."
+      }
+    },
+    "seekNote": "Moving to a point in the song is only possible here, with the slider. There is no seek command.",
+    "feedbackNote": "Like and Dislike tune your radio: a dislike keeps that song out of your mixes.",
+    "commandsTitle": "Slash commands",
+    "commandsHint": "Type them in any text channel of the server while you are in a voice channel.",
+    "example": "Example",
+    "access": {
+      "anyone": "Anyone",
+      "control": "Control",
+      "vote": "Vote"
+    },
+    "commands": {
+      "play": {
+        "description": "Joins your voice channel and plays a link (YouTube, YouTube Music, Spotify track, album or playlist) or the best match for a search.",
+        "example": "/play query:paper lanterns night drive"
+      },
+      "pause": {
+        "description": "Pauses the current song.",
+        "example": "/pause"
+      },
+      "resume": {
+        "description": "Resumes a paused song.",
+        "example": "/resume"
+      },
+      "skip": {
+        "description": "Skips to the next song. When vote to skip is on, your use counts as a vote.",
+        "example": "/skip"
+      },
+      "stop": {
+        "description": "Stops the music, clears the queue and leaves the channel.",
+        "example": "/stop"
+      },
+      "queue": {
+        "description": "Shows the upcoming songs.",
+        "example": "/queue"
+      },
+      "nowplaying": {
+        "description": "Shows the current song with its position.",
+        "example": "/nowplaying"
+      },
+      "remove": {
+        "description": "Removes a song by its position in the queue. Without control you can only remove your own.",
+        "example": "/remove position:3"
+      },
+      "move": {
+        "description": "Moves a song to another position in the queue.",
+        "example": "/move from:5 to:1"
+      },
+      "skipto": {
+        "description": "Jumps straight to a song in the queue, dropping the ones before it.",
+        "example": "/skipto position:4"
+      },
+      "shuffle": {
+        "description": "Shuffles the upcoming songs.",
+        "example": "/shuffle"
+      },
+      "loop": {
+        "description": "Sets the loop mode: off, track or queue.",
+        "example": "/loop mode:queue"
+      },
+      "volume": {
+        "description": "Sets the volume from 0 to 200. 100 plays the audio untouched.",
+        "example": "/volume level:80"
+      },
+      "lyrics": {
+        "description": "Shows the lyrics of the current song.",
+        "example": "/lyrics"
+      },
+      "panel": {
+        "description": "Opens this panel.",
+        "example": "/panel"
+      },
+      "ai": {
+        "description": "Starts the AI radio, with an optional prompt. Use it again or /stop to end it.",
+        "example": "/ai prompt:calm music to study"
+      }
+    },
+    "accessNote": "Control means the command follows the server's control mode. Vote means it can need votes from the channel.",
+    "permissionsTitle": "Permissions",
+    "permissionsHint": "Checked by the bot on every action, in the panel and in commands.",
+    "permissions": {
+      "manager": {
+        "title": "Lynx manager",
+        "body": "The server owner and anyone with Administrator or Manage Server. Managers can always control playback and are the only ones who see Settings."
+      },
+      "dj": {
+        "title": "DJ",
+        "body": "People a manager added to the DJ list in Settings. It is a Lynx list, not a Discord role. DJs control playback in any mode and skip without votes."
+      },
+      "modes": {
+        "title": "Control modes",
+        "everyone": "Everyone (default): anyone in the voice channel can pause, skip, seek, reorder and remove songs.",
+        "dj": "DJs only: only DJs and managers control playback. Everyone else can add songs and remove their own."
+      },
+      "vote": {
+        "title": "Vote to skip",
+        "body": "Off by default. When a manager turns it on, a skip needs a set number or share of votes from the people listening. DJs and managers skip right away."
+      }
+    },
+    "linksTitle": "Links",
+    "links": {
+      "landing": "Lynx website",
+      "terms": "Terms of service",
+      "privacy": "Privacy policy",
+      "support": "Support"
+    },
+    "developedBy": "Developed by"
+  }
+}

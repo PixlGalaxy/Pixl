@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent-300: var(--accent-300);
+  --color-accent-400: var(--accent-400);
+  --color-accent-500: var(--accent-500);
+  --color-accent-600: var(--accent-600);
+}
+
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --line: #e3e6eb;
+  --fg: #111827;
+  --muted: #6b7280;
+  /* accent = Tailwind sky */
+  --accent-300: #7dd3fc;
+  --accent-400: #38bdf8;
+  --accent-500: #0ea5e9;
+  --accent-600: #0284c7;
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #0a0c10;
+  --surface: #11141a;
+  --surface-2: #171b23;
+  --line: #232833;
+  --fg: #e6e8ee;
+  --muted: #8a92a6;
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-bg font-sans text-fg antialiased;
+}
+
+html {
+  touch-action: manipulation;
+}
+
+/* iOS zooms into inputs < 16px; Discord mobile is a WebView too */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Range thumb: small white knob with an accent ring, same in every engine. */
+.lynx-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 2px solid var(--accent-600);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+.lynx-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 2px solid var(--accent-600);
+}
+.lynx-range:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: 4px;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
+@keyframes fade-in  { from { opacity: 0; } }
+@keyframes pop-in   { from { opacity: 0; transform: translateY(6px) scale(0.98); } }

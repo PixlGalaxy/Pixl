@@ -1,0 +1,397 @@
+{
+  "common": {
+    "confirm": "Confirmar",
+    "cancel": "Cancelar",
+    "retry": "Reintentar",
+    "dismiss": "Cerrar",
+    "clear": "Borrar"
+  },
+  "errors": {
+    "generic": "Algo salió mal. Inténtalo de nuevo.",
+    "network": "No se pudo conectar con Lynx. Revisa tu conexión.",
+    "not_in_channel": "Entra al canal de voz para hacer eso.",
+    "no_permission": "No tienes permiso para hacer eso aquí.",
+    "not_found": "Esa canción o elemento ya no existe.",
+    "queue_full": "La cola está llena.",
+    "no_results": "No se encontró nada con esa búsqueda.",
+    "rate_limited": "Ve un poco más despacio y vuelve a intentarlo.",
+    "bot_unavailable": "Ahora mismo no hay ningún bot de Lynx libre para este canal.",
+    "invalid": "La petición no es válida."
+  },
+  "login": {
+    "title": "Conectando con Lynx",
+    "subtitle": "Solo tarda un momento.",
+    "failedTitle": "No se pudo conectar",
+    "failedHint": "Falló el paso marcado abajo.",
+    "steps": {
+      "config": "Cargando la configuración",
+      "ready": "Conectando con Discord",
+      "authorize": "Autorizando",
+      "signin": "Iniciando sesión en Lynx",
+      "authenticate": "Terminando el inicio de sesión en Discord"
+    }
+  },
+  "gate": {
+    "outsideTitle": "Abre Lynx desde Discord",
+    "outsideBody": "Este panel funciona como una Activity de Discord. Entra a un canal de voz y abre Lynx desde el lanzador de apps, o usa /panel.",
+    "noGuildTitle": "Abre Lynx en un servidor",
+    "noGuildBody": "El panel controla la música de un canal de voz de un servidor. Ábrelo desde un canal de voz de un servidor.",
+    "expiredTitle": "Tu sesión terminó",
+    "expiredBody": "Vuelve a iniciar sesión para seguir usando el panel."
+  },
+  "topbar": {
+    "language": "Idioma",
+    "lightTheme": "Tema claro",
+    "darkTheme": "Tema oscuro",
+    "sections": "Secciones"
+  },
+  "tabs": {
+    "player": "Sonando",
+    "queue": "Cola",
+    "lyrics": "Letra",
+    "radio": "Radio",
+    "settings": "Ajustes",
+    "privacy": "Privacidad",
+    "help": "Ayuda"
+  },
+  "player": {
+    "emptyChannelTitle": "En pausa: no hay nadie en el canal de voz",
+    "emptyChannelCountdown": "La cola se borrará en",
+    "emptyChannelBody": "La música sigue cuando alguien entre.",
+    "live": "En directo",
+    "seek": "Posición",
+    "volume": "Volumen",
+    "like": "Me gusta",
+    "liked": "Te gusta",
+    "dislike": "No me gusta",
+    "disliked": "No te gusta",
+    "skipVotes": "Votos para saltar",
+    "voteSkip": "Votar para saltar",
+    "voteSent": "Tu voto para saltar se contó.",
+    "next": "Siguiente",
+    "previous": "Anterior",
+    "shuffle": "Mezclar",
+    "pause": "Pausar",
+    "play": "Reproducir",
+    "loopLabel": "Repetir",
+    "loop": {
+      "off": "No",
+      "track": "Canción",
+      "queue": "Cola"
+    },
+    "openQueue_one": "{{count}} en la cola",
+    "openQueue_other": "{{count}} en la cola",
+    "nothingTitle": "No suena nada",
+    "nothingBody": "Añade una canción abajo o usa /play en Discord.",
+    "nothingNoAdd": "Usa /play en Discord para empezar la música.",
+    "status": {
+      "playing": "Sonando",
+      "paused": "En pausa",
+      "loading": "Cargando",
+      "idle": "Inactivo"
+    },
+    "nodeBot": "Sonando con este bot de Lynx",
+    "unknownArtist": "Artista desconocido",
+    "requestedBy": "La pidió {{name}}",
+    "genres": "Géneros",
+    "stop": "Parar",
+    "stopQuestion": "¿Parar y borrar la cola?"
+  },
+  "queue": {
+    "upNext": "A continuación",
+    "emptyUpcoming": "No hay nada en la cola después de esta canción.",
+    "added_one": "Se añadió {{count}} canción a la cola.",
+    "added_other": "Se añadieron {{count}} canciones a la cola.",
+    "addTitle": "Añadir a la cola",
+    "addHint": "Pega un enlace de YouTube o Spotify, o busca una canción.",
+    "addPlaceholder": "Enlace o nombre de la canción",
+    "add": "Añadir",
+    "addThis": "Añadir {{title}}",
+    "searching": "Buscando",
+    "noResults": "Sin resultados.",
+    "dragHandle": "Arrastra para mover {{title}}",
+    "remove": "Quitar {{title}}",
+    "more_one": "{{count}} canción más",
+    "more_other": "{{count}} canciones más",
+    "summary_one": "{{count}} canción, {{duration}}",
+    "summary_other": "{{count}} canciones, {{duration}}",
+    "clear": "Vaciar",
+    "clearQuestion": "¿Vaciar toda la cola?",
+    "history": "Historial",
+    "historyHint": "Las últimas canciones que sonaron en este canal.",
+    "emptyHistory": "Todavía no ha sonado nada.",
+    "addAgain": "Añadir {{title}} otra vez"
+  },
+  "reason": {
+    "tag": "Radio",
+    "fallback": "Elegida por la radio",
+    "because_you_like": "Porque te gusta {{name}}",
+    "similar_listeners": "Popular entre gente con tus gustos",
+    "your_favorite": "Una de tus favoritas",
+    "matches_prompt": "Encaja con \"{{prompt}}\""
+  },
+  "ai": {
+    "title": "Radio IA",
+    "description": "Una mezcla continua según tus gustos y los de la gente del canal.",
+    "on": "Encendida",
+    "off": "Apagada",
+    "startedByYou": "Tú encendiste la radio. Sigue añadiendo canciones hasta que se apague.",
+    "startedBySomeone": "Alguien del canal encendió la radio. Sigue añadiendo canciones hasta que se apague.",
+    "stop": "Apagar la radio",
+    "noPermission": "No puedes encender la radio en este canal.",
+    "noChannel": "Abre el panel desde un canal de voz para usar la radio.",
+    "promptLabel": "¿Qué te apetece? (opcional)",
+    "promptPlaceholder": "Déjalo vacío para usar tus gustos",
+    "examples": {
+      "study": "música tranquila para estudiar",
+      "gym": "mucha energía para el gimnasio",
+      "evening": "canciones lentas para la noche",
+      "party": "éxitos de fiesta"
+    },
+    "startHint": "La primera canción empieza al momento.",
+    "start": "Encender la radio",
+    "progressTitle": "La radio está eligiendo canciones",
+    "progressHint": "Trabajando desde hace {{seconds}} s",
+    "failedHint": "La radio no pudo elegir canciones esta vez. Lo volverá a intentar.",
+    "phase": {
+      "queued": "Esperando turno",
+      "loading_model": "Cargando el modelo",
+      "reading_taste": "Leyendo tus gustos",
+      "finding_songs": "Buscando canciones",
+      "thinking": "Pensando",
+      "resolving": "Preparando las canciones",
+      "ready": "Lista",
+      "failed": "Falló",
+      "cancelled": "Cancelada"
+    },
+    "picksTitle": "Por qué estas canciones",
+    "picksHint": "Canciones que añadió la radio y el motivo por el que las eligió.",
+    "noPicks": "La radio todavía no ha añadido nada.",
+    "result": {
+      "ready": "La radio añadió canciones",
+      "failed": "La radio no pudo elegir canciones",
+      "cancelled": "Se canceló la radio"
+    },
+    "resultHint": {
+      "ready": "Están al final de la cola.",
+      "failed": "No se añadió nada.",
+      "cancelled": "No se añadió nada."
+    }
+  },
+  "lyrics": {
+    "title": "Letra",
+    "nothingPlaying": "La letra aparece aquí cuando suena una canción.",
+    "source": "de {{source}}",
+    "synced": "Sincronizada",
+    "jump": "Ir a esta línea",
+    "error": "No se pudo cargar la letra.",
+    "none": "No hay letra para esta canción."
+  },
+  "settings": {
+    "title": "Ajustes del servidor",
+    "subtitle": "Solo los managers del servidor pueden verlos y cambiarlos.",
+    "control": "Quién controla la música",
+    "controlHint": "Se aplica al panel y a los comandos slash.",
+    "controlMode": "Modo de control",
+    "modeEveryone": "Todos",
+    "modeDj": "Solo DJs",
+    "modeEveryoneHint": "Cualquiera en el canal de voz puede pausar, saltar, mover la posición, reordenar y quitar.",
+    "modeDjHint": "Solo los DJs y los managers controlan. El resto puede añadir canciones y quitar las suyas.",
+    "djs": "DJs",
+    "djsHint": "Personas que siempre pueden controlar la música, en cualquier modo.",
+    "noDjs": "Todavía no hay DJs.",
+    "removeDj": "Quitar a {{name}} como DJ",
+    "addDj": "Añadir un DJ",
+    "searchMembers": "Buscar miembros",
+    "noCandidates": "No hay nadie para añadir. Aquí aparece la gente que está en canales de voz.",
+    "makeDj": "Hacer DJ",
+    "djAdded": "{{name}} ahora es DJ.",
+    "voteSkip": "Votar para saltar",
+    "voteSkipHint": "Si está activado, saltar necesita votos del canal. Los DJs y managers saltan directamente.",
+    "voteSkipEnabled": "Pedir votos para saltar",
+    "voteMode": "Votos necesarios como",
+    "voteCount": "Número",
+    "votePercent": "Porcentaje",
+    "voteCountHint": "Un número fijo de votos.",
+    "votePercentHint": "Una parte de la gente que escucha.",
+    "votesNeeded": "Votos necesarios",
+    "percentNeeded": "Parte de los oyentes",
+    "limits": "Límites",
+    "limitsHint": "Valores por defecto de las sesiones nuevas en este servidor.",
+    "maxQueue": "Tamaño máximo de la cola",
+    "maxQueueHint": "Canciones permitidas en una cola.",
+    "defaultVolume": "Volumen por defecto",
+    "defaultVolumeHint": "Con 100 % el audio suena sin cambios.",
+    "savedAutomatically": "Los cambios se guardan solos."
+  },
+  "privacy": {
+    "title": "Privacidad",
+    "subtitle": "Qué guarda Lynx sobre ti y cómo desactivarlo.",
+    "subtitleNoAi": "Lynx no guarda historial de escucha en este bot.",
+    "history": "Historial de escucha",
+    "historyHint": "Se usa para la radio y las recomendaciones, de forma anónima entre servidores.",
+    "historyToggle": "Guardar mi historial",
+    "historyOn": "Se cuentan las canciones que pides.",
+    "historyOff": "No se guarda nada y no participas en las recomendaciones.",
+    "taste": "Tus gustos",
+    "tasteHint": "Salen de tu historial y tus Me gusta. Nadie más puede verlos.",
+    "tasteEmpty": "Todavía no hay historial suficiente. Escucha algunas canciones primero.",
+    "topGenres": "Géneros principales",
+    "topTracks": "Lo más escuchado",
+    "plays_one": "{{count}} vez",
+    "plays_other": "{{count}} veces",
+    "data": "Tus datos",
+    "dataHint": "Se borran al momento y no se puede deshacer.",
+    "delete": "Borrar mis datos",
+    "deleteHint": "Borra tu historial, tus Me gusta, tus No me gusta y tus gustos.",
+    "deleteHintNoAi": "Borra todo lo que Lynx guardó sobre ti.",
+    "deleteButton": "Borrar",
+    "deleteQuestion": "¿Borrar todo?",
+    "deleteConfirm": "Borrar",
+    "deleted": "Tus datos se borraron.",
+    "policy": "Leer la política de privacidad",
+    "noHistoryNote": "Solo se guarda el idioma de tu panel."
+  },
+  "help": {
+    "title": "Ayuda",
+    "subtitle": "Cómo funciona el panel, todos los comandos y quién puede hacer qué.",
+    "panelTitle": "El panel",
+    "panelHint": "Todo lo que puedes hacer desde aquí.",
+    "panel": {
+      "player": {
+        "title": "Sonando",
+        "body": "Portada, título, artistas, quién la pidió y los géneros cuando se conocen. Debajo: el slider de posición, anterior, reproducir o pausar, siguiente, repetir (no, cola, canción), mezclar y volumen. Parar borra la cola tras confirmar."
+      },
+      "queue": {
+        "title": "Cola",
+        "body": "Pega un enlace o busca para añadir canciones. Arrastra el asa para reordenar, usa la cruz para quitar una canción y Vaciar para borrar la cola. El historial muestra las últimas canciones y deja volver a añadirlas."
+      },
+      "lyrics": {
+        "title": "Letra",
+        "body": "Las letras vienen de LRCLIB. Las sincronizadas resaltan la línea actual y siguen la canción; toca una línea para ir a ella. Algunas canciones solo tienen la letra sin tiempos y otras no tienen."
+      },
+      "radio": {
+        "title": "Radio",
+        "body": "Empieza una mezcla sin fin a partir de tu historial, tus Me gusta y gente con gustos parecidos. Puedes añadir un texto corto, como \"música tranquila para estudiar\". Mientras elige canciones, la cola muestra cada paso y puedes cancelarlo."
+      },
+      "settings": {
+        "title": "Ajustes",
+        "body": "Solo para los managers del servidor: modo de control, lista de DJs, votar para saltar, límite de la cola y volumen por defecto."
+      },
+      "privacy": {
+        "title": "Privacidad",
+        "body": "Activa o desactiva tu historial, mira tus géneros y canciones principales y borra tus datos."
+      },
+      "language": {
+        "title": "Idioma",
+        "body": "El selector de arriba cambia el idioma del panel solo para ti. Los mensajes del bot en el canal siguen en el idioma del servidor."
+      }
+    },
+    "seekNote": "Ir a un punto de la canción solo se puede aquí, con el slider. No hay comando para eso.",
+    "feedbackNote": "Me gusta y No me gusta ajustan tu radio: con No me gusta esa canción no vuelve a tus mezclas.",
+    "commandsTitle": "Comandos slash",
+    "commandsHint": "Escríbelos en cualquier canal de texto del servidor mientras estás en un canal de voz.",
+    "example": "Ejemplo",
+    "access": {
+      "anyone": "Todos",
+      "control": "Control",
+      "vote": "Voto"
+    },
+    "commands": {
+      "play": {
+        "description": "Entra a tu canal de voz y reproduce un enlace (YouTube, YouTube Music, canción, álbum o playlist de Spotify) o lo que mejor encaje con una búsqueda.",
+        "example": "/play query:paper lanterns night drive"
+      },
+      "pause": {
+        "description": "Pausa la canción actual.",
+        "example": "/pause"
+      },
+      "resume": {
+        "description": "Sigue con una canción en pausa.",
+        "example": "/resume"
+      },
+      "skip": {
+        "description": "Salta a la siguiente canción. Si votar para saltar está activado, cuenta como tu voto.",
+        "example": "/skip"
+      },
+      "stop": {
+        "description": "Para la música, borra la cola y sale del canal.",
+        "example": "/stop"
+      },
+      "queue": {
+        "description": "Muestra las próximas canciones.",
+        "example": "/queue"
+      },
+      "nowplaying": {
+        "description": "Muestra la canción actual y su posición.",
+        "example": "/nowplaying"
+      },
+      "remove": {
+        "description": "Quita una canción por su posición en la cola. Sin control solo puedes quitar las tuyas.",
+        "example": "/remove position:3"
+      },
+      "move": {
+        "description": "Mueve una canción a otra posición de la cola.",
+        "example": "/move from:5 to:1"
+      },
+      "skipto": {
+        "description": "Salta directamente a una canción de la cola y descarta las anteriores.",
+        "example": "/skipto position:4"
+      },
+      "shuffle": {
+        "description": "Mezcla las próximas canciones.",
+        "example": "/shuffle"
+      },
+      "loop": {
+        "description": "Cambia el modo de repetir: no, canción o cola.",
+        "example": "/loop mode:queue"
+      },
+      "volume": {
+        "description": "Cambia el volumen de 0 a 200. Con 100 el audio suena sin cambios.",
+        "example": "/volume level:80"
+      },
+      "lyrics": {
+        "description": "Muestra la letra de la canción actual.",
+        "example": "/lyrics"
+      },
+      "panel": {
+        "description": "Abre este panel.",
+        "example": "/panel"
+      },
+      "ai": {
+        "description": "Enciende la radio IA, con un texto opcional. Úsalo otra vez o usa /stop para apagarla.",
+        "example": "/ai prompt:música tranquila para estudiar"
+      }
+    },
+    "accessNote": "Control significa que el comando sigue el modo de control del servidor. Voto significa que puede necesitar votos del canal.",
+    "permissionsTitle": "Permisos",
+    "permissionsHint": "El bot los comprueba en cada acción, en el panel y en los comandos.",
+    "permissions": {
+      "manager": {
+        "title": "Manager de Lynx",
+        "body": "El dueño del servidor y cualquiera con Administrador o Gestionar servidor. Los managers siempre pueden controlar la música y son los únicos que ven Ajustes."
+      },
+      "dj": {
+        "title": "DJ",
+        "body": "Personas que un manager añadió a la lista de DJs en Ajustes. Es una lista de Lynx, no un rol de Discord. Los DJs controlan la música en cualquier modo y saltan sin votos."
+      },
+      "modes": {
+        "title": "Modos de control",
+        "everyone": "Todos (por defecto): cualquiera en el canal de voz puede pausar, saltar, mover la posición, reordenar y quitar canciones.",
+        "dj": "Solo DJs: solo los DJs y los managers controlan la música. El resto puede añadir canciones y quitar las suyas."
+      },
+      "vote": {
+        "title": "Votar para saltar",
+        "body": "Desactivado por defecto. Si un manager lo activa, saltar necesita un número o una parte de votos de la gente que escucha. Los DJs y managers saltan directamente."
+      }
+    },
+    "linksTitle": "Enlaces",
+    "links": {
+      "landing": "Web de Lynx",
+      "terms": "Términos del servicio",
+      "privacy": "Política de privacidad",
+      "support": "Soporte"
+    },
+    "developedBy": "Desarrollado por"
+  }
+}
