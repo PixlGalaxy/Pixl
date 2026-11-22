@@ -212,6 +212,51 @@ export type ErrorCode =
   | 'jam_servers_off'
   | 'jam_ended'
   | 'jam_other'
+  | 'refresh_blocked'
+
+/** Where a saved playlist lives. */
+export type Platform = 'spotify' | 'youtube' | 'youtube_music' | 'apple_music'
+
+/** A playlist, album or artist page the user added (`GET /api/playlists`). */
+export type SavedPlaylist = {
+  id: string
+  /** Empty when the platform gave no name. */
+  name: string
+  platform: Platform
+  url: string
+  imageUrl: string | null
+  pinned: boolean
+  /** Unix seconds. */
+  addedAt: number
+  usedAt: number
+}
+
+export type SavedPlaylists = {
+  playlists: SavedPlaylist[]
+  /** Most playlists kept per user. */
+  max: number
+  /** New playlists are saved for you (off when your listening history is off). */
+  saving: boolean
+  /** Every slot is pinned: new playlists are not saved. */
+  full: boolean
+}
+
+export type PlaylistTrack = {
+  title: string
+  artists: string[]
+  durationMs: number | null
+  artworkUrl: string | null
+  url: string
+}
+
+export type PlaylistTracks = {
+  playlist: SavedPlaylist
+  tracks: PlaylistTrack[]
+  /** Unix seconds of the fetch the songs come from (shared cache, at most an hour old). */
+  fetchedAt: number
+  /** The refresh fetched the playlist again (false: answered from the cache, too soon). */
+  refreshed: boolean
+}
 
 export type ServerMessage =
   | { type: 'state'; state: PlayerState | null; serverNow?: number }

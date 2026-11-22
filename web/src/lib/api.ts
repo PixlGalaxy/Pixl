@@ -12,7 +12,9 @@ import type {
   Lyrics,
   Member,
   PlayerState,
+  PlaylistTracks,
   PublicConfig,
+  SavedPlaylists,
   SearchResult,
   Taste,
   UserPrefs,
@@ -25,12 +27,15 @@ export class ApiError extends Error {
   readonly status: number
   /** "Every Lynx bot is busy": invite link of the next bot to add, when there is one. */
   readonly invite: string | null
-  constructor(code: string, message: string, status: number, invite: string | null = null) {
+  /** Seconds until the action is accepted again (e.g. `refresh_blocked`), when the server says. */
+  readonly retryAfter: number | null
+  constructor(code: string, message: string, status: number, invite: string | null = null, retryAfter: number | null = null) {
     super(message)
     this.name = 'ApiError'
     this.code = code
     this.status = status
     this.invite = invite
+    this.retryAfter = retryAfter
   }
 }
 
@@ -120,8 +125,15 @@ export async function request<T>(path: string, method: Method = 'GET', body?: un
     }
   }
   if (!res.ok) {
-    const err = (data as { error?: { code?: string; message?: string; invite?: string } } | null)?.error
-    throw new ApiError(err?.code ?? `http_${res.status}`, err?.message ?? res.statusText, res.status, err?.invite ?? null)
+    const err = (data as { error?: { code?: string; message?: string; invite?: string; retryAfter?: number } } | null)
+      ?.error
+    throw new ApiError(
+      err?.code ?? `http_${res.status}`,
+      err?.message ?? res.statusText,
+      res.status,
+      err?.invite ?? null,
+      typeof err?.retryAfter === 'number' ? err.retryAfter : null,
+    )
   }
   return data as T
 }
@@ -157,6 +169,23 @@ export const api = {
   clear: (channelId: string) => request<void>('/queue/clear', 'POST', { channelId }),
   feedback: (channelId: string, uid: string, value: Feedback | null) =>
     request<void>('/tracks/feedback', 'POST', { channelId, uid, value }),
+
+  // Saved playlists (per user)
+  playlists: () => request<SavedPlaylists>('/playlists'),
+  pinPlaylist: (id: string, pinned: boolean) =>
+    request<void>(`/playlists/${encodeURIComponent(id)}/pin`, 'POST', { pinned }),
+  removePlaylist: (id: string) => request<void>(`/playlists/${encodeURIComponent(id)}`, 'DELETE'),
+  /** Songs of a saved playlist, from the shared cache (at most an hour old) or a new fetch. */
+  playlistTracks: (id: string) => request<PlaylistTracks>(`/playlists/${encodeURIComponent(id)}/tracks`),
+  /** Fetch it again. Limited by the server: once every 5 s; spamming blocks it for 5 minutes (`refresh_blocked`). */
+  refreshPlaylist: (id: string) => request<PlaylistTracks>(`/playlists/${encodeURIComponent(id)}/refresh`, 'POST'),
+  /** Queue the whole playlist, or one of its songs (`trackUrl`), like the add box would. */
+  addPlaylist: (channelId: string, id: string, trackUrl?: string) =>
+    request<{ added: number }>(
+      `/playlists/${encodeURIComponent(id)}/add`,
+      'POST',
+      trackUrl ? { channelId, trackUrl } : { channelId },
+    ),
 
   // AI radio
   aiStart: (channelId: string, prompt?: string) =>

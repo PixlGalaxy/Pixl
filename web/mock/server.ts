@@ -17,6 +17,7 @@
 //                    with ?pip=1 or the `p` key it picks the compact variant
 //   ?ai_track=1      the current song was picked by the AI radio (AI chip, "Selected by AI")
 //   ?radio=off|on|job  fixed radio state: off / on (no job) / a job finding songs (default: demo job cycling)
+//   ?playlists=none|full  no saved playlists / every saved playlist pinned (Playlists tab)
 // Keys in the browser (mock SDK): `v` moves you 100 -> 101 -> no voice -> 100 (socket `channel`
 // message + new state), `x` expires every session (the panel signs in again silently), `o` takes
 // the backend offline and back (/healthz and /api answer 502, sockets are dropped and refused).
@@ -32,6 +33,8 @@ import type {
   Member,
   Permissions,
   PlayerState,
+  PlaylistTrack,
+  SavedPlaylist,
   Track,
   TrackReason,
 } from '../src/lib/types'
@@ -487,9 +490,105 @@ class HttpError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    readonly retryAfter?: number,
   ) {
     super(code)
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Saved playlists (same rules as src/api/playlists.rs and src/store/playlists.rs)
+
+const MAX_PLAYLISTS = 20
+let playlistSeq = 100
+let savedPlaylists: SavedPlaylist[] | null = null
+const PLATFORMS: SavedPlaylist['platform'][] = ['spotify', 'youtube', 'youtube_music', 'apple_music']
+
+function initPlaylists(search: string) {
+  if (savedPlaylists) return
+  const mode = new URLSearchParams(search).get('playlists')
+  const now = Math.floor(Date.now() / 1000)
+  const names = ['Late Night Drive', 'Focus Flow', 'Sunday Acoustic', 'Glass Harbor (Deluxe)', 'Gym Rotation', 'Old Favorites']
+  savedPlaylists =
+    mode === 'none'
+      ? []
+      : names.map((name, i) => ({
+          id: String(i + 1),
+          name,
+          platform: PLATFORMS[i % PLATFORMS.length]!,
+          url: `https://music.example.com/playlist?list=mock${i}`,
+          imageUrl: `/mock/art/${(i * 2) % CATALOG.length}.svg`,
+          pinned: mode === 'full' || i === 0,
+          addedAt: now - (i + 1) * 86_400,
+          usedAt: now - (i + 1) * 3_600,
+        }))
+}
+
+function sortedPlaylists() {
+  return [...(savedPlaylists ?? [])].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.usedAt - a.usedAt)
+}
+
+/** Queueing a playlist link saves it, like `/play` does (pinned ones are never evicted). */
+function savePlaylist(url: string) {
+  const list = savedPlaylists ?? []
+  const now = Math.floor(Date.now() / 1000)
+  const existing = list.find((p) => p.url === url)
+  if (existing) {
+    existing.usedAt = now
+    return
+  }
+  if (list.length >= MAX_PLAYLISTS) {
+    const oldest = list.filter((p) => !p.pinned).sort((a, b) => a.usedAt - b.usedAt)[0]
+    if (!oldest) return
+    list.splice(list.indexOf(oldest), 1)
+  }
+  playlistSeq += 1
+  list.push({
+    id: String(playlistSeq),
+    name: `Added playlist ${playlistSeq - 100}`,
+    platform: 'spotify',
+    url,
+    imageUrl: `/mock/art/${playlistSeq % CATALOG.length}.svg`,
+    pinned: false,
+    addedAt: now,
+    usedAt: now,
+  })
+  savedPlaylists = list
+}
+
+const playlistFetchedAt = new Map<string, number>()
+function playlistSongs(p: SavedPlaylist): PlaylistTrack[] {
+  const n = 6 + (Number(p.id) % 7)
+  return Array.from({ length: n }, (_, i) => {
+    const index = (Number(p.id) * 3 + i) % CATALOG.length
+    const c = CATALOG[index]!
+    return {
+      title: c.title,
+      artists: c.artists,
+      durationMs: c.dur * 1000,
+      artworkUrl: `/mock/art/${index}.svg`,
+      url: `https://music.example.com/watch?v=mock${index}`,
+    }
+  })
+}
+
+// Refresh limiter: one honored refresh every 5 s, 10 requests within 5 s block for 5 minutes.
+const refreshState = { last: 0, hits: [] as number[], blockedUntil: 0 }
+function checkRefresh(now: number): 'allow' | 'ignore' | number {
+  if (refreshState.blockedUntil > now) return Math.ceil((refreshState.blockedUntil - now) / 1000)
+  if (refreshState.blockedUntil) {
+    refreshState.blockedUntil = 0
+    refreshState.hits = []
+  }
+  refreshState.hits = refreshState.hits.filter((t) => now - t < 5000).concat(now)
+  if (refreshState.hits.length >= 10) {
+    refreshState.hits = []
+    refreshState.blockedUntil = now + 300_000
+    return 300
+  }
+  if (now - refreshState.last < 5000) return 'ignore'
+  refreshState.last = now
+  return 'allow'
 }
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -723,6 +822,7 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       const match = /mock(\d+)/.exec(query)
       const seed = (match && CATALOG[Number(match[1])]) || CATALOG[Math.floor(Math.random() * CATALOG.length)]!
       const added = query.includes('playlist') ? 5 : 1
+      if (query.includes('playlist')) savePlaylist(query)
       for (let i = 0; i < added; i++) s.upcoming.push(makeTrack(i === 0 ? seed : CATALOG[(i * 3) % CATALOG.length]!, ME))
       if (!s.current) {
         advance()
@@ -843,7 +943,71 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       return tasteSummary()
     case 'DELETE /me/data':
       tasteHistory = []
+      savedPlaylists = []
       return undefined
+    case 'GET /playlists': {
+      initPlaylists(new URL(req.headers.referer ?? 'http://x/').search)
+      await delay(150)
+      const pinned = (savedPlaylists ?? []).filter((p) => p.pinned).length
+      const saving = s.prefs.historyEnabled
+      return { playlists: sortedPlaylists(), max: MAX_PLAYLISTS, saving, full: saving && pinned >= MAX_PLAYLISTS }
+    }
+  }
+  // Saved playlists: /playlists/{id}[/pin|/tracks|/refresh|/add]
+  const playlistMatch = /^\/playlists\/(\w+)(?:\/(pin|tracks|refresh|add))?$/.exec(path)
+  if (playlistMatch) {
+    initPlaylists(new URL(req.headers.referer ?? 'http://x/').search)
+    const [, id, action] = playlistMatch
+    const p = (savedPlaylists ?? []).find((x) => x.id === id)
+    if (!p) throw new HttpError(404, 'not_found')
+    const songs = () => {
+      const fetchedAt = playlistFetchedAt.get(p.id) ?? Math.floor(Date.now() / 1000) - 600
+      return { playlist: p, tracks: playlistSongs(p), fetchedAt }
+    }
+    switch (`${method} ${action ?? ''}`) {
+      case 'DELETE ':
+        savedPlaylists = (savedPlaylists ?? []).filter((x) => x.id !== p.id)
+        return undefined
+      case 'POST pin':
+        p.pinned = body.pinned === true
+        return undefined
+      case 'GET tracks':
+        await delay(350)
+        return { ...songs(), refreshed: false }
+      case 'POST refresh': {
+        const decision = checkRefresh(Date.now())
+        if (typeof decision === 'number') throw new HttpError(429, 'refresh_blocked', decision)
+        if (decision === 'allow') {
+          await delay(700)
+          playlistFetchedAt.set(p.id, Math.floor(Date.now() / 1000))
+        }
+        return { ...songs(), refreshed: decision === 'allow' }
+      }
+      case 'POST add': {
+        const channel = String(body.channelId ?? '')
+        if (!s.voice || channel !== s.voice) throw new HttpError(403, 'not_in_channel')
+        const voice = s.settings.voiceChannels
+        if (!permissionsFor(f).isManager && voice.length > 0 && !voice.includes('100')) {
+          throw new HttpError(403, 'channel_not_allowed')
+        }
+        const all = playlistSongs(p)
+        const picked = typeof body.trackUrl === 'string' ? all.filter((t) => t.url === body.trackUrl).slice(0, 1) : all
+        if (picked.length === 0) throw new HttpError(404, 'not_found')
+        const room = Math.max(0, s.settings.maxQueueLength - s.upcoming.length)
+        if (room === 0) throw new HttpError(409, 'queue_full')
+        for (const t of picked.slice(0, room)) {
+          const seed = CATALOG.find((c) => c.title === t.title) ?? CATALOG[0]!
+          s.upcoming.push(makeTrack(seed, ME))
+        }
+        if (!s.current) {
+          advance()
+          s.status = 'playing'
+        }
+        if (!body.trackUrl) p.usedAt = Math.floor(Date.now() / 1000)
+        broadcast()
+        return { added: Math.min(picked.length, room) }
+      }
+    }
   }
   // Same rules as src/api/me.rs: AI on, history on, a known genre.
   const genreMatch = /^\/me\/taste\/genre\/([^/]+)$/.exec(path)
@@ -952,7 +1116,8 @@ export function mockApi(): Plugin {
           sendJson(res, 200, await handle(req, url, flags, session))
         } catch (error) {
           if (error instanceof HttpError) {
-            sendJson(res, error.status, { error: { code: error.code, message: `Mock error: ${error.code}` } })
+            const retry = error.retryAfter === undefined ? {} : { retryAfter: error.retryAfter }
+            sendJson(res, error.status, { error: { code: error.code, message: `Mock error: ${error.code}`, ...retry } })
           } else {
             sendJson(res, 500, { error: { code: 'internal', message: String(error) } })
           }
