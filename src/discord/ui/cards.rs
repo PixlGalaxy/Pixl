@@ -1086,7 +1086,7 @@ mod tests {
         let row2 = &container["components"][3]["components"];
         assert_eq!(row2[3]["style"], 1, "Open panel is primary");
         assert_eq!(
-            container["components"][2]["components"][2]["style"], 4,
+            container["components"][2]["components"][1]["style"], 4,
             "Stop is danger"
         );
         check_text(&all_text(&json));
