@@ -281,6 +281,7 @@ mod tests {
             youtube_id: None,
             spotify_id: None,
             isrc: None,
+            music: None,
         };
         let l = Lrclib::new(reqwest::Client::new()).lyrics(&store, Duration::from_secs(60), &t).await.unwrap().unwrap();
         let synced = l.synced.unwrap();

@@ -484,6 +484,7 @@ fn entry_to_track(e: &Value) -> Option<TrackInfo> {
         youtube_id: if is_yt { id.map(str::to_owned) } else { None },
         spotify_id: None,
         isrc: e["isrc"].as_str().map(str::to_owned),
+        music: None,
     })
 }
 

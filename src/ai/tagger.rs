@@ -325,7 +325,7 @@ pub fn lookup_names(t: &CatalogTrack) -> (String, String) {
     let clean_meta = t
         .info
         .as_ref()
-        .is_some_and(|i| matches!(i.origin, TrackOrigin::Spotify | TrackOrigin::YoutubeMusic));
+        .is_some_and(|i| i.origin.is_catalog() || i.origin == TrackOrigin::YoutubeMusic || i.music.is_some());
     let mut artist = t.artists.first().map(|a| clean_channel(a)).unwrap_or_default();
     let mut title = strip_noise(&t.title);
     if !clean_meta {

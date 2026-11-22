@@ -12,9 +12,12 @@ use crate::sources::{TrackInfo, TrackOrigin};
 /// Row id in `tracks`.
 pub type TrackId = i64;
 
-/// Canonical catalog key: YouTube id, else `isrc:<ISRC>`, else `spotify:<id>`, else `url:<url>`.
+/// Canonical catalog key: YouTube Music song id (so a music video and its song share a key),
+/// else YouTube id, else `isrc:<ISRC>`, else `spotify:<id>`, else `url:<url>`.
 pub fn track_key(info: &TrackInfo) -> String {
-    if let Some(id) = info.youtube_id.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(m) = info.music.as_ref().filter(|m| !m.youtube_id.is_empty()) {
+        m.youtube_id.clone()
+    } else if let Some(id) = info.youtube_id.as_deref().filter(|s| !s.is_empty()) {
         id.to_owned()
     } else if let Some(isrc) = info.isrc.as_deref().filter(|s| !s.is_empty()) {
         format!("isrc:{}", isrc.to_ascii_uppercase())
@@ -154,7 +157,7 @@ pub(crate) fn catalog_from_sqlite_row(row: &SqliteRow) -> Result<CatalogTrack> {
 /// sources with clean metadata (Spotify, YouTube Music), so a later raw YouTube title never
 /// replaces a clean one.
 pub(crate) async fn upsert_track(conn: &mut SqliteConnection, info: &TrackInfo) -> Result<TrackId> {
-    let clean = matches!(info.origin, TrackOrigin::Spotify | TrackOrigin::YoutubeMusic);
+    let clean = info.origin.is_catalog() || info.origin == TrackOrigin::YoutubeMusic || info.music.is_some();
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO tracks (key, title, artists, url, duration_ms, isrc, info, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
@@ -168,11 +171,11 @@ pub(crate) async fn upsert_track(conn: &mut SqliteConnection, info: &TrackInfo) 
          RETURNING id",
     )
     .bind(track_key(info))
-    .bind(&info.title)
-    .bind(serde_json::to_string(&info.artists)?)
+    .bind(info.display_title())
+    .bind(serde_json::to_string(info.display_artists())?)
     .bind(&info.url)
     .bind(info.duration_ms.map(|d| d as i64))
-    .bind(info.isrc.as_deref().map(str::to_ascii_uppercase))
+    .bind(info.any_isrc().map(str::to_ascii_uppercase))
     .bind(serde_json::to_string(info)?)
     .bind(now_secs())
     .bind(clean)

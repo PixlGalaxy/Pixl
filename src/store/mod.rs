@@ -192,6 +192,7 @@ pub(crate) mod test_util {
             youtube_id: Some(id.to_owned()),
             spotify_id: None,
             isrc: None,
+            music: None,
         }
     }
 }
