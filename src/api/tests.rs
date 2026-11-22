@@ -1015,3 +1015,165 @@ async fn appearance_prefs_are_validated() {
     let (_, v) = h.call("GET", "/api/me/prefs", Some(&ana), None).await;
     assert_eq!(v["theme"], "system");
 }
+
+/// Seed history for ANA (two rock songs, one jazz, one `url:` key) and BOSS (one rock song).
+async fn seed_taste(h: &Harness) {
+    use crate::store::{test_util::track, Tag, TagSource};
+    let store = &h.state.app.store;
+    let tag = |t: &str| Tag {
+        tag: t.into(),
+        weight: 0.5,
+        source: TagSource::Lastfm,
+    };
+    let mut a = track("a");
+    a.thumbnail = Some("https://i.ytimg.com/vi/a/hq.jpg".into());
+    let mut odd = track("odd");
+    odd.youtube_id = None;
+    odd.url = "https://example.com/x/y?z=1".into();
+    let ra = store.record_play_at(ANA, &a, 10).await.unwrap().unwrap();
+    store.record_play_at(ANA, &a, 11).await.unwrap();
+    let rb = store.record_play_at(ANA, &track("b"), 20).await.unwrap().unwrap();
+    let rj = store.record_play_at(ANA, &track("j"), 30).await.unwrap().unwrap();
+    let ro = store.record_play_at(ANA, &odd, 5).await.unwrap().unwrap();
+    let rx = store.record_play_at(BOSS, &track("x"), 40).await.unwrap().unwrap();
+    for id in [ra, rb, ro, rx] {
+        store.write_track_tags(id, &[tag("rock")]).await.unwrap();
+    }
+    store.write_track_tags(rj, &[tag("jazz")]).await.unwrap();
+}
+
+#[tokio::test]
+async fn taste_genre_tracks_and_forgetting_a_song() {
+    let h = harness().await;
+    seed_taste(&h).await;
+    let (ana, _) = h.login("ana", None).await;
+    let (boss, _) = h.login("boss", None).await;
+
+    let (s, _) = h.call("GET", "/api/me/taste/genre/rock", None, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, v) = h.call("GET", "/api/me/taste/genre/rock", Some(&ana), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["total"], 3);
+    let keys: Vec<&str> = v["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, ["a", "b", "url:https://example.com/x/y?z=1"]);
+    let first = &v["tracks"][0];
+    assert_eq!(
+        (first["plays"].clone(), first["lastPlayed"].clone()),
+        (json!(2), json!(11))
+    );
+    assert_eq!(first["title"], "Song a");
+    assert_eq!(first["artists"], json!(["Artist a"]));
+    assert!(
+        first["artworkUrl"].as_str().unwrap().starts_with("/backend/img?url="),
+        "{first}"
+    );
+    assert_eq!(v["tracks"][1]["artworkUrl"], Value::Null);
+
+    // Case and spelling go through the taxonomy; paging; unknown genres are refused.
+    let (_, v) = h
+        .call("GET", "/api/me/taste/genre/ROCK?limit=1&offset=1", Some(&ana), None)
+        .await;
+    assert_eq!(
+        (v["total"].clone(), v["tracks"][0]["key"].clone()),
+        (json!(3), json!("b"))
+    );
+    let (_, v) = h
+        .call("GET", "/api/me/taste/genre/rock?limit=500", Some(&ana), None)
+        .await;
+    assert_eq!(
+        v["tracks"].as_array().unwrap().len(),
+        3,
+        "limit is clamped, not refused"
+    );
+    let (s, v) = h
+        .call("GET", "/api/me/taste/genre/not%20a%20genre", Some(&ana), None)
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::BAD_REQUEST, "invalid"));
+    let (s, _) = h
+        .call("GET", "/api/me/taste/genre/rock?limit=-1", Some(&ana), None)
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (_, v) = h.call("GET", "/api/me/taste/genre/rock", Some(&boss), None).await;
+    assert_eq!(v["total"], 1, "only the caller's history");
+
+    let (_, taste) = h.call("GET", "/api/me/taste", Some(&ana), None).await;
+    assert!(taste["topTracks"][0]["artworkUrl"]
+        .as_str()
+        .unwrap()
+        .starts_with("/backend/img"));
+
+    // Forget: history row gone, dislike set, taste stale, other users untouched.
+    let store = h.state.app.store.clone();
+    for st in store.stale_tastes(10).await.unwrap() {
+        store
+            .put_taste(st.user_id, &Default::default(), st.version)
+            .await
+            .unwrap();
+    }
+    let (s, _) = h.call("DELETE", "/api/me/history/a", None, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, v) = h.call("DELETE", "/api/me/history/a", Some(&ana), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let (_, v) = h.call("GET", "/api/me/taste/genre/rock", Some(&ana), None).await;
+    assert_eq!(v["total"], 2);
+    let a = crate::store::test_util::track("a");
+    assert_eq!(
+        store.get_feedback(ANA, &a).await.unwrap(),
+        Some(crate::store::Feedback::Dislike)
+    );
+    let stale: Vec<u64> = store
+        .stale_tastes(10)
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.user_id)
+        .collect();
+    assert_eq!(stale, [ANA]);
+    let (s, v) = h.call("DELETE", "/api/me/history/a", Some(&ana), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"), "already gone");
+    let (s, _) = h.call("DELETE", "/api/me/history/x", Some(&ana), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "someone else's song");
+    assert_eq!(store.history_len(BOSS).await.unwrap(), 1);
+    // Keys with slashes travel percent-encoded in one segment.
+    let (s, v) = h
+        .call(
+            "DELETE",
+            "/api/me/history/url%3Ahttps%3A%2F%2Fexample.com%2Fx%2Fy%3Fz%3D1",
+            Some(&ana),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    assert_eq!(store.history_len(ANA).await.unwrap(), 2);
+
+    // History off: 403 history_disabled on both routes.
+    h.call(
+        "PUT",
+        "/api/me/prefs",
+        Some(&ana),
+        Some(json!({ "historyEnabled": false })),
+    )
+    .await;
+    let (s, v) = h.call("GET", "/api/me/taste/genre/rock", Some(&ana), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "history_disabled"));
+    let (s, v) = h.call("DELETE", "/api/me/history/b", Some(&ana), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "history_disabled"));
+    assert_eq!(store.history_len(ANA).await.unwrap(), 2, "nothing removed");
+}
+
+#[tokio::test]
+async fn taste_genre_routes_need_ai() {
+    let h = harness_with(Duration::from_secs(3600), false).await;
+    seed_taste(&h).await;
+    let (ana, _) = h.login("ana", None).await;
+    let (s, v) = h.call("GET", "/api/me/taste/genre/rock", Some(&ana), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"));
+    let (s, v) = h.call("DELETE", "/api/me/history/a", Some(&ana), None).await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"));
+    assert_eq!(h.state.app.store.history_len(ANA).await.unwrap(), 4);
+}

@@ -176,6 +176,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/guild/channels", get(settings::channels))
         .route("/api/me/prefs", get(me::get_prefs).put(me::put_prefs))
         .route("/api/me/taste", get(me::taste))
+        .route("/api/me/taste/genre/{genre}", get(me::genre_tracks))
+        .route("/api/me/history/{track_key}", delete(me::forget_track))
         .route("/api/me/data", delete(me::delete_data))
         .route("/api/me/channel", get(follow::me_channel))
         .route("/ws", get(ws::upgrade))

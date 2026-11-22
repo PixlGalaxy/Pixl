@@ -128,7 +128,19 @@ export type UserPrefs = {
 }
 export type Taste = {
   topGenres: Array<{ genre: string; weight: number }>
-  topTracks: Array<{ title: string; artists: string[]; plays: number; url: string }>
+  topTracks: Array<{ title: string; artists: string[]; plays: number; url: string; artworkUrl: string | null }>
+}
+/** A song of the user's history tagged with one genre (`GET /me/taste/genre/{genre}`). */
+export type GenreTrack = {
+  /** Catalog key, used to remove it (`DELETE /me/history/{key}`). */
+  key: string
+  title: string
+  artists: string[]
+  artworkUrl: string | null
+  url: string
+  plays: number
+  /** Unix seconds. */
+  lastPlayed: number
 }
 
 export type ErrorCode =

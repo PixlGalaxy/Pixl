@@ -277,7 +277,32 @@
     "deleteConfirm": "Delete",
     "deleted": "Your data was deleted.",
     "policy": "Read the privacy policy",
-    "noHistoryNote": "Only your panel language is stored."
+    "noHistoryNote": "Only your panel language is stored.",
+    "tasteMoved": "Your taste (top genres and most played songs) is at the bottom of the Radio tab."
+  },
+  "health": {
+    "title": "Reconnecting to Lynx",
+    "body": "The server is not responding. This page will come back on its own.",
+    "compact": "Reconnecting",
+    "statusBefore": "Check the status on"
+  },
+  "taste": {
+    "genresHint": "Click a genre to see its songs from your history.",
+    "noGenres": "No genres yet. They show up once your songs are tagged.",
+    "genreSongs": "{{genre}} in your history",
+    "genreSongsCount_one": "{{genre}}: {{count}} song",
+    "genreSongsCount_other": "{{genre}}: {{count}} songs",
+    "genreEmpty": "No songs of this genre left in your history.",
+    "showMore_one": "Show {{count}} more",
+    "showMore_other": "Show {{count}} more",
+    "close": "Close genre",
+    "removeLabel": "Remove {{title}} from your history",
+    "removeHint": "Removed songs leave your history and won't play on your radio.",
+    "removeQuestion": "Remove this song?",
+    "remove": "Remove",
+    "removed": "Removed {{title}} from your history.",
+    "historyOff": "Your listening history is off, so there is no taste to show. Turn it on in Account > Privacy.",
+    "openPrivacy": "Open Account"
   },
   "help": {
     "title": "Help",
@@ -299,7 +324,7 @@
       },
       "radio": {
         "title": "Radio",
-        "body": "Starts an endless mix from your history, your likes and similar listeners. You can add a short prompt such as \"calm music to study\". While it picks songs, the queue shows each step and you can cancel it."
+        "body": "Starts an endless mix from your history, your likes and similar listeners. You can add a short prompt such as \"calm music to study\". While it picks songs, the queue shows each step and you can cancel it. At the bottom, Your taste shows your top genres: click one to see its songs and remove the ones you do not want on your radio."
       },
       "settings": {
         "title": "Settings",
@@ -307,7 +332,7 @@
       },
       "privacy": {
         "title": "Account",
-        "body": "The round button with your picture, top right: theme and accent color, language, your listening history and taste, and deleting your data."
+        "body": "The round button with your picture, top right: theme and accent color, language, your listening history and deleting your data. Your taste is at the bottom of the Radio tab."
       },
       "language": {
         "title": "Language",

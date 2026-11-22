@@ -9,7 +9,6 @@ import {
   ShieldAlert,
   Sun,
   Trash2,
-  TrendingUp,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -28,10 +27,11 @@ import {
   type ThemeMode,
 } from '../lib/appearance'
 import { openExternal } from '../lib/discord'
+import { notifyTasteChanged } from '../lib/events'
 import { cx, mediaUrl } from '../lib/format'
 import i18n, { LANGUAGES, matchLanguage, setDocumentLanguage } from '../lib/i18n'
 import { useLynx } from '../lib/lynx'
-import type { Taste, User, UserPrefs } from '../lib/types'
+import type { User, UserPrefs } from '../lib/types'
 import { ConfirmButton, IconButton, inputCls, Spinner, Toggle } from './ui'
 
 /** Current theme mode and accent, re-rendering when either changes (also from the top-bar toggle). */
@@ -209,71 +209,6 @@ function LanguagePicker() {
   )
 }
 
-function TasteBlock({ reloadKey }: { reloadKey: number }) {
-  const { t } = useTranslation()
-  const [taste, setTaste] = useState<Taste | null>(null)
-  const [failed, setFailed] = useState(false)
-  useEffect(() => {
-    setTaste(null)
-    setFailed(false)
-    api.taste().then(setTaste, () => setFailed(true))
-  }, [reloadKey])
-
-  const max = Math.max(1e-9, ...(taste?.topGenres ?? []).map((g) => g.weight))
-  return (
-    <Section title={t('privacy.taste')} icon={<TrendingUp size={15} />}>
-      <p className="text-xs text-muted">{t('privacy.tasteHint')}</p>
-      {failed ? (
-        <p className="text-sm text-muted">{t('errors.generic')}</p>
-      ) : !taste ? (
-        <div className="flex justify-center py-2 text-muted">
-          <Spinner />
-        </div>
-      ) : taste.topGenres.length === 0 && taste.topTracks.length === 0 ? (
-        <p className="text-sm text-muted">{t('privacy.tasteEmpty')}</p>
-      ) : (
-        <>
-          <div className="space-y-2">
-            <h4 className="text-[10px] font-semibold tracking-wide text-muted uppercase">{t('privacy.topGenres')}</h4>
-            {taste.topGenres.slice(0, 6).map((g) => (
-              <div key={g.genre} className="flex items-center gap-3">
-                <span className="w-24 shrink-0 truncate text-sm">{g.genre}</span>
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
-                  <div
-                    className="h-full rounded-full bg-accent-500 transition-[width] duration-700 ease-out"
-                    style={{ width: `${(g.weight / max) * 100}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-          <div>
-            <h4 className="mb-1 text-[10px] font-semibold tracking-wide text-muted uppercase">{t('privacy.topTracks')}</h4>
-            <ol>
-              {taste.topTracks.slice(0, 5).map((tr, i) => (
-                <li key={tr.url} className="flex items-center gap-3 border-t border-line py-2 first:border-t-0">
-                  <span className="w-4 text-right font-mono text-[11px] text-muted tabular-nums">{i + 1}</span>
-                  <button
-                    type="button"
-                    onClick={() => openExternal(tr.url)}
-                    className="min-w-0 flex-1 text-left hover:text-accent-600 dark:hover:text-accent-400"
-                  >
-                    <div className="truncate text-sm font-medium">{tr.title}</div>
-                    <div className="truncate text-xs text-muted">{tr.artists.join(', ')}</div>
-                  </button>
-                  <span className="font-mono text-[11px] text-muted tabular-nums">
-                    {t('privacy.plays', { count: tr.plays })}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </div>
-        </>
-      )}
-    </Section>
-  )
-}
-
 function Explained({ title, items }: { title: string; items: string[] }) {
   return (
     <div>
@@ -305,6 +240,7 @@ function Privacy({ prefs, setPrefs }: { prefs: UserPrefs; setPrefs: (p: UserPref
             setPrefs({ ...prefs, historyEnabled })
             const res = await run(() => api.updatePrefs({ historyEnabled }))
             if (res === null) setPrefs(prefs)
+            else notifyTasteChanged()
           }}
         />
       </div>
@@ -380,7 +316,6 @@ export function AccountPanel({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation()
   const { user, guildName, aiEnabled } = useLynx()
   const [prefs, setPrefs] = useState<UserPrefs | null>(null)
-  const [reloadKey, setReloadKey] = useState(0)
   const panel = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -426,12 +361,12 @@ export function AccountPanel({ onClose }: { onClose: () => void }) {
                 <Spinner />
               </div>
             ))}
-          {aiEnabled && <TasteBlock reloadKey={reloadKey} />}
+          {aiEnabled && <p className="border-t border-line px-4 py-3 text-xs text-muted">{t('privacy.tasteMoved')}</p>}
           {!aiEnabled && (
             <p className="border-t border-line px-4 py-4 text-xs text-muted">{t('privacy.noHistoryNote')}</p>
           )}
           <Links />
-          <DangerZone onDeleted={() => setReloadKey((k) => k + 1)} />
+          <DangerZone onDeleted={notifyTasteChanged} />
         </div>
       </div>
     </div>

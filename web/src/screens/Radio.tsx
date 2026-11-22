@@ -2,6 +2,7 @@ import { Radio, Square } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AiProgress } from '../components/AiProgress'
+import { TasteCard } from '../components/TasteCard'
 import { TrackReasonLine } from '../components/TrackBits'
 import { Artwork, Button, Card, Empty, Notice, labelCls, inputCls } from '../components/ui'
 import { api } from '../lib/api'
@@ -131,6 +132,8 @@ export function RadioScreen() {
           )}
         </Card>
       )}
+
+      <TasteCard />
     </div>
   )
 }

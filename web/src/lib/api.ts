@@ -2,6 +2,7 @@ import type {
   AuthResult,
   ChannelRef,
   Feedback,
+  GenreTrack,
   GuildChannels,
   GuildSettings,
   LoopMode,
@@ -13,6 +14,7 @@ import type {
   Taste,
   UserPrefs,
 } from './types'
+import { isGatewayStatus, reportBackendTrouble } from './health'
 
 /** Error returned by the backend as `{ error: { code, message } }`, or a network failure (`code: 'network'`). */
 export class ApiError extends Error {
@@ -92,8 +94,10 @@ export async function request<T>(path: string, method: Method = 'GET', body?: un
       body: body === undefined ? undefined : JSON.stringify(body),
     })
   } catch (error) {
+    reportBackendTrouble()
     throw new ApiError('network', error instanceof Error ? error.message : String(error), 0)
   }
+  if (isGatewayStatus(res.status)) reportBackendTrouble()
 
   if (res.status === 401 && session && path !== '/auth' && !retried) {
     if (await renewSession()) return request<T>(path, method, body, true)
@@ -171,6 +175,13 @@ export const api = {
   prefs: () => request<UserPrefs>('/me/prefs'),
   updatePrefs: (patch: Partial<UserPrefs>) => request<UserPrefs | void>('/me/prefs', 'PUT', patch),
   taste: () => request<Taste>('/me/taste'),
+  /** Songs of your history tagged with a genre, most played first. */
+  tasteGenre: (genre: string, limit: number, offset: number) =>
+    request<{ tracks: GenreTrack[]; total: number }>(
+      `/me/taste/genre/${encodeURIComponent(genre)}?${q({ limit: String(limit), offset: String(offset) })}`,
+    ),
+  /** Removes a song from your history and dislikes it (the radio never plays it for you). */
+  forgetTrack: (key: string) => request<void>(`/me/history/${encodeURIComponent(key)}`, 'DELETE'),
   /** Voice channel the panel follows (polling fallback of the socket's `channel` message). */
   meChannel: () => request<{ channel: ChannelRef | null }>('/me/channel'),
   deleteData: () => request<void>('/me/data', 'DELETE'),

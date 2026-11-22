@@ -131,7 +131,11 @@ async function watchLayout(client: DiscordSDK): Promise<void> {
 
 /** External links must go through the client (no new windows inside the iframe). */
 export async function openExternal(url: string): Promise<void> {
-  if (!sdk) return
+  if (!sdk) {
+    // The SDK never connected (gate error screens): a plain new tab is the best we can do.
+    window.open(url, '_blank', 'noopener')
+    return
+  }
   try {
     await sdk.commands.openExternalLink({ url })
   } catch (error) {
