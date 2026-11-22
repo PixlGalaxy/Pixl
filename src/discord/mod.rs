@@ -8,6 +8,7 @@ pub mod commands;
 pub mod ids;
 pub mod interactions;
 pub mod jam;
+pub mod play;
 pub mod registry;
 pub mod respond;
 pub mod resume;
