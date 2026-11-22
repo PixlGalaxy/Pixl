@@ -6,6 +6,7 @@ use super::{
     COLOR_ERROR, COLOR_INFO, COLOR_SUCCESS, COLOR_WARNING,
 };
 use crate::{
+    ai::AiPhase,
     discord::ids::{CustomId, NpAction, NO_TRACK},
     i18n::I18n,
     sources::TrackOrigin,
@@ -808,6 +809,156 @@ pub fn history_off(voice_channel_id: u64, i18n: &I18n) -> Message {
         ],
     )
     .ephemeral(true)
+}
+
+// ---------------------------------------------------------------------------
+// AI radio
+// ---------------------------------------------------------------------------
+
+/// State of one phase line on the "picking songs" card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Done,
+    Working,
+    Next,
+}
+
+pub fn phase_label(phase: AiPhase, i18n: &I18n) -> String {
+    let key = match phase {
+        AiPhase::Queued => "queued",
+        AiPhase::LoadingModel => "loading_model",
+        AiPhase::ReadingTaste => "reading_taste",
+        AiPhase::FindingSongs => "finding_songs",
+        AiPhase::Thinking => "thinking",
+        _ => "resolving",
+    };
+    i18n.t(&format!("bot.radio.phase.{key}"), &[])
+}
+
+pub struct RadioPicking<'a> {
+    pub voice_channel_id: u64,
+    pub prompt: Option<&'a str>,
+    pub first_playing: bool,
+    pub steps: &'a [(AiPhase, Step)],
+    /// Job uuid (simple form) for the Cancel button.
+    pub job: &'a str,
+}
+
+/// "Radio is picking songs": the phase list, edited as the job advances.
+pub fn radio_picking(v: &RadioPicking, i18n: &I18n) -> Message {
+    let mut sub = match v.prompt {
+        Some(p) => i18n.t(
+            "bot.radio.picking.basis_prompt",
+            &[("prompt", &escape(&truncate(p, 100)))],
+        ),
+        None => i18n.t("bot.radio.picking.basis", &[]),
+    };
+    if v.first_playing {
+        sub.push(' ');
+        sub.push_str(&i18n.t("bot.radio.picking.first_playing", &[]));
+    }
+    let lines: Vec<String> = v
+        .steps
+        .iter()
+        .map(|(phase, step)| {
+            let badge = match step {
+                Step::Done => i18n.t("bot.radio.badge.done", &[]),
+                Step::Working => format!("**{}**", i18n.t("bot.radio.badge.working", &[])),
+                Step::Next => i18n.t("bot.radio.badge.next", &[]),
+            };
+            let label = phase_label(*phase, i18n);
+            match step {
+                Step::Working => format!("{badge} - **{label}**"),
+                _ => format!("{badge} - {label}"),
+            }
+        })
+        .collect();
+    container(
+        Tone::Info,
+        vec![
+            Component::text(format!(
+                "**{}**
+-# {sub}",
+                i18n.t("bot.radio.picking.title", &[])
+            )),
+            Component::separator(),
+            Component::text(lines.join(
+                "
+",
+            )),
+            Component::Row(vec![
+                Button::new(
+                    ButtonStyle::Danger,
+                    i18n.t("bot.button.cancel", &[]),
+                    CustomId::CancelRadio {
+                        voice_channel_id: v.voice_channel_id,
+                        job: v.job.to_owned(),
+                    }
+                    .encode(),
+                ),
+                panel_button(v.voice_channel_id, i18n),
+            ]),
+        ],
+    )
+}
+
+/// "Radio is on" with the number of songs the start job added.
+pub fn radio_on(count: usize, voice_channel_id: u64, i18n: &I18n) -> Message {
+    let ch = channel(voice_channel_id);
+    let body = if count == 1 {
+        i18n.t("bot.radio.on.body_one", &[("channel", &ch)])
+    } else {
+        i18n.t("bot.radio.on.body", &[("count", &count.to_string()), ("channel", &ch)])
+    };
+    container(
+        Tone::Ok,
+        vec![
+            Component::text(format!(
+                "**{}**
+{body}",
+                i18n.t("bot.radio.on.title", &[])
+            )),
+            Component::Row(vec![
+                Button::new(
+                    ButtonStyle::Secondary,
+                    i18n.t("bot.button.stop_radio", &[]),
+                    CustomId::StopRadio { voice_channel_id }.encode(),
+                ),
+                panel_button(voice_channel_id, i18n),
+            ]),
+        ],
+    )
+}
+
+/// The start job failed before adding anything.
+pub fn radio_failed(no_songs: bool, i18n: &I18n) -> Message {
+    let body = if no_songs {
+        i18n.t("bot.radio.failed.no_songs", &[])
+    } else {
+        i18n.t("bot.radio.failed.body", &[])
+    };
+    container(Tone::Danger, titled(i18n.t("bot.radio.failed.title", &[]), body))
+}
+
+pub fn radio_cancelled(voice_channel_id: u64, i18n: &I18n) -> Message {
+    container(
+        Tone::Info,
+        titled(
+            i18n.t("bot.radio.cancelled.title", &[]),
+            i18n.t("bot.radio.cancelled.body", &[("channel", &channel(voice_channel_id))]),
+        ),
+    )
+}
+
+/// Replaces the "Radio is on" card after "Stop radio".
+pub fn radio_stopped(by: u64, i18n: &I18n) -> Message {
+    container(
+        Tone::Info,
+        titled(
+            i18n.t("bot.radio.stopped.title", &[]),
+            i18n.t("bot.radio.stopped.body", &[("user", &user(by))]),
+        ),
+    )
 }
 
 /// Public notice for a guild's system channel (node bot joined a guild without the main bot).

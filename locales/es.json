@@ -40,7 +40,9 @@
       "start_radio": "Iniciar radio",
       "vote": "Votar para saltar",
       "invite_node": "Invitar Lynx Node {number}",
-      "invite_main": "Invitar Lynx"
+      "invite_main": "Invitar Lynx",
+      "cancel": "Cancelar",
+      "stop_radio": "Apagar radio"
     },
     "now_playing": {
       "title_in": "Sonando en {channel}",
@@ -123,6 +125,59 @@
       "title": "Añade el bot principal de Lynx",
       "body": "Soy un bot ayudante de Lynx: pongo música cuando el bot principal está ocupado en otro canal. Para usar los comandos, este servidor necesita el bot principal de Lynx."
     },
+    "radio": {
+      "mix": {
+        "favorites": "Sobre todo mis favoritas",
+        "balanced": "Equilibrado",
+        "discover": "Descubrir música nueva"
+      },
+      "modal": {
+        "title": "Iniciar una radio",
+        "prompt_label": "¿Qué quieres escuchar?",
+        "prompt_description": "Opcional. Déjalo vacío para usar solo tus gustos.",
+        "prompt_placeholder": "algo tranquilo para estudiar",
+        "mix_label": "Mezcla",
+        "listeners_label": "Oyentes",
+        "blend": "Mezclar los gustos de todos en el canal"
+      },
+      "picking": {
+        "title": "La radio está eligiendo canciones",
+        "basis": "Según tus gustos y los de oyentes como tú.",
+        "basis_prompt": "Según tus gustos, los de oyentes como tú y \"{prompt}\".",
+        "first_playing": "La primera canción ya está sonando."
+      },
+      "phase": {
+        "queued": "Esperando turno",
+        "loading_model": "Cargando el modelo",
+        "reading_taste": "Leyendo tus gustos",
+        "finding_songs": "Buscando canciones",
+        "thinking": "Pensando",
+        "resolving": "Buscando las canciones en YouTube"
+      },
+      "badge": {
+        "done": "Hecho",
+        "working": "En curso",
+        "next": "Siguiente"
+      },
+      "on": {
+        "title": "La radio está encendida",
+        "body": "Añadí {count} canciones a {channel}. Añadiré más cuando queden pocas. Apágala con `/stop` o desde el panel.",
+        "body_one": "Añadí 1 canción a {channel}. Añadiré más cuando queden pocas. Apágala con `/stop` o desde el panel."
+      },
+      "failed": {
+        "title": "La radio no pudo empezar.",
+        "no_songs": "Todavía no encontré canciones para tus gustos. Pon algunas con `/play` primero, o dime qué quieres escuchar.",
+        "body": "Algo falló al elegir las canciones. Inténtalo de nuevo en un momento."
+      },
+      "cancelled": {
+        "title": "Radio cancelada.",
+        "body": "No se añadirá nada más a {channel}."
+      },
+      "stopped": {
+        "title": "Radio apagada.",
+        "body": "{user} apagó la radio. Las canciones que ya están en la cola siguen sonando."
+      }
+    },
     "history_off": {
       "title": "Tu historial está desactivado",
       "body": "Me gusta, No me gusta y la radio usan tu historial de escucha. Actívalo en el panel, en Privacidad."
@@ -150,7 +205,10 @@
       "lyrics_not_found": { "title": "No se encontró la letra.", "body": "LRCLIB no tiene la letra de esa canción." },
       "lyrics_nothing": { "title": "No suena nada.", "body": "Usa `/lyrics` con el nombre de una canción." },
       "no_invite_permission": { "title": "No puedo crear invitaciones aquí.", "body": "Invitar a escuchar necesita el permiso Crear invitación en {channel}." },
-      "radio_unavailable": { "title": "La radio todavía no está disponible.", "body": "Por ahora añade canciones con `/play`." },
+      "radio_unavailable": { "title": "La radio no está disponible.", "body": "La radio con IA está desactivada en este bot." },
+      "radio_no_permission": { "title": "No puedes cambiar esta radio.", "body": "Solo quien la inició, los DJs y los administradores pueden hacerlo." },
+      "radio_not_active": { "title": "La radio no está encendida.", "body": "Inicia una con `/ai`." },
+      "radio_nothing_to_cancel": { "title": "No hay nada que cancelar.", "body": "La radio ya terminó de elegir canciones." },
       "nothing_to_shuffle": { "title": "No hay nada que mezclar.", "body": "Primero añade más canciones a la cola." },
       "already_paused": { "title": "La música ya está en pausa.", "body": "Usa `/resume` para continuar." },
       "not_paused": { "title": "La música no está en pausa.", "body": "" },
@@ -173,6 +231,7 @@
       "volume": "**Volumen al {volume}%** (antes {previous}%)",
       "liked": "**Guardado.** Escucharás más canciones como {track} en tu radio.",
       "disliked": "**Entendido.** {track} no volverá a sonar en tu radio.",
+      "disliked_skipped": "**Entendido.** {track} no volverá a sonar en tu radio, así que la salté.",
       "feedback_cleared": "**Voto quitado** para {track}."
     },
     "cmd": {
@@ -214,6 +273,12 @@
       "lyrics": {
         "description": "Muestra la letra de la canción actual o de una búsqueda",
         "query": "Nombre de la canción (opcional)"
+      },
+      "ai": {
+        "description": "Inicia una radio basada en tus gustos",
+        "prompt": "¿Qué quieres escuchar? (opcional)",
+        "mix": "Tus favoritas, un equilibrio o música nueva (por defecto: equilibrado)",
+        "blend": "Mezcla los gustos de todos en el canal (por defecto: sí)"
       },
       "panel": { "description": "Abre el panel de Lynx" },
       "launch": { "description": "Abre el panel de Lynx" }

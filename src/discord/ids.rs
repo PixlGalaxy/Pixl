@@ -67,8 +67,12 @@ pub enum CustomId {
     },
     /// "Play it again" on the queue-deleted notice.
     Replay { voice_channel_id: u64 },
-    /// "Start radio" on the queue-finished notice (AI phase).
+    /// "Start radio" on the queue-finished notice.
     StartRadio { voice_channel_id: u64 },
+    /// "Stop radio" on the "Radio is on" card.
+    StopRadio { voice_channel_id: u64 },
+    /// "Cancel" on the "Radio is picking songs" card; `job` is the job uuid (simple form).
+    CancelRadio { voice_channel_id: u64, job: String },
 }
 
 impl CustomId {
@@ -97,6 +101,8 @@ impl CustomId {
             } => format!("q:{voice_channel_id}:{page}:{issued}"),
             Self::Replay { voice_channel_id } => format!("re:{voice_channel_id}"),
             Self::StartRadio { voice_channel_id } => format!("ai:{voice_channel_id}"),
+            Self::StopRadio { voice_channel_id } => format!("rs:{voice_channel_id}"),
+            Self::CancelRadio { voice_channel_id, job } => format!("rc:{voice_channel_id}:{job}"),
         }
     }
 
@@ -128,6 +134,13 @@ impl CustomId {
             },
             "ai" => Self::StartRadio {
                 voice_channel_id: parts.next()?.parse().ok()?,
+            },
+            "rs" => Self::StopRadio {
+                voice_channel_id: parts.next()?.parse().ok()?,
+            },
+            "rc" => Self::CancelRadio {
+                voice_channel_id: parts.next()?.parse().ok()?,
+                job: parts.next()?.to_owned(),
             },
             _ => return None,
         };
@@ -164,6 +177,11 @@ mod tests {
             },
             CustomId::Replay { voice_channel_id: 9 },
             CustomId::StartRadio { voice_channel_id: 9 },
+            CustomId::StopRadio { voice_channel_id: 9 },
+            CustomId::CancelRadio {
+                voice_channel_id: u64::MAX,
+                job: uuid::Uuid::new_v4().simple().to_string(),
+            },
         ] {
             let s = id.encode();
             assert!(s.len() <= 100);

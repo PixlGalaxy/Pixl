@@ -107,7 +107,7 @@ pub(crate) async fn run(
         min_duration_ms: MIN_DURATION_MS,
         max_duration_ms: MAX_DURATION_MS,
     };
-    let quotas = candidates::quotas(prompt.is_some(), cold);
+    let quotas = candidates::with_mix(candidates::quotas(prompt.is_some(), cold), req.mix);
     let mut cands = local_candidates(e, req, &members, cold, prompt, &prompt_genres).await?;
     let mut excluded_idents: HashSet<String> = HashSet::new();
     let mut first_sent = false;
@@ -222,6 +222,9 @@ async fn members(store: &Store, req: &RadioRequest) -> anyhow::Result<(Vec<u64>,
         }
     }
     let mut members = vec![req.owner_id];
+    if !req.blend {
+        return Ok((everyone, members));
+    }
     for l in everyone.iter().skip(1) {
         if members.len() >= MAX_BLEND {
             break;

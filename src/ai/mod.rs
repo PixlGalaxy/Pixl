@@ -130,6 +130,38 @@ impl Reason {
     }
 }
 
+/// How the radio weighs the user's own favorites against new music (`/ai` "Mix").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RadioMix {
+    /// Mostly the listeners' own most played and liked tracks.
+    Favorites,
+    /// The default source weights.
+    #[default]
+    Balanced,
+    /// Mostly tracks the listeners never played.
+    Discover,
+}
+
+impl RadioMix {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "favorites" => Self::Favorites,
+            "balanced" => Self::Balanced,
+            "discover" => Self::Discover,
+            _ => return None,
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Favorites => "favorites",
+            Self::Balanced => "balanced",
+            Self::Discover => "discover",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RadioRequest {
     pub guild_id: u64,
@@ -144,6 +176,11 @@ pub struct RadioRequest {
     pub recent_keys: Vec<String>,
     /// How many picks to return (clamped to 1..=50; ~20 for a start, ~10 for a refill).
     pub batch_size: usize,
+    /// Source weights (Balanced = the defaults).
+    pub mix: RadioMix,
+    /// Group mode: blend the taste of the listeners (history on) with the owner's. When false only
+    /// the owner's taste is used; the listeners' dislikes still filter.
+    pub blend: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -218,6 +255,25 @@ impl RadioJob {
             Ok(r) => r,
             Err(e) if e.is_cancelled() => Err(RadioError::Cancelled),
             Err(e) => Err(RadioError::Internal(e.to_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+impl RadioJob {
+    /// A job driven by the test: phases come from `phases`, the first pick from `first`, the rest
+    /// from `result`.
+    pub(crate) fn fake(
+        phases: watch::Receiver<AiPhase>,
+        first: Option<oneshot::Receiver<RadioPick>>,
+        result: JoinHandle<Result<Vec<RadioPick>, RadioError>>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            phases,
+            first,
+            cancel: CancellationToken::new(),
+            handle: Some(result),
         }
     }
 }
