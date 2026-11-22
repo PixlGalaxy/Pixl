@@ -159,7 +159,8 @@ impl Sources {
                     http.clone(),
                     config.max_concurrent_extractions,
                     config.ytdlp_cookies_file.clone(),
-                ),
+                )
+                .with_limit_rate(config.ytdlp_limit_rate.clone()),
                 spotify,
                 lrclib: lyrics::Lrclib::new(http.clone()),
                 http,
@@ -347,6 +348,7 @@ mod tests {
             ollama_keep_alive: String::new(),
             ollama_timeout_secs: 0,
             ytdlp_cookies_file: None,
+            ytdlp_limit_rate: None,
             empty_channel_timeout_secs: 0,
             max_concurrent_extractions: 2,
             stream_cache_max_mb: 100,
