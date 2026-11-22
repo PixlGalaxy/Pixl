@@ -86,7 +86,7 @@
       },
       "back_online": {
         "title": "Back online",
-        "body": "Lynx restarted. Picking up where you left off in {channel}: {track}, song {position} of {total}, from the beginning."
+        "body": "Lynx restarted. Picking up where you left off in {channel}: {track}, song {position} of {total}."
       },
       "queue_finished": {
         "title": "Queue finished",

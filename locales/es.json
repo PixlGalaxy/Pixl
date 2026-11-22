@@ -86,7 +86,7 @@
       },
       "back_online": {
         "title": "De vuelta",
-        "body": "Lynx se reinició. Sigo donde lo dejaron en {channel}: {track}, canción {position} de {total}, desde el principio."
+        "body": "Lynx se reinició. Sigo donde lo dejaron en {channel}: {track}, canción {position} de {total}."
       },
       "queue_finished": {
         "title": "Terminó la cola",
