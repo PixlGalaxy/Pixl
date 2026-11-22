@@ -2003,6 +2003,7 @@ dependencies = [
  "axum",
  "dashmap 6.2.1",
  "dotenvy",
+ "fastrand",
  "libc",
  "reqwest",
  "serde",

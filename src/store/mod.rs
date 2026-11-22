@@ -8,6 +8,7 @@ mod djs;
 mod feedback;
 mod history;
 mod maintenance;
+mod meta;
 mod nodes;
 mod prefs;
 mod sessions;

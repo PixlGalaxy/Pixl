@@ -1,5 +1,222 @@
 {
   "common": {
     "error": "Algo salió mal. Inténtalo de nuevo."
+  },
+  "bot": {
+    "track": {
+      "live": "En directo",
+      "requested_by": "Pedida por {user}"
+    },
+    "added": {
+      "title": "Añadida a la cola",
+      "playing_now": "Empieza ahora",
+      "position": "Posición {position} en la cola",
+      "eta": "Suena en unos {minutes} minutos",
+      "list_title": "Se añadió una playlist",
+      "list_named": "{count} canciones de {name}",
+      "list": "{count} canciones",
+      "source_spotify": "Playlist de Spotify",
+      "source_youtube": "Playlist de YouTube",
+      "source_youtube_music": "Playlist de YouTube Music",
+      "source_other": "Playlist",
+      "total": "{duration} en total",
+      "more": "y {count} más",
+      "truncated": "La lista se recortó para no pasar el límite de la cola."
+    },
+    "button": {
+      "pause": "Pausar",
+      "resume": "Reanudar",
+      "skip": "Saltar",
+      "stop": "Detener",
+      "queue": "Cola",
+      "panel": "Abrir panel",
+      "like": "Me gusta",
+      "dislike": "No me gusta",
+      "jam": "Invitar a escuchar",
+      "previous": "Anterior",
+      "next": "Siguiente",
+      "open_invite": "Abrir invitación",
+      "replay": "Volver a reproducir",
+      "start_radio": "Iniciar radio",
+      "vote": "Votar para saltar",
+      "invite_node": "Invitar Lynx Node {number}",
+      "invite_main": "Invitar Lynx"
+    },
+    "now_playing": {
+      "title_in": "Sonando en {channel}",
+      "played_by": "la reproduce {bot}",
+      "paused": "En pausa",
+      "volume": "Volumen: {volume}%"
+    },
+    "loop": {
+      "label": "Repetir: {mode}",
+      "off": "no",
+      "track": "canción",
+      "queue": "cola"
+    },
+    "queue": {
+      "title": "Cola en {channel}",
+      "summary": "{count} canciones · quedan {duration}",
+      "now": "Ahora",
+      "empty": "No hay nada en cola. Añade canciones con `/play`.",
+      "page": "Página {page} de {pages}"
+    },
+    "lyrics": {
+      "title": "Letra",
+      "footer": "Letra de LRCLIB. El panel la muestra sincronizada con la canción."
+    },
+    "jam": {
+      "title": "Invitación para escuchar en {channel}",
+      "body": "Comparte este enlace: quien lo abra entra a {channel} y se le abre el panel de Lynx. Funciona durante 24 horas."
+    },
+    "notice": {
+      "paused_empty": {
+        "title": "En pausa: no hay nadie escuchando",
+        "body": "Todos salieron de {channel}, así que la música está en pausa.\nLa cola se borrará {time} si no entra nadie."
+      },
+      "resumed": {
+        "title": "Reanudada",
+        "body": "Alguien entró a {channel}. Vuelve a sonar {track}."
+      },
+      "queue_deleted": {
+        "title": "Cola borrada",
+        "body": "Nadie entró a {channel} en {minutes} minutos, así que vacié la cola y salí del canal."
+      },
+      "back_online": {
+        "title": "De vuelta",
+        "body": "Lynx se reinició. Sigo donde lo dejaron en {channel}: {track}, canción {position} de {total}, desde el principio."
+      },
+      "queue_finished": {
+        "title": "Terminó la cola",
+        "body": "Esa fue la última canción en {channel}. Añade más con `/play`.",
+        "body_ai": "Esa fue la última canción en {channel}. Añade más con `/play` o inicia una radio según tus gustos."
+      },
+      "track_failed": {
+        "title": "No se pudo reproducir {track}.",
+        "body": "{reason}. Paso a la siguiente canción."
+      },
+      "too_many_failures": {
+        "title": "Se detuvo la música",
+        "body": "Varias canciones seguidas no se pudieron reproducir, así que detuve la música en {channel}."
+      },
+      "disconnected": {
+        "title": "Desconectado",
+        "body": "Me desconectaron de {channel}, así que se borró la cola."
+      },
+      "stopped": {
+        "title": "Detenida",
+        "body": "{user} detuvo la música y salí de {channel}."
+      }
+    },
+    "vote": {
+      "title": "Votos para saltar: {current} de {required}",
+      "body_one": "{track} se saltará cuando vote una persona más.",
+      "body_many": "{track} se saltará cuando voten {count} personas más."
+    },
+    "busy": {
+      "title": "Todos los bots de Lynx están ocupados en este servidor",
+      "body": "Lynx ya está sonando en {busy}. Invita a otro bot de Lynx para que pueda sonar en {channel} a la vez.",
+      "body_generic": "Invita a otro bot de Lynx para que pueda sonar en {channel} a la vez.",
+      "no_more": "Todos los bots de Lynx ya están sonando en otros canales de voz y no hay más bots para añadir. Inténtalo cuando uno quede libre para sonar en {channel}."
+    },
+    "add_main": {
+      "title": "Añade el bot principal de Lynx",
+      "body": "Soy un bot ayudante de Lynx: pongo música cuando el bot principal está ocupado en otro canal. Para usar los comandos, este servidor necesita el bot principal de Lynx."
+    },
+    "history_off": {
+      "title": "Tu historial está desactivado",
+      "body": "Me gusta, No me gusta y la radio usan tu historial de escucha. Actívalo en el panel, en Privacidad."
+    },
+    "error": {
+      "generic": { "title": "Algo salió mal.", "body": "Inténtalo de nuevo en un momento." },
+      "guild_only": { "title": "Esto solo funciona en un servidor.", "body": "Usa Lynx desde un canal de texto de un servidor." },
+      "not_in_voice": { "title": "Primero entra a un canal de voz.", "body": "Pongo música en el canal de voz en el que estás." },
+      "no_player": { "title": "No suena nada en tu canal de voz.", "body": "Empieza algo con `/play`." },
+      "not_in_channel": { "title": "No estás en ese canal de voz.", "body": "Entra al canal donde suena la música para controlarla." },
+      "dj_only": { "title": "Aquí solo los DJs pueden hacer eso.", "body": "En este servidor los managers decidieron que solo los DJs controlan la música. Aún puedes añadir canciones y quitar las tuyas." },
+      "manager_only": { "title": "Solo los managers pueden hacer eso.", "body": "" },
+      "queue_full": { "title": "La cola está llena.", "body": "Este servidor permite hasta {max} canciones en la cola." },
+      "no_results": { "title": "No se encontró nada.", "body": "Prueba otra búsqueda o pega un enlace." },
+      "cannot_connect": { "title": "No puedo entrar a {channel}.", "body": "Necesito los permisos Ver canal, Conectar y Hablar ahí." },
+      "join_failed": { "title": "No se pudo conectar al canal de voz.", "body": "Inténtalo de nuevo en un momento." },
+      "outdated": { "title": "Este mensaje ya no está actualizado.", "body": "Esa canción ya no está sonando." },
+      "expired": { "title": "Estos botones caducaron.", "body": "Usa `/queue` otra vez." },
+      "invalid_position": { "title": "Esa posición no existe.", "body": "Elige una posición entre 1 y {max}." },
+      "restarting": { "title": "Lynx se está reiniciando.", "body": "Inténtalo en un momento." },
+      "spotify_disabled": { "title": "Los enlaces de Spotify no están activados.", "body": "Busca la canción por su nombre." },
+      "unsupported": { "title": "Ese enlace no es compatible.", "body": "Usa un enlace de YouTube, YouTube Music o Spotify, o busca por nombre." },
+      "timeout": { "title": "La fuente tardó demasiado en responder.", "body": "Inténtalo de nuevo." },
+      "source": { "title": "No se pudo reproducir.", "body": "{reason}. Prueba otro enlace o busca la canción." },
+      "lyrics_not_found": { "title": "No se encontró la letra.", "body": "LRCLIB no tiene la letra de esa canción." },
+      "lyrics_nothing": { "title": "No suena nada.", "body": "Usa `/lyrics` con el nombre de una canción." },
+      "no_invite_permission": { "title": "No puedo crear invitaciones aquí.", "body": "Invitar a escuchar necesita el permiso Crear invitación en {channel}." },
+      "radio_unavailable": { "title": "La radio todavía no está disponible.", "body": "Por ahora añade canciones con `/play`." },
+      "nothing_to_shuffle": { "title": "No hay nada que mezclar.", "body": "Primero añade más canciones a la cola." },
+      "already_paused": { "title": "La música ya está en pausa.", "body": "Usa `/resume` para continuar." },
+      "not_paused": { "title": "La música no está en pausa.", "body": "" },
+      "nothing_to_replay": { "title": "Esa cola ya no existe.", "body": "Empieza algo nuevo con `/play`." }
+    },
+    "reply": {
+      "paused": "**En pausa.** Usa `/resume` o el botón Reanudar para continuar.",
+      "resumed": "**Reanudada.** Suena {track}.",
+      "skipped": "**Se saltó** {track}. Sigue: {next}.",
+      "skipped_last": "**Se saltó** {track}. Era la última canción de la cola.",
+      "already_voted": "**Ya votaste.** {current} de {required} votos para saltar.",
+      "stopped": "**Detenida.** Vacié la cola y salí de {channel}.",
+      "removed": "**Se quitó** {track} de la cola.",
+      "moved": "**Se movió** {track} de la posición {from} a la {to}.",
+      "skipped_to": "**Se saltó a** {track}. Se quitaron las {count} canciones anteriores.",
+      "shuffled": "**Se mezclaron {count} canciones.** La que suena ahora se queda en su lugar.",
+      "loop_off": "**Repetir: no**. La cola suena una vez.",
+      "loop_track": "**Repetir: canción**. La canción actual se repite hasta que lo cambies.",
+      "loop_queue": "**Repetir: cola**. Cuando termine la última canción, la cola empieza de nuevo.",
+      "volume": "**Volumen al {volume}%** (antes {previous}%)",
+      "liked": "**Guardado.** Escucharás más canciones como {track} en tu radio.",
+      "disliked": "**Entendido.** {track} no volverá a sonar en tu radio.",
+      "feedback_cleared": "**Voto quitado** para {track}."
+    },
+    "cmd": {
+      "play": {
+        "description": "Reproduce una canción, una playlist o una búsqueda",
+        "query": "Enlace o nombre de la canción"
+      },
+      "pause": { "description": "Pausa la música" },
+      "resume": { "description": "Reanuda la música" },
+      "skip": { "description": "Salta la canción actual (o vota para saltarla)" },
+      "stop": { "description": "Detiene la música, vacía la cola y sale" },
+      "queue": { "description": "Muestra la cola" },
+      "nowplaying": { "description": "Muestra la canción actual" },
+      "remove": {
+        "description": "Quita una canción de la cola",
+        "position": "Posición en la cola"
+      },
+      "move": {
+        "description": "Mueve una canción de la cola",
+        "from": "Posición actual",
+        "to": "Nueva posición"
+      },
+      "skipto": {
+        "description": "Salta a una posición de la cola y quita las canciones anteriores",
+        "position": "Posición en la cola"
+      },
+      "shuffle": { "description": "Mezcla la cola" },
+      "loop": {
+        "description": "Elige el modo de repetición",
+        "mode": "Modo de repetición",
+        "off": "Desactivado",
+        "track": "Canción actual",
+        "queue": "Toda la cola"
+      },
+      "volume": {
+        "description": "Cambia el volumen",
+        "value": "Volumen de 0 a 200 (100 es el original)"
+      },
+      "lyrics": {
+        "description": "Muestra la letra de la canción actual o de una búsqueda",
+        "query": "Nombre de la canción (opcional)"
+      },
+      "panel": { "description": "Abre el panel de Lynx" },
+      "launch": { "description": "Abre el panel de Lynx" }
+    }
   }
 }

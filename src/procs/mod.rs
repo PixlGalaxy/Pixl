@@ -379,6 +379,90 @@ impl ProcessRegistry {
             .collect();
         self.kill_targets(targets).await
     }
+
+    /// Spawn a long-running child whose stdout is read synchronously (e.g. yt-dlp piping audio into
+    /// songbird). It is registered like `run` children: `kill_*` on its owner (or its timeout)
+    /// terminates the whole process group, and dropping the returned [`StreamChild`] kills and reaps it.
+    /// Must be called inside a tokio runtime.
+    pub fn spawn_stream(&self, spec: ProcSpec) -> Result<StreamChild, ProcError> {
+        let mut cmd = std::process::Command::new(&spec.program);
+        cmd.args(&spec.args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+        for (k, v) in &spec.envs {
+            cmd.env(k, v);
+        }
+        if let Some(dir) = &spec.current_dir {
+            cmd.current_dir(dir);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        let mut child = cmd
+            .spawn()
+            .map_err(|source| ProcError::Spawn { program: spec.program.display().to_string(), source })?;
+        let Some(stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ProcError::Io(std::io::Error::other("child has no stdout")));
+        };
+        let pid = child.id();
+        let id = Uuid::new_v4();
+        let cancel = CancellationToken::new();
+        let done = CancellationToken::new();
+        self.inner.insert(
+            id,
+            Entry {
+                owner: spec.owner.clone(),
+                pid: Some(pid),
+                started: Instant::now(),
+                cancel: cancel.clone(),
+                done: done.clone(),
+            },
+        );
+        debug!(pid, owner = ?spec.owner, program = %spec.program.display(), "spawned stream child");
+
+        // Watcher: a kill request or the timeout takes the group down; the reader then sees EOF
+        // and the owner drops the StreamChild, which reaps it.
+        let timeout = spec.timeout;
+        let watch_done = done.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = watch_done.cancelled() => return,
+                _ = cancel.cancelled() => {}
+                _ = tokio::time::sleep(timeout) => warn!(pid, "stream child timed out"),
+            }
+            signal_group(pid, Signal::Term);
+            let _ = tokio::time::timeout(TERM_GRACE, watch_done.cancelled()).await;
+            signal_group(pid, Signal::Kill);
+        });
+
+        Ok(StreamChild { child, stdout, guard: EntryGuard { map: self.inner.clone(), id, pid: Some(pid), reaped: false } })
+    }
+}
+
+/// A registered child whose stdout is read with `std::io::Read`. Dropping it kills the process
+/// group and reaps the leader.
+pub struct StreamChild {
+    child: std::process::Child,
+    stdout: std::process::ChildStdout,
+    guard: EntryGuard,
+}
+
+impl std::io::Read for StreamChild {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        std::io::Read::read(&mut self.stdout, buf)
+    }
+}
+
+impl Drop for StreamChild {
+    fn drop(&mut self) {
+        signal_group(self.child.id(), Signal::Kill);
+        let _ = self.child.kill();
+        // After SIGKILL the wait is immediate.
+        let _ = self.child.wait();
+        self.guard.reaped = true;
+    }
 }
 
 /// SIGTERM the group, wait up to `TERM_GRACE`, then SIGKILL the group. Does not reap; the caller waits.
@@ -588,5 +672,46 @@ mod tests {
         for t in tasks {
             let _ = t.await;
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_child_is_killed_by_owner_and_reaped_on_drop() {
+        use std::io::Read;
+        let reg = ProcessRegistry::new();
+        let t = Uuid::new_v4();
+        let mut child =
+            reg.spawn_stream(sh("echo hi; sleep 30", owner(1, 2, Some(t)), Duration::from_secs(60))).unwrap();
+        let pid = child.child.id() as i32;
+        assert_eq!(reg.len(), 1);
+        let mut first = [0u8; 3];
+        child.read_exact(&mut first).unwrap();
+        assert_eq!(&first, b"hi\n");
+        let killer = {
+            let reg = reg.clone();
+            tokio::spawn(async move { reg.kill_track(1, 2, t).await })
+        };
+        // The reader sees EOF once the group is gone; dropping reaps it.
+        let rest = tokio::task::spawn_blocking(move || {
+            let mut v = Vec::new();
+            let _ = child.read_to_end(&mut v);
+            drop(child);
+            v
+        })
+        .await
+        .unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(killer.await.unwrap(), 1);
+        assert!(reg.is_empty());
+        assert!(!running(pid));
+    }
+
+    #[tokio::test]
+    async fn stream_child_drop_kills_it() {
+        let reg = ProcessRegistry::new();
+        let child = reg.spawn_stream(sh("sleep 30", owner(1, 3, None), Duration::from_secs(60))).unwrap();
+        let pid = child.child.id() as i32;
+        drop(child);
+        assert!(reg.is_empty());
+        assert!(!running(pid));
     }
 }

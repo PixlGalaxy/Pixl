@@ -62,3 +62,26 @@ mod tests {
         assert_eq!(i18n.t("does.not.exist", &[]), "does.not.exist");
     }
 }
+
+#[cfg(test)]
+mod parity {
+    use super::*;
+
+    fn placeholders(s: &str) -> Vec<String> {
+        let mut p: Vec<String> = s.split('{').skip(1).filter_map(|x| x.split('}').next()).map(String::from).collect();
+        p.sort();
+        p
+    }
+
+    #[test]
+    fn every_locale_has_the_same_keys_and_placeholders() {
+        let en = flatten(EN).unwrap();
+        let es = flatten(ES).unwrap();
+        let mut missing: Vec<_> = en.keys().filter(|k| !es.contains_key(*k)).collect();
+        missing.extend(es.keys().filter(|k| !en.contains_key(*k)));
+        assert!(missing.is_empty(), "keys missing in a locale: {missing:?}");
+        for (k, v) in &en {
+            assert_eq!(placeholders(v), placeholders(&es[k]), "placeholders differ for {k}");
+        }
+    }
+}
