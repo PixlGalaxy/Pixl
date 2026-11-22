@@ -2,7 +2,7 @@
 //! (`bot.*` keys). Accent colors: info (blue), warn (amber), danger (red), ok (green).
 
 use super::{
-    escape, format_duration, link, relative_time, truncate, Accessory, Button, ButtonStyle, Component, Message,
+    escape, format_duration, link, relative_time, truncate, Accessory, Button, ButtonStyle, Component, Icon, Message,
     COLOR_ERROR, COLOR_INFO, COLOR_SUCCESS, COLOR_WARNING,
 };
 use crate::{
@@ -97,6 +97,7 @@ fn panel_button(voice_channel_id: u64, i18n: &I18n) -> Button {
         i18n.t("bot.button.panel", &[]),
         CustomId::np(NpAction::Panel, voice_channel_id, NO_TRACK),
     )
+    .icon(Icon::Panel)
 }
 
 /// A progress bar such as `1:07 ━━━━━●───── 3:34`.
@@ -201,7 +202,8 @@ pub fn added_list(v: &AddedList, i18n: &I18n) -> Message {
             ButtonStyle::Secondary,
             i18n.t("bot.button.queue", &[]),
             CustomId::np(NpAction::Queue, v.voice_channel_id, NO_TRACK),
-        ),
+        )
+        .icon(Icon::Queue),
         panel_button(v.voice_channel_id, i18n),
     ]));
     container(Tone::Info, children)
@@ -236,17 +238,37 @@ fn header(voice_channel_id: u64, node_name: Option<&str>, i18n: &I18n) -> String
 fn toggle_button(paused: bool, vc: u64, tag: &str, i18n: &I18n) -> Button {
     if paused {
         Button::new(
-            ButtonStyle::Primary,
+            ButtonStyle::Secondary,
             i18n.t("bot.button.resume", &[]),
             CustomId::np(NpAction::Resume, vc, tag),
         )
+        .icon(Icon::Play)
     } else {
         Button::new(
-            ButtonStyle::Primary,
+            ButtonStyle::Secondary,
             i18n.t("bot.button.pause", &[]),
             CustomId::np(NpAction::Pause, vc, tag),
         )
+        .icon(Icon::Pause)
     }
+}
+
+fn skip_button(vc: u64, tag: &str, i18n: &I18n) -> Button {
+    Button::new(
+        ButtonStyle::Secondary,
+        i18n.t("bot.button.skip", &[]),
+        CustomId::np(NpAction::Skip, vc, tag),
+    )
+    .icon(Icon::Skip)
+}
+
+fn queue_button(vc: u64, tag: &str, i18n: &I18n) -> Button {
+    Button::new(
+        ButtonStyle::Secondary,
+        i18n.t("bot.button.queue", &[]),
+        CustomId::np(NpAction::Queue, vc, tag),
+    )
+    .icon(Icon::Queue)
 }
 
 /// The automatic message sent when a track starts (one per player; replaced on every track).
@@ -280,42 +302,44 @@ pub fn now_playing(v: &NowPlaying, i18n: &I18n) -> Message {
 
     let tag = v.track_tag;
     children.push(Component::Row(vec![
-        // Colors grouped like the second row: primary, danger, then the neutral ones.
+        // Song controls are grey; their colored icons tell them apart.
         toggle_button(v.paused, vc, tag, i18n),
         Button::new(
-            ButtonStyle::Danger,
+            ButtonStyle::Secondary,
             i18n.t("bot.button.stop", &[]),
             CustomId::np(NpAction::Stop, vc, tag),
-        ),
-        Button::new(
-            ButtonStyle::Secondary,
-            i18n.t("bot.button.skip", &[]),
-            CustomId::np(NpAction::Skip, vc, tag),
-        ),
-        Button::new(
-            ButtonStyle::Secondary,
-            i18n.t("bot.button.queue", &[]),
-            CustomId::np(NpAction::Queue, vc, tag),
-        ),
+        )
+        .icon(Icon::Stop),
+        skip_button(vc, tag, i18n),
+        queue_button(vc, tag, i18n),
     ]));
     let mut second = Vec::with_capacity(4);
     if v.ai_enabled {
-        second.push(Button::new(
-            ButtonStyle::Success,
-            i18n.t("bot.button.like", &[]),
-            CustomId::np(NpAction::Like, vc, tag),
-        ));
-        second.push(Button::new(
-            ButtonStyle::Danger,
-            i18n.t("bot.button.dislike", &[]),
-            CustomId::np(NpAction::Dislike, vc, tag),
-        ));
+        second.push(
+            Button::new(
+                ButtonStyle::Success,
+                i18n.t("bot.button.like", &[]),
+                CustomId::np(NpAction::Like, vc, tag),
+            )
+            .icon(Icon::Like),
+        );
+        second.push(
+            Button::new(
+                ButtonStyle::Danger,
+                i18n.t("bot.button.dislike", &[]),
+                CustomId::np(NpAction::Dislike, vc, tag),
+            )
+            .icon(Icon::Dislike),
+        );
     }
-    second.push(Button::new(
-        ButtonStyle::Secondary,
-        i18n.t("bot.button.jam", &[]),
-        CustomId::np(NpAction::Jam, vc, tag),
-    ));
+    second.push(
+        Button::new(
+            ButtonStyle::Secondary,
+            i18n.t("bot.button.jam", &[]),
+            CustomId::np(NpAction::Jam, vc, tag),
+        )
+        .icon(Icon::Jam),
+    );
     second.push(panel_button(vc, i18n));
     children.push(Component::Row(second));
     container(Tone::Info, children)
@@ -358,16 +382,8 @@ pub fn now_playing_detail(v: &NowPlayingDetail, i18n: &I18n) -> Message {
     let tag = v.track_tag;
     children.push(Component::Row(vec![
         toggle_button(v.paused, vc, tag, i18n),
-        Button::new(
-            ButtonStyle::Secondary,
-            i18n.t("bot.button.skip", &[]),
-            CustomId::np(NpAction::Skip, vc, tag),
-        ),
-        Button::new(
-            ButtonStyle::Secondary,
-            i18n.t("bot.button.queue", &[]),
-            CustomId::np(NpAction::Queue, vc, tag),
-        ),
+        skip_button(vc, tag, i18n),
+        queue_button(vc, tag, i18n),
         panel_button(vc, i18n),
     ]));
     container(Tone::Info, children)
@@ -471,10 +487,12 @@ pub fn queue_page(v: &QueuePage, i18n: &I18n) -> Message {
                 i18n.t("bot.button.previous", &[]),
                 id(v.page.saturating_sub(1)),
             )
+            .icon(Icon::Previous)
             .disabled(v.page == 0),
         );
         row.push(
             Button::new(ButtonStyle::Secondary, i18n.t("bot.button.next", &[]), id(v.page + 1))
+                .icon(Icon::Next)
                 .disabled(v.page + 1 >= pages),
         );
     }
@@ -605,7 +623,8 @@ pub fn notice(n: &Notice, voice_channel_id: u64, i18n: &I18n) -> Message {
                     ButtonStyle::Secondary,
                     i18n.t("bot.button.replay", &[]),
                     CustomId::Replay { voice_channel_id }.encode(),
-                ),
+                )
+                .icon(Icon::Replay),
             ),
         ),
         Notice::BackOnline {
@@ -637,7 +656,8 @@ pub fn notice(n: &Notice, voice_channel_id: u64, i18n: &I18n) -> Message {
                     ButtonStyle::Primary,
                     i18n.t("bot.button.start_radio", &[]),
                     CustomId::StartRadio { voice_channel_id }.encode(),
-                ),
+                )
+                .icon(Icon::Radio),
             ),
         ),
         Notice::QueueFinished { ai_enabled: false } => (
@@ -755,7 +775,8 @@ pub fn vote(
                 ButtonStyle::Secondary,
                 i18n.t("bot.button.vote", &[]),
                 CustomId::np(NpAction::Skip, voice_channel_id, tag),
-            )]),
+            )
+            .icon(Icon::Skip)]),
         ],
     )
 }
@@ -896,7 +917,8 @@ pub fn radio_picking(v: &RadioPicking, i18n: &I18n) -> Message {
                         job: v.job.to_owned(),
                     }
                     .encode(),
-                ),
+                )
+                .icon(Icon::Cancel),
                 panel_button(v.voice_channel_id, i18n),
             ]),
         ],
@@ -924,7 +946,8 @@ pub fn radio_on(count: usize, voice_channel_id: u64, i18n: &I18n) -> Message {
                     ButtonStyle::Secondary,
                     i18n.t("bot.button.stop_radio", &[]),
                     CustomId::StopRadio { voice_channel_id }.encode(),
-                ),
+                )
+                .icon(Icon::Radio),
                 panel_button(voice_channel_id, i18n),
             ]),
         ],
@@ -1083,13 +1106,45 @@ mod tests {
                 "np:panel:77:-"
             ]
         );
-        let row2 = &container["components"][3]["components"];
-        assert_eq!(row2[3]["style"], 1, "Open panel is primary");
-        assert_eq!(
-            container["components"][2]["components"][1]["style"], 4,
-            "Stop is danger"
-        );
+        let styles = |row: &Value| -> Vec<u64> {
+            row.as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b["style"].as_u64().unwrap())
+                .collect()
+        };
+        // Pause, Stop, Skip, Queue: all grey.
+        assert_eq!(styles(&container["components"][2]["components"]), vec![2, 2, 2, 2]);
+        // Like green, Dislike red, Invite to jam grey, Open panel blue.
+        assert_eq!(styles(&container["components"][3]["components"]), vec![3, 4, 2, 1]);
         check_text(&all_text(&json));
+        assert!(!json.to_string().contains("emoji"), "no icons before the emoji sync");
+
+        // With synced ids every button gets its variant: colored on grey, white on colored.
+        let ids = |name: &str| Some(name.len() as u64);
+        let json = now_playing(&v, &i18n()).to_json_with(&ids);
+        let mut names = Vec::new();
+        collect(&json, "name", &mut names);
+        assert_eq!(
+            names,
+            vec![
+                "lynx_pause_sky",
+                "lynx_stop_red",
+                "lynx_skip_emerald",
+                "lynx_queue_amber",
+                "lynx_like_white",
+                "lynx_dislike_white",
+                "lynx_jam_violet",
+                "lynx_panel_white"
+            ]
+        );
+        let labels: Vec<&str> = json["components"][0]["components"][2]["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(labels, vec!["Pause", "Stop", "Skip", "Queue"], "labels stay");
 
         v.ai_enabled = false;
         v.paused = true;
@@ -1099,7 +1154,111 @@ mod tests {
         let ids = custom_ids(&json);
         assert_eq!(ids[0], "np:resume:77:tag");
         assert_eq!(ids.len(), 6, "no Like/Dislike without AI");
+        let json = now_playing(&v, &i18n()).to_json_with(&|_| Some(1));
+        let resume = &json["components"][0]["components"][2]["components"][0];
+        assert_eq!(
+            (resume["style"].as_u64(), resume["emoji"]["name"].as_str()),
+            (Some(2), Some("lynx_play_sky"))
+        );
         assert!(!all_text(&json).contains("played by"));
+    }
+
+    /// "style emoji" of every button in a message rendered with all emoji ids known.
+    fn look(m: Message) -> Vec<String> {
+        fn walk(v: &Value, out: &mut Vec<String>) {
+            match v {
+                Value::Object(m) if m.get("type").and_then(Value::as_u64) == Some(2) => {
+                    out.push(format!("{} {}", m["style"], m["emoji"]["name"].as_str().unwrap_or("-")))
+                }
+                Value::Object(m) => m.values().for_each(|x| walk(x, out)),
+                Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        walk(&m.to_json_with(&|_| Some(9)), &mut out);
+        out
+    }
+
+    #[test]
+    fn button_styles_and_icons_per_card() {
+        let i = i18n();
+        let a = artists();
+        let detail = NowPlayingDetail {
+            track: track(&a),
+            voice_channel_id: 1,
+            node_name: None,
+            position_ms: 0,
+            paused: false,
+            loop_mode: LoopMode::Off,
+            volume: 100,
+            track_tag: "t",
+        };
+        assert_eq!(
+            look(now_playing_detail(&detail, &i)),
+            vec![
+                "2 lynx_pause_sky",
+                "2 lynx_skip_emerald",
+                "2 lynx_queue_amber",
+                "1 lynx_panel_white"
+            ]
+        );
+        let q = QueuePage {
+            voice_channel_id: 9,
+            current: None,
+            entries: vec![],
+            page: 1,
+            total_upcoming: 25,
+            remaining_ms: 0,
+            loop_mode: LoopMode::Off,
+            issued: 1,
+            expired: false,
+        };
+        assert_eq!(
+            look(queue_page(&q, &i)),
+            vec!["2 lynx_prev_slate", "2 lynx_next_slate", "1 lynx_panel_white"]
+        );
+        assert_eq!(
+            look(notice(&Notice::QueueDeleted { minutes: 3 }, 5, &i)),
+            vec!["2 lynx_replay_sky"]
+        );
+        assert_eq!(
+            look(notice(&Notice::QueueFinished { ai_enabled: true }, 5, &i)),
+            vec!["1 lynx_radio_white"]
+        );
+        assert_eq!(
+            look(vote("T", "https://x", 1, 3, 7, "tg", &i)),
+            vec!["2 lynx_skip_emerald"]
+        );
+        assert_eq!(look(radio_on(3, 7, &i)), vec!["2 lynx_radio_red", "1 lynx_panel_white"]);
+        let picking = RadioPicking {
+            voice_channel_id: 7,
+            prompt: None,
+            first_playing: false,
+            steps: &[],
+            job: "j",
+        };
+        assert_eq!(
+            look(radio_picking(&picking, &i)),
+            vec!["4 lynx_cancel_white", "1 lynx_panel_white"]
+        );
+        assert_eq!(look(jam(7, "c", &i)), vec!["5 lynx_link_white"]);
+        assert_eq!(look(add_main("https://d", &i)), vec!["5 lynx_link_white"]);
+        let added = AddedList {
+            name: None,
+            url: None,
+            origin: TrackOrigin::Other,
+            count: 1,
+            total_ms: 0,
+            thumbnail: None,
+            preview: vec![],
+            truncated: false,
+            voice_channel_id: 3,
+        };
+        assert_eq!(
+            look(added_list(&added, &i)),
+            vec!["2 lynx_queue_amber", "1 lynx_panel_white"]
+        );
     }
 
     #[test]

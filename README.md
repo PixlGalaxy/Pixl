@@ -25,6 +25,8 @@ docker compose up -d --build
 
 All settings are environment variables; see [.env.example](.env.example).
 
+On startup the main bot uploads its own button icons as application emojis of its Discord application (16 small PNGs from [assets/emojis/](assets/emojis/), only the missing ones; nothing is ever deleted). If that fails, the buttons simply show text only. To change the icons, edit and run `scripts/gen-emojis.mjs`; emojis are matched by name, so delete the old one in the Developer Portal (Emojis tab) for a redrawn icon to be uploaded again.
+
 ## Development
 
 The Rust toolchain runs inside Docker, so nothing needs to be installed on the host:
