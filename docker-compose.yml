@@ -1,0 +1,14 @@
+services:
+  lynx:
+    image: ghcr.io/pixlgalaxy/lynx:latest
+    build: .
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - lynx-data:/data
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+volumes:
+  lynx-data:

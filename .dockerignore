@@ -1,0 +1,9 @@
+target
+web/node_modules
+web/dist
+data
+plan
+.env
+*.env
+certs
+.git

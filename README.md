@@ -1,0 +1,41 @@
+# Lynx
+
+A Discord music bot with a built-in panel that opens as a Discord Activity.
+
+- Play from YouTube, YouTube Music, Spotify and anything yt-dlp supports, streamed without downloading whole files.
+- Manage the queue, seek, read synced lyrics and change settings from the Activity panel.
+- Resumes where it left off after a restart, as long as someone is still in the voice channel.
+- Can run several bots at once, so different voice channels in the same server each get their own music.
+- Optional AI radio (`/ai`) based on your listening history, powered by your own Ollama server.
+
+> Work in progress: this branch is a full rewrite of the previous PIXL bot.
+
+## Requirements
+
+- Docker
+- A Discord application for the main bot (and optionally more applications used as voice-only nodes)
+- A public HTTPS URL for the Activity panel
+
+## Running
+
+```sh
+cp .env.example .env   # fill in your tokens and URLs
+docker compose up -d --build
+```
+
+All settings are environment variables; see [.env.example](.env.example).
+
+## Development
+
+The Rust toolchain runs inside Docker, so nothing needs to be installed on the host:
+
+```sh
+scripts/cargo.sh check
+scripts/cargo.sh test
+```
+
+The panel lives in [web/](web/) (React, Vite, Tailwind).
+
+## License
+
+TBD
