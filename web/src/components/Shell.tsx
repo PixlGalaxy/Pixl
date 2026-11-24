@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppFooter } from './AppFooter'
 import { applyTheme, isDark, originOf } from '../lib/appearance'
-import { onOpenAccount } from '../lib/events'
+import { onOpenAccount, onShowInQueue } from '../lib/events'
 import { cx } from '../lib/format'
 import { useLynx } from '../lib/lynx'
 import { HelpScreen } from '../screens/Help'
@@ -78,6 +78,7 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
   const [accountOpen, setAccountOpen] = useState(false)
   const closeAccount = useCallback(() => setAccountOpen(false), [])
   useEffect(() => onOpenAccount(() => setAccountOpen(true)), [])
+  useEffect(() => onShowInQueue(() => setTab('queue')), [setTab])
   const navRef = useRef<HTMLElement>(null)
   useEffect(() => {
     window.scrollTo({ top: 0 })

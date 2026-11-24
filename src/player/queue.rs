@@ -8,7 +8,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
-    sources::TrackInfo,
+    sources::{TrackInfo, TrackSource},
     store::{LoopMode, SessionTrack},
 };
 
@@ -40,6 +40,8 @@ pub struct QueueEntry {
     pub requester: Requester,
     /// AI radio: why this track was picked (`{ key, params }`), shown by the panel.
     pub reason: Option<serde_json::Value>,
+    /// The playlist / album this entry was added from (None for single tracks and radio picks).
+    pub source: Option<TrackSource>,
 }
 
 impl QueueEntry {
@@ -49,7 +51,13 @@ impl QueueEntry {
             info,
             requester,
             reason: None,
+            source: None,
         }
+    }
+
+    pub fn with_source(mut self, source: Option<TrackSource>) -> Self {
+        self.source = source;
+        self
     }
 
     pub fn to_session(&self) -> SessionTrack {
@@ -57,6 +65,7 @@ impl QueueEntry {
             uid: self.uid.to_string(),
             info: self.info.clone(),
             requested_by: self.requester.id,
+            source: self.source.clone(),
         }
     }
 
@@ -66,6 +75,7 @@ impl QueueEntry {
             info: t.info.clone(),
             requester: Requester::id_only(t.requested_by),
             reason: None,
+            source: t.source.clone(),
         }
     }
 }
@@ -571,5 +581,22 @@ mod tests {
         let back = QueueEntry::from_session(&e.to_session());
         assert_eq!(back.uid, e.uid);
         assert_eq!(back.requester.id, 5);
+        assert!(back.source.is_none(), "single tracks have no source");
+
+        let list = Arc::new(crate::sources::ListOrigin {
+            name: "Mix".into(),
+            image: None,
+            platform: crate::sources::SourcePlatform::Spotify,
+            url: "https://open.spotify.com/playlist/x".into(),
+            total: 64,
+        });
+        let e = e.with_source(Some(TrackSource {
+            list: list.clone(),
+            index: 18,
+        }));
+        let back = QueueEntry::from_session(&e.to_session());
+        let src = back.source.expect("source survives the session");
+        assert_eq!((src.index, src.list.total), (18, 64));
+        assert!(Arc::ptr_eq(&src.list, &list), "no copy in memory");
     }
 }

@@ -1,0 +1,50 @@
+/* Stacked list covers ("CDs") of the Queue tab (QueueSourcesCard). Each .cd gets its slot through
+   custom properties: --x / --xh (offset stacked / spread), --s (scale), --o (opacity). */
+.cd-stack {
+  position: relative;
+  height: 150px;
+  width: var(--w);
+  flex-shrink: 0;
+  transition: width 450ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.cd-stack:hover,
+.cd-stack:focus-within {
+  width: var(--wh);
+}
+.cd {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 150px;
+  height: 150px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  cursor: pointer;
+  transform: translateX(var(--x)) scale(var(--s));
+  transform-origin: left center;
+  opacity: var(--o);
+  box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.45);
+  transition:
+    transform 450ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 450ms ease,
+    box-shadow 200ms ease;
+}
+.cd-stack:hover .cd,
+.cd-stack:focus-within .cd {
+  transform: translateX(var(--xh)) scale(var(--s));
+  opacity: 1;
+}
+.cd-front {
+  box-shadow:
+    0 0 0 2px var(--accent-500),
+    0 10px 24px -10px rgba(0, 0, 0, 0.55);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cd-stack,
+  .cd {
+    transition: none;
+  }
+}

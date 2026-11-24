@@ -171,6 +171,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/queue/clear", post(queue::clear))
         .route("/api/tracks/feedback", post(queue::feedback))
         .route("/api/playlists", get(playlists::list))
+        .route("/api/playlists/save", post(playlists::save))
         .route("/api/playlists/{id}", delete(playlists::remove))
         .route("/api/playlists/{id}/pin", post(playlists::pin))
         .route("/api/playlists/{id}/tracks", get(playlists::tracks))

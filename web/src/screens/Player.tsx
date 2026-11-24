@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next'
 import { AddBox } from '../components/AddBox'
 import { AiProgress } from '../components/AiProgress'
 import { JamCard, JamJoinPrompt } from '../components/JamCard'
+import { NowPlayingSource, SourceDot } from '../components/ListSource'
 import { AiChip, AiTag, TrackReasonLine } from '../components/TrackBits'
 import { InfoPopover } from '../components/InfoPopover'
 import { Artwork, Avatar, Button, Card, Chip, ConfirmButton, HelpTitle, IconButton, Notice, Slider, Tag } from '../components/ui'
@@ -228,6 +229,7 @@ function UpNextPreview({ state, onOpenQueue }: { state: PlayerState; onOpenQueue
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold">{tr.title}</div>
                 <div className="mt-0.5 truncate text-xs text-muted">
+                  <SourceDot source={tr.source} />
                   {tr.artists.join(', ')}
                   {tr.reason && <AiTag />}
                 </div>
@@ -287,6 +289,7 @@ export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
             className="mx-auto aspect-square w-full max-w-64 rounded-xl sm:mx-0 sm:size-48 sm:max-w-none"
             iconSize={40}
           />
+          <div className="@container flex min-w-0 flex-1 items-start gap-4">
           <div className="min-w-0 flex-1 space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <span
@@ -320,6 +323,7 @@ export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
               <h2 className="text-xl font-semibold tracking-tight break-words">{track.title}</h2>
               <p className="mt-0.5 text-sm text-muted">{track.artists.join(', ') || t('player.unknownArtist')}</p>
             </div>
+            <NowPlayingSource source={track.source} variant="compact" />
             <div className="flex items-center gap-2 text-xs text-muted">
               <Avatar url={track.requestedBy.avatarUrl} name={track.requestedBy.name} className="size-5" />
               <span className="truncate">{t(track.reason ? 'player.requestedByAi' : 'player.requestedBy', { name: track.requestedBy.name })}</span>
@@ -332,6 +336,8 @@ export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
               </div>
             )}
             {track.reason && <TrackReasonLine reason={track.reason} />}
+          </div>
+          <NowPlayingSource source={track.source} variant="large" />
           </div>
         </div>
 

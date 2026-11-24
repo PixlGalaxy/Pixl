@@ -1,5 +1,5 @@
 import { ExternalLink, ListPlus } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
 import { openExternal } from '../lib/discord'
@@ -24,34 +24,45 @@ export function platformOf(url: string): string | null {
 
 const MENU_WIDTH = 224
 
+/** Class of one item of a [`FloatingMenu`]. */
+export const menuItemCls =
+  'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none disabled:opacity-50'
+
 /**
- * A song title that opens a small menu on click: add it to the queue (when allowed) or open it
- * on its platform. The menu is `position: fixed`, so cards with `overflow-hidden` don't clip it.
+ * A small menu below (or above, near the bottom) an anchor element. `position: fixed`, so cards
+ * with `overflow-hidden` don't clip it (render it outside transformed elements). Closes on outside click, Escape (focus goes back to the
+ * anchor), scroll and resize.
  */
-export function TrackMenu({ url, title, children }: { url: string; title: string; children: ReactNode }) {
-  const { t } = useTranslation()
-  const { channelId, channelPermissions: permissions, run } = useLynx()
-  const anchor = useRef<HTMLButtonElement>(null)
+export function FloatingMenu({
+  anchor,
+  label,
+  onClose,
+  width = MENU_WIDTH,
+  children,
+}: {
+  anchor: RefObject<HTMLElement | null>
+  label: string
+  onClose: () => void
+  width?: number
+  children: ReactNode
+}) {
   const menu = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
-  const [busy, setBusy] = useState(false)
-  const canAdd = !!channelId && permissions.canAdd
-  const platform = platformOf(url)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
 
   useLayoutEffect(() => {
-    if (!open || !anchor.current) return
+    if (!anchor.current) return
     const r = anchor.current.getBoundingClientRect()
     const height = menu.current?.offsetHeight ?? 96
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - MENU_WIDTH - 8))
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
     const below = r.bottom + 4
     const top = below + height > window.innerHeight - 8 ? Math.max(8, r.top - height - 4) : below
     setPos({ left, top })
-  }, [open])
+  }, [anchor, width])
 
   useEffect(() => {
-    if (!open) return
-    const close = () => setOpen(false)
+    const close = () => closeRef.current()
     const onDown = (e: PointerEvent) => {
       const target = e.target as Node
       if (!menu.current?.contains(target) && !anchor.current?.contains(target)) close()
@@ -72,10 +83,34 @@ export function TrackMenu({ url, title, children }: { url: string; title: string
       window.removeEventListener('resize', close)
       window.removeEventListener('scroll', close, true)
     }
-  }, [open])
+  }, [anchor])
 
-  const item =
-    'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none disabled:opacity-50'
+  return (
+    <div
+      ref={menu}
+      role="menu"
+      aria-label={label}
+      style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999, width }}
+      className="fixed z-50 animate-[pop-in_.12s_ease-out] rounded-xl border border-line bg-surface p-1 shadow-xl"
+    >
+      {children}
+    </div>
+  )
+}
+
+/**
+ * A song title that opens a small menu on click: add it to the queue (when allowed) or open it
+ * on its platform.
+ */
+export function TrackMenu({ url, title, children }: { url: string; title: string; children: ReactNode }) {
+  const { t } = useTranslation()
+  const { channelId, channelPermissions: permissions, run } = useLynx()
+  const anchor = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const canAdd = !!channelId && permissions.canAdd
+  const platform = platformOf(url)
+  const item = menuItemCls
 
   return (
     <>
@@ -90,13 +125,7 @@ export function TrackMenu({ url, title, children }: { url: string; title: string
         {children}
       </button>
       {open && (
-        <div
-          ref={menu}
-          role="menu"
-          aria-label={title}
-          style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999, width: MENU_WIDTH }}
-          className="fixed z-50 animate-[pop-in_.12s_ease-out] rounded-xl border border-line bg-surface p-1 shadow-xl"
-        >
+        <FloatingMenu anchor={anchor} label={title} onClose={() => setOpen(false)}>
           <button
             type="button"
             role="menuitem"
@@ -126,7 +155,7 @@ export function TrackMenu({ url, title, children }: { url: string; title: string
             <ExternalLink size={15} className="shrink-0 text-muted" />
             {platform ? t('trackMenu.openOn', { platform }) : t('trackMenu.openLink')}
           </button>
-        </div>
+        </FloatingMenu>
       )}
     </>
   )

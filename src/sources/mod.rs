@@ -37,7 +37,7 @@ use crate::{
     store::Store,
 };
 use detect::Input;
-pub use lists::{CachedList, ListRef};
+pub use lists::{CachedList, ListOrigin, ListRef, SourcePlatform, StoredSource, TrackSource};
 pub use lyrics::Lyrics;
 pub use startup::{HeadFrom, LateMusic, MetaTiming, PrepareTimings};
 use startup::{MetaLookup, MetaOutcome};
@@ -317,12 +317,37 @@ impl Sources {
         query: &str,
         limit: usize,
         owner: &ProcOwner,
-    ) -> SourceResult<(Resolved, Option<ListRef>)> {
+    ) -> SourceResult<(Resolved, Option<ListRef>, Option<Arc<ListOrigin>>)> {
         let input = self.detect(query).await?;
         let Some(list) = lists::list_ref(&input) else {
-            return Ok((self.resolve_input(input, limit, owner).await?, None));
+            // A yt-dlp set (SoundCloud and others) is a list too, but not a saved one.
+            let set_url = match &input {
+                Input::Url(u) => Some(u.clone()),
+                _ => None,
+            };
+            let r = self.resolve_input(input, limit, owner).await?;
+            let origin = set_url.filter(|_| r.tracks.len() > 1).map(|url| {
+                Arc::new(ListOrigin {
+                    name: r.playlist_name.clone().unwrap_or_default(),
+                    image: r
+                        .image
+                        .clone()
+                        .or_else(|| r.tracks.iter().find_map(|t| t.thumbnail.clone())),
+                    platform: SourcePlatform::of_url(&url),
+                    total: u32::try_from(r.tracks.len()).unwrap_or(u32::MAX),
+                    url,
+                })
+            });
+            return Ok((r, None, origin));
         };
         let c = self.list(&list, false, owner).await?;
+        let origin = Arc::new(ListOrigin {
+            name: c.name.clone().unwrap_or_default(),
+            image: c.image.clone(),
+            platform: list.platform.into(),
+            url: list.url.clone(),
+            total: u32::try_from(c.tracks.len()).unwrap_or(u32::MAX),
+        });
         let mut tracks = c.tracks;
         tracks.truncate(limit.max(1));
         Ok((
@@ -332,6 +357,7 @@ impl Sources {
                 image: c.image,
             },
             Some(list),
+            Some(origin),
         ))
     }
 

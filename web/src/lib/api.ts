@@ -14,6 +14,7 @@ import type {
   PlayerState,
   PlaylistTracks,
   PublicConfig,
+  SavedPlaylist,
   SavedPlaylists,
   SearchResult,
   Taste,
@@ -185,6 +186,9 @@ export const api = {
       'POST',
       trackUrl ? { channelId, trackUrl } : { channelId },
     ),
+
+  /** Save a list (a queue entry's `source.url`) to your playlists, like queueing it would. */
+  savePlaylist: (url: string) => request<{ playlist: SavedPlaylist }>('/playlists/save', 'POST', { url }),
 
   // AI radio
   aiStart: (channelId: string, prompt?: string) =>
