@@ -31,7 +31,7 @@ export type AuthResult = {
   locale: string | null
 }
 
-export type ReasonKey = 'because_you_like' | 'similar_listeners' | 'your_favorite' | 'matches_prompt'
+export type ReasonKey = 'because_you_like' | 'similar_listeners' | 'your_favorite' | 'matches_prompt' | 'listener_favorite'
 export type TrackReason = { key: ReasonKey; params: Record<string, string> }
 
 export type Origin = 'youtube' | 'youtube_music' | 'spotify' | 'other'

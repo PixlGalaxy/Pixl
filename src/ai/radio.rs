@@ -113,6 +113,7 @@ pub(crate) async fn run(
     let mut first_sent = false;
     rescore(&mut cands, &taste, &prompt_genres, cold, prompt.is_some());
     cands = candidates::filter_dedupe(cands, &filters);
+    cands = focus(cands, &prompt_genres, n);
     if let Some(tx) = first.take() {
         let playable: Vec<Candidate> = cands.iter().filter(|c| c.info.is_some()).cloned().collect();
         match candidates::interleave(playable, &quotas).into_iter().next() {
@@ -164,6 +165,7 @@ pub(crate) async fn run(
     rescore(&mut cands, &taste, &prompt_genres, cold, prompt.is_some());
     cands = candidates::filter_dedupe(cands, &filters);
     cands.retain(|c| !excluded_idents.contains(&c.ident()));
+    cands = focus(cands, &prompt_genres, n);
     if cands.is_empty() {
         return if first_sent {
             Ok(Vec::new())
@@ -246,20 +248,45 @@ async fn member_taste(store: &Store, user: u64) -> anyhow::Result<TasteVector> {
     Ok(compute_vector(&store.taste_inputs(user).await?, now_secs()))
 }
 
+/// Broader genres of the requested ones that were not requested themselves.
+fn related_genres(genres: &[&'static str]) -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for g in genres.iter().flat_map(|g| taxonomy::related(g).iter().copied()) {
+        if !genres.contains(&g) && !out.contains(&g) {
+            out.push(g);
+        }
+    }
+    out
+}
+
+/// The requested genres (first ones heavier) plus their broader genres at a fraction of the
+/// weight, so a track tagged only "latin" still scores a bit for "latin pop".
 fn prompt_vector(genres: &[&'static str]) -> TasteVector {
-    genres
+    let mut v: TasteVector = genres
         .iter()
         .enumerate()
         .map(|(i, g)| (g.to_string(), 1.0 / (1.0 + i as f64 * 0.3)))
-        .collect()
+        .collect();
+    for g in related_genres(genres) {
+        v.entry(g.to_string()).or_insert(0.3);
+    }
+    v
 }
 
+/// With recognised prompt genres, drop the candidates that do not match them (see
+/// [`candidates::focus_on_prompt`]).
+fn focus(cands: Vec<Candidate>, prompt_genres: &[&'static str], n: usize) -> Vec<Candidate> {
+    candidates::focus_on_prompt(cands, prompt_genres, &related_genres(prompt_genres), n)
+}
+
+/// Scores against the prompt (when given) and the listeners' taste. With a prompt, the prompt
+/// dominates and the taste only breaks ties between prompt-matching tracks.
 fn rescore(cands: &mut [Candidate], taste: &TasteVector, prompt_genres: &[&'static str], cold: bool, prompt: bool) {
     let pv = prompt_vector(prompt_genres);
     let target = match (pv.is_empty(), cold) {
         (true, _) => taste.clone(),
-        (false, true) => taste::blend(&[(1.0, &pv), (0.3, taste)]),
-        (false, false) => taste::blend(&[(1.5, &pv), (1.0, taste)]),
+        (false, true) => taste::blend(&[(1.0, &pv), (0.2, taste)]),
+        (false, false) => taste::blend(&[(2.0, &pv), (0.6, taste)]),
     };
     candidates::normalize_bases(cands);
     candidates::score_all(cands, &target, if prompt { 1.0 } else { 0.0 });
@@ -304,26 +331,29 @@ async fn local_candidates(
     let now = now_secs();
     let mut out = Vec::new();
 
-    // Favorites: most played, recently played, liked.
+    // Favorites: most played, recently played, liked. Only the owner's own ones are "your
+    // favorite"; tracks that come from the other blended listeners say so (without naming them).
     let liked: Vec<TrackId> = store.liked_tracks(req.owner_id, 50).await?;
     let liked_set: HashSet<TrackId> = liked.iter().copied().collect();
     let mut in_history = HashSet::new();
     for (i, m) in members.iter().enumerate() {
         for h in store.history_entries(*m, if i == 0 { 80 } else { 30 }).await? {
-            in_history.insert(h.track.id);
+            // A track both the owner and a listener play stays the owner's favorite.
+            if !in_history.insert(h.track.id) && i > 0 {
+                continue;
+            }
             let mut base = (1.0 + f64::from(h.play_count).ln()) * recency(h.last_played, now, FAVORITE_HALF_LIFE_DAYS);
             if liked_set.contains(&h.track.id) {
                 base *= 1.5;
             }
-            if i > 0 {
+            // The owner's like makes it theirs even when only a listener played it.
+            let reason = if i == 0 || liked_set.contains(&h.track.id) {
+                ReasonKey::YourFavorite
+            } else {
                 base *= 0.7;
-            }
-            out.extend(from_catalog(
-                h.track,
-                Source::Favorite,
-                base,
-                Reason::new(ReasonKey::YourFavorite),
-            ));
+                ReasonKey::ListenerFavorite
+            };
+            out.extend(from_catalog(h.track, Source::Favorite, base, Reason::new(reason)));
         }
     }
     let liked_only: Vec<TrackId> = liked.into_iter().filter(|id| !in_history.contains(id)).collect();
@@ -404,9 +434,10 @@ async fn popular_candidates(
     };
     let score: HashMap<TrackId, f64> = ranked.iter().copied().collect();
     let ids: Vec<TrackId> = ranked.iter().map(|(id, _)| *id).collect();
+    // Overall popular tracks (no genre recognised in the prompt) do not "match" the prompt.
     let reason = match prompt {
-        Some(p) => Reason::matches_prompt(p),
-        None => Reason::new(ReasonKey::SimilarListeners),
+        Some(p) if !genres.is_empty() => Reason::matches_prompt(p),
+        _ => Reason::new(ReasonKey::SimilarListeners),
     };
     let mut out: Vec<Candidate> = queries::catalog_tracks(store, &ids)
         .await?
@@ -634,6 +665,7 @@ async fn pick_with_model(
                 "source": match c.source {
                     Source::Discover => "similar listeners",
                     Source::Similar => "similar to favorites",
+                    Source::Favorite if c.reason.key == ReasonKey::ListenerFavorite => "listener favorite",
                     Source::Favorite => "favorite",
                     Source::Prompt => "matches request",
                 },
