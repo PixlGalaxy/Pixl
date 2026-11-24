@@ -8,7 +8,6 @@
 
 use std::{
     collections::VecDeque,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -28,9 +27,9 @@ use super::{
     ApiState,
 };
 use crate::{
-    discord::play::{self, PlayError, RESOLVE_TIMEOUT},
+    discord::play,
     procs::ProcOwner,
-    sources::{CachedList, ListOrigin, ListRef, Resolved, TrackInfo},
+    sources::{CachedList, ListRef, Resolved, TrackInfo},
     store::{NewPlaylist, SaveOutcome, SavedPlaylist},
 };
 
@@ -227,11 +226,9 @@ impl ApiState {
     /// The list's songs (shared cache, or a fetch; `force` always fetches).
     async fn list_tracks(&self, list: &ListRef, force: bool, guild_id: u64) -> ApiResult<CachedList> {
         let owner = ProcOwner::new(guild_id, 0, None);
-        match tokio::time::timeout(RESOLVE_TIMEOUT, self.app.sources.list(list, force, &owner)).await {
-            Ok(Ok(c)) => Ok(c),
-            Ok(Err(e)) => Err(play_error(PlayError::Source(e))),
-            Err(_) => Err(play_error(PlayError::Timeout)),
-        }
+        play::saved_list_tracks(self.play_ctx(), list, force, &owner)
+            .await
+            .map_err(play_error)
     }
 
     /// Keep the saved name / cover in step with what the platform says now.
@@ -401,43 +398,29 @@ pub async fn add(
     let (p, list) = st.saved_playlist(user, &id).await?;
     st.add_checks(&m, channel).await?;
     let c = st.list_tracks(&list, false, m.guild_id).await?;
-    let origin = Arc::new(ListOrigin {
-        name: c
-            .name
-            .clone()
-            .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| p.name.clone()),
-        image: c.image.clone().or_else(|| p.image_url.clone()),
-        platform: list.platform.into(),
-        url: list.url.clone(),
-        total: u32::try_from(c.tracks.len()).unwrap_or(u32::MAX),
-    });
-    let (tracks, first_index) = match b.track_url.as_deref().map(str::trim) {
+    let req = play_request(&m, channel, "");
+    let played = match b.track_url.as_deref().map(str::trim) {
+        // The whole list: the same path as `/playlist`.
+        None => play::play_saved(st.play_ctx(), req, &p, &list, c).await,
         Some(url) => {
             let i = c
                 .tracks
                 .iter()
                 .position(|t| t.url == url)
                 .ok_or_else(|| ApiError::not_found("That song is no longer in the playlist"))?;
-            (vec![c.tracks[i].clone()], i + 1)
+            let spec = play::ListSpec {
+                origin: play::saved_origin(&p, &list, &c),
+                first_index: u32::try_from(i + 1).unwrap_or(u32::MAX),
+            };
+            let resolved = Resolved {
+                tracks: vec![c.tracks[i].clone()],
+                playlist_name: c.name,
+                image: c.image,
+            };
+            play::play_tracks(st.play_ctx(), req, resolved, Some(spec)).await
         }
-        None => (c.tracks, 1),
-    };
-    let spec = play::ListSpec {
-        origin,
-        first_index: u32::try_from(first_index).unwrap_or(u32::MAX),
-    };
-    let resolved = Resolved {
-        tracks,
-        playlist_name: c.name,
-        image: c.image,
-    };
-    let played = play::play_tracks(st.play_ctx(), play_request(&m, channel, ""), resolved, Some(spec))
-        .await
-        .map_err(play_error)?;
-    if b.track_url.is_none() && st.app.store.history_enabled(user).await.unwrap_or(false) {
-        let _ = st.app.store.touch_playlist(user, p.id).await;
     }
+    .map_err(play_error)?;
     Ok(Json(Added {
         added: played.push.added,
     }))

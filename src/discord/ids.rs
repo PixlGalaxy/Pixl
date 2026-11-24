@@ -51,6 +51,50 @@ impl NpAction {
     }
 }
 
+/// How long the `/playlist` picker buttons stay usable.
+pub const PICKER_TTL_SECS: i64 = 5 * 60;
+
+/// The components of the `/playlist` picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickAction {
+    Previous,
+    Next,
+    Select,
+    /// The "Jump to a playlist" menu (the chosen id comes in the interaction's values).
+    Jump,
+}
+
+impl PickAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Previous => "p",
+            Self::Next => "n",
+            Self::Select => "s",
+            Self::Jump => "j",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "p" => Self::Previous,
+            "n" => Self::Next,
+            "s" => Self::Select,
+            "j" => Self::Jump,
+            _ => return None,
+        })
+    }
+}
+
+/// Which saved playlists the picker pages through (re-read from the clicking user's lists on
+/// every click, so the custom id never carries a list of ids).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickScope {
+    /// Every saved playlist of the user.
+    All,
+    /// The user's saved playlists with the same name as the shown one.
+    SameName,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CustomId {
     /// Player buttons. `track` is the short tag of the entry the message was made for (or `NO_TRACK`).
@@ -73,6 +117,15 @@ pub enum CustomId {
     StopRadio { voice_channel_id: u64 },
     /// "Cancel" on the "Radio is picking songs" card; `job` is the job uuid (simple form).
     CancelRadio { voice_channel_id: u64, job: String },
+    /// `/playlist` picker: `shown` is the saved playlist id on screen, `user_id` ran the command
+    /// at `issued` (unix seconds).
+    PlaylistPick {
+        action: PickAction,
+        shown: i64,
+        scope: PickScope,
+        user_id: u64,
+        issued: i64,
+    },
 }
 
 impl CustomId {
@@ -103,6 +156,19 @@ impl CustomId {
             Self::StartRadio { voice_channel_id } => format!("ai:{voice_channel_id}"),
             Self::StopRadio { voice_channel_id } => format!("rs:{voice_channel_id}"),
             Self::CancelRadio { voice_channel_id, job } => format!("rc:{voice_channel_id}:{job}"),
+            Self::PlaylistPick {
+                action,
+                shown,
+                scope,
+                user_id,
+                issued,
+            } => {
+                let scope = match scope {
+                    PickScope::All => "a",
+                    PickScope::SameName => "n",
+                };
+                format!("pl:{}:{shown}:{scope}:{user_id}:{issued}", action.as_str())
+            }
         }
     }
 
@@ -141,6 +207,17 @@ impl CustomId {
             "rc" => Self::CancelRadio {
                 voice_channel_id: parts.next()?.parse().ok()?,
                 job: parts.next()?.to_owned(),
+            },
+            "pl" => Self::PlaylistPick {
+                action: PickAction::parse(parts.next()?)?,
+                shown: parts.next()?.parse().ok()?,
+                scope: match parts.next()? {
+                    "a" => PickScope::All,
+                    "n" => PickScope::SameName,
+                    _ => return None,
+                },
+                user_id: parts.next()?.parse().ok()?,
+                issued: parts.next()?.parse().ok()?,
             },
             _ => return None,
         };
@@ -182,6 +259,20 @@ mod tests {
                 voice_channel_id: u64::MAX,
                 job: uuid::Uuid::new_v4().simple().to_string(),
             },
+            CustomId::PlaylistPick {
+                action: PickAction::Next,
+                shown: 17,
+                scope: PickScope::SameName,
+                user_id: 123_456_789_012_345_678,
+                issued: 1_700_000_000,
+            },
+            CustomId::PlaylistPick {
+                action: PickAction::Jump,
+                shown: i64::MAX,
+                scope: PickScope::All,
+                user_id: u64::MAX,
+                issued: i64::MAX,
+            },
         ] {
             let s = id.encode();
             assert!(s.len() <= 100);
@@ -190,6 +281,9 @@ mod tests {
         assert_eq!(CustomId::parse("np:nope:1:a"), None);
         assert_eq!(CustomId::parse("re:1:extra"), None);
         assert_eq!(CustomId::parse("garbage"), None);
+        assert_eq!(CustomId::parse("pl:x:1:a:1:2"), None, "unknown picker action");
+        assert_eq!(CustomId::parse("pl:s:1:z:1:2"), None, "unknown scope");
+        assert_eq!(CustomId::parse("pl:s:1:a:1:2:3"), None, "extra part");
         assert_eq!(track_tag(&uuid::Uuid::nil()).len(), 12);
     }
 }

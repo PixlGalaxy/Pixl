@@ -457,6 +457,10 @@
         "description": "Joins your voice channel and plays a link (YouTube, YouTube Music, Spotify track, album or playlist) or the best match for a search.",
         "example": "/play query:paper lanterns night drive"
       },
+      "playlist": {
+        "description": "Plays one of your saved playlists. Start typing to pick one; leave the name empty to browse them all with their covers. Lists with the same name open a picker so you can choose the right one.",
+        "example": "/playlist name:Road trip"
+      },
       "pause": {
         "description": "Pauses the current song.",
         "example": "/pause"

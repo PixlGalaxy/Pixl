@@ -44,6 +44,9 @@ pub fn definitions(i18n: &I18n, entry_point: bool, ai: bool) -> Value {
     let mut play_query = opt(STRING, "query", d("bot.cmd.play.query"), true);
     play_query["autocomplete"] = json!(true);
     play_query["max_length"] = json!(300);
+    let mut playlist_name = opt(STRING, "name", d("bot.cmd.playlist.name"), false);
+    playlist_name["autocomplete"] = json!(true);
+    playlist_name["max_length"] = json!(100);
     let mut from = opt(INTEGER, "from", d("bot.cmd.move.from"), true);
     from["min_value"] = json!(1);
     let mut to = opt(INTEGER, "to", d("bot.cmd.move.to"), true);
@@ -62,6 +65,7 @@ pub fn definitions(i18n: &I18n, entry_point: bool, ai: bool) -> Value {
 
     let mut list = vec![
         cmd("play", i18n, vec![play_query]),
+        cmd("playlist", i18n, vec![playlist_name]),
         cmd("pause", i18n, vec![]),
         cmd("resume", i18n, vec![]),
         cmd("skip", i18n, vec![]),
@@ -259,6 +263,7 @@ mod tests {
             names,
             vec![
                 "play",
+                "playlist",
                 "pause",
                 "resume",
                 "skip",
@@ -295,7 +300,11 @@ mod tests {
             (Some(4), Some(2))
         );
         assert_eq!(list[0]["options"][0]["autocomplete"], true);
-        assert_eq!(list[12]["options"][0]["max_value"], 100);
+        assert_eq!(list[1]["options"][0]["name"], "name");
+        assert_eq!(list[1]["options"][0]["autocomplete"], true);
+        assert_eq!(list[1]["options"][0]["required"], false, "no name: browse every saved list");
+        assert_eq!(list[13]["name"], "volume");
+        assert_eq!(list[13]["options"][0]["max_value"], 100);
 
         // Nodes get the same commands without the entry point.
         let node = definitions(&i18n, false, false);

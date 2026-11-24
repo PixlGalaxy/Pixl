@@ -50,6 +50,7 @@ pub const EMOJIS: &[(&str, &[u8])] = &[
     emoji!("lynx_dislike_white"),
     emoji!("lynx_panel_white"),
     emoji!("lynx_cancel_white"),
+    emoji!("lynx_select_white"),
 ];
 
 /// The lucide icon of a button.
@@ -69,6 +70,8 @@ pub enum Icon {
     Replay,
     Radio,
     Cancel,
+    /// A check mark (Select on the playlist picker).
+    Select,
 }
 
 impl Icon {
@@ -88,6 +91,7 @@ impl Icon {
             Self::Replay => "replay",
             Self::Radio => "radio",
             Self::Cancel => "cancel",
+            Self::Select => "select",
         }
     }
 
@@ -101,6 +105,8 @@ impl Icon {
             Self::Jam => "violet",
             Self::Previous | Self::Next => "slate",
             Self::Like | Self::Dislike | Self::Panel | Self::Cancel => "white",
+            // Only shipped for colored buttons.
+            Self::Select => "emerald",
         }
     }
 
@@ -342,6 +348,7 @@ mod tests {
             (Icon::Dislike, Danger, "lynx_dislike_white"),
             (Icon::Panel, Primary, "lynx_panel_white"),
             (Icon::Cancel, Danger, "lynx_cancel_white"),
+            (Icon::Select, Primary, "lynx_select_white"),
         ];
         for (icon, style, name) in cases {
             assert_eq!(icon.emoji_name(style), Some(name), "{icon:?} on {style:?}");

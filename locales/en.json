@@ -36,6 +36,7 @@
       "jam": "Invite to jam",
       "previous": "Previous",
       "next": "Next",
+      "select": "Select",
       "open_invite": "Open invite",
       "open_jam": "Open jam link",
       "replay": "Play it again",
@@ -245,6 +246,12 @@
         "body": "{user} turned the radio off. The songs already in the queue keep playing."
       }
     },
+    "playlist": {
+      "pick_title": "Select the playlist",
+      "jump": "Jump to a playlist",
+      "songs": "{count} songs",
+      "no_match": "No saved playlist matches {query}."
+    },
     "history_off": {
       "title": "Your history is turned off",
       "body": "Like, Dislike and the radio use your listening history. Turn it on in the panel, under Privacy."
@@ -295,6 +302,10 @@
       "jam_host_only": { "title": "Only the jam host channel can change the music.", "body": "The host of this jam lets only people in {channel} edit the shared queue." },
       "rate_limited": { "title": "Slow down.", "body": "You are doing that too often. Try again in a minute." },
       "vote_not_eligible": { "title": "Deafened listeners can't vote to skip.", "body": "Undeafen to vote, or ask someone with control to skip." },
+      "playlist_none": { "title": "You have no saved playlists yet.", "body": "Playlists are saved automatically when you `/play` a playlist or album link, or from the Playlists tab of the panel." },
+      "playlist_not_yours": { "title": "This selection is not yours.", "body": "Run `/playlist` to pick one of your own saved playlists." },
+      "playlist_expired": { "title": "This selection expired.", "body": "Run `/playlist` again." },
+      "playlist_gone": { "title": "That playlist is no longer saved.", "body": "Run `/playlist` again to pick another one." },
       "settings_unavailable": { "title": "Lynx could not check this server's settings.", "body": "Please try again in a moment." }
     },
     "reply": {
@@ -320,6 +331,10 @@
       "play": {
         "description": "Play a song, a playlist or a search",
         "query": "Link or song name"
+      },
+      "playlist": {
+        "description": "Play one of your saved playlists",
+        "name": "Name of a saved playlist (leave it empty to browse them)"
       },
       "pause": { "description": "Pause the music" },
       "resume": { "description": "Resume the music" },

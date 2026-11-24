@@ -2,6 +2,7 @@
 //! Every command acts on the player of the user's current voice channel.
 
 use std::{
+    collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -10,16 +11,20 @@ use std::{
 };
 
 use serenity::{
-    all::{CommandDataOptionValue, CommandInteraction, ComponentInteraction, Interaction, InteractionId, Member, User},
+    all::{
+        CommandDataOptionValue, CommandInteraction, ComponentInteraction, ComponentInteractionDataKind, Interaction,
+        InteractionId, Member, User,
+    },
     http::Http,
 };
 use tracing::{debug, warn};
 
 use super::{
-    ids::{track_tag, CustomId, NpAction, QUEUE_BUTTONS_TTL_SECS},
+    ids::{track_tag, CustomId, NpAction, PickAction, PickScope, QUEUE_BUTTONS_TTL_SECS},
     play::{self, PlayCtx, PlayError, PlayRequest, Played},
     radio::{self as radio_ui, RadioCtx, RadioForm},
     respond::{self, actor},
+    saved,
     ui::{
         self, bare_callback, callback,
         cards::{self, Tone, TrackCard, PLAYLIST_PREVIEW, QUEUE_PAGE_SIZE},
@@ -30,8 +35,9 @@ use super::{
 use crate::{
     perms::{can, can_jam, Action, Decision, Deny, JamAction},
     player::{jam::CreateRefused, Entry, PlayerHandle, PlayerSnapshot, QueueEntry, Requester, Restore, SkipOutcome},
-    sources::{SourceError, TrackInfo},
-    store::{now_secs, Feedback, GuildSettings, LoopMode},
+    procs::ProcOwner,
+    sources::{ListRef, SourceError, TrackInfo},
+    store::{now_secs, Feedback, GuildSettings, LoopMode, SavedPlaylist},
 };
 
 const AUTOCOMPLETE_TIMEOUT: Duration = Duration::from_millis(2500);
@@ -368,6 +374,7 @@ async fn command(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
     }
     let msg = match cmd.data.name.as_str() {
         "play" => play(&inv, &str_opt(cmd, "query").unwrap_or_default()).await,
+        "playlist" => playlist(&inv, str_opt(cmd, "name")).await,
         "pause" => pause(&inv).await,
         "resume" => resume(&inv).await,
         "skip" => skip(&inv, None).await,
@@ -437,6 +444,12 @@ async fn autocomplete(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
                     _ => Vec::new(),
                 }
             }
+        }
+        Some(opt) if cmd.data.name == "playlist" => {
+            let user = cmd.user.id.get();
+            tokio::time::timeout(AUTOCOMPLETE_TIMEOUT, playlist_choices(lynx, user, opt.value))
+                .await
+                .unwrap_or_default()
         }
         _ => Vec::new(),
     };
@@ -639,6 +652,199 @@ fn eta_ms(snap: &PlayerSnapshot, position: usize) -> Option<u64> {
         .map(|e| e.info.duration_ms)
         .sum();
     Some(current_left + before?)
+}
+
+// ---------------------------------------------------------------------------
+// /playlist
+// ---------------------------------------------------------------------------
+
+/// The caller's saved playlists (pinned first, then most recently used).
+async fn saved_lists(inv: &Inv<'_>) -> Result<Vec<SavedPlaylist>, Message> {
+    inv.lynx.store.playlists(inv.user_id).await.map_err(|e| {
+        warn!(error = %e, "could not read saved playlists");
+        inv.err("generic", &[])
+    })
+}
+
+/// Song counts the shared list cache knows for `lists` (nothing is fetched).
+async fn cached_counts(lynx: &Lynx, lists: &[&SavedPlaylist]) -> HashMap<i64, usize> {
+    let mut out = HashMap::new();
+    for p in lists {
+        if let Some(list) = ListRef::parse(&p.url) {
+            if let Some(c) = lynx.sources.cached_list(&list).await {
+                out.insert(p.id, c.tracks.len());
+            }
+        }
+    }
+    out
+}
+
+/// `/playlist` autocomplete: the caller's own saved lists only.
+async fn playlist_choices(lynx: &Lynx, user_id: u64, typed: &str) -> Vec<(String, String)> {
+    let Ok(saved) = lynx.store.playlists(user_id).await else {
+        return Vec::new();
+    };
+    let counts = cached_counts(lynx, &saved::duplicated(&saved)).await;
+    saved::choices(&saved, typed, &counts, &lynx.i18n)
+}
+
+/// `/playlist [name]`: queue the saved list it names, or open the picker (no name, a name shared by
+/// several lists, or one that matches nothing).
+async fn playlist(inv: &Inv<'_>, name: Option<String>) -> Message {
+    let saved = match saved_lists(inv).await {
+        Ok(s) => s,
+        Err(m) => return m,
+    };
+    match saved::decide(&saved, name.as_deref()) {
+        saved::Request::Empty => inv.err("playlist_none", &[]),
+        saved::Request::Play(p) => play_saved(inv, p.clone(), true).await,
+        saved::Request::Pick {
+            scope,
+            start,
+            unmatched,
+        } => {
+            let cands = saved::candidates(&saved, scope, start.id);
+            let index = cands.iter().position(|p| p.id == start.id).unwrap_or(0);
+            let note = unmatched.then(|| {
+                let query = format!("\"{}\"", ui::escape(&truncate(name.as_deref().unwrap_or_default(), 80)));
+                inv.t("bot.playlist.no_match", &[("query", &query)])
+            });
+            picker_message(inv, &cands, index, scope, now_secs(), note).await
+        }
+    }
+}
+
+async fn picker_message(
+    inv: &Inv<'_>,
+    cands: &[&SavedPlaylist],
+    index: usize,
+    scope: PickScope,
+    issued: i64,
+    note: Option<String>,
+) -> Message {
+    let mut counted: Vec<&SavedPlaylist> = cands.iter().take(saved::MAX_CHOICES).copied().collect();
+    counted.extend(cands.get(index).filter(|_| index >= saved::MAX_CHOICES).copied());
+    let songs = cached_counts(inv.lynx, &counted).await;
+    saved::picker_card(
+        &saved::Picker {
+            candidates: cands,
+            index,
+            scope,
+            user_id: inv.user_id,
+            issued,
+            songs: &songs,
+            note,
+        },
+        &inv.lynx.i18n,
+    )
+}
+
+/// A picker click: only the user who ran `/playlist`, within 5 minutes, on their own lists
+/// (re-read now). Paging and the menu update the message; Select queues the shown list and turns
+/// the picker into the result.
+async fn playlist_pick(inv: &Inv<'_>, c: &ComponentInteraction, pick: (PickAction, i64, PickScope, u64, i64)) {
+    let (action, shown, scope, owner, issued) = pick;
+    let update = |m: Message| m.ephemeral(false).to_callback(callback::UPDATE_MESSAGE);
+    if let Err(key) = saved::check_click(owner, inv.user_id, issued, now_secs()) {
+        let msg = inv.err(key, &[]);
+        return if key == "playlist_expired" {
+            inv.callback(update(msg)).await
+        } else {
+            inv.send(msg).await
+        };
+    }
+    let saved = match saved_lists(inv).await {
+        Ok(s) => s,
+        Err(m) => return inv.send(m).await,
+    };
+    let cands = saved::candidates(&saved, scope, shown);
+    let jump = match &c.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => values.first().map(String::as_str),
+        _ => None,
+    };
+    let Some(index) = saved::navigate(&cands, shown, action, jump) else {
+        return inv.callback(update(inv.err("playlist_gone", &[]))).await;
+    };
+    if action != PickAction::Select {
+        let msg = picker_message(inv, &cands, index, scope, issued, None).await;
+        return inv.callback(update(msg)).await;
+    }
+    let p = cands[index].clone();
+    // Acknowledge now (queueing can take a while), then edit the picker into the result.
+    inv.callback(serde_json::json!({ "type": 6 })).await;
+    let msg = play_saved(inv, p, false).await;
+    respond::edit_original(inv.http, inv.token, &msg.ephemeral(false).to_json()).await;
+}
+
+/// Queue a whole saved playlist like the panel's "Add all to queue": the same checks as `/play`
+/// (voice channel, voice restriction, a free bot, the add budget), then the shared list cache
+/// and [`play::play_saved`]. `defer`: answer "thinking" before the list is read.
+async fn play_saved(inv: &Inv<'_>, p: SavedPlaylist, defer: bool) -> Message {
+    let lynx = inv.lynx;
+    let Some(vc) = inv.user_voice() else {
+        return inv.err("not_in_voice", &[]);
+    };
+    let Some(list) = ListRef::parse(&p.url) else {
+        return inv.err("unsupported", &[]);
+    };
+    if let Err(m) = voice_allowed(inv, vc).await {
+        return m;
+    }
+    if let Err(e) = play::precheck(play_ctx(lynx), inv.guild_id, vc) {
+        return play_error(inv, e);
+    }
+    if !lynx.limits.add.allow(inv.user_id) {
+        return inv.err("rate_limited", &[]);
+    }
+    if defer {
+        inv.defer(false).await;
+    }
+    let owner = ProcOwner::new(inv.guild_id, vc, None);
+    let c = match play::saved_list_tracks(play_ctx(lynx), &list, false, &owner).await {
+        Ok(c) => c,
+        Err(e) => return play_error(inv, e),
+    };
+    let request = PlayRequest {
+        guild_id: inv.guild_id,
+        user_id: inv.user_id,
+        voice_channel_id: vc,
+        query: "",
+        requester: inv.requester(),
+        text_channel: Some(inv.text_channel),
+    };
+    let Played {
+        entries,
+        playlist_name,
+        push: res,
+        ..
+    } = match play::play_saved(play_ctx(lynx), request, &p, &list, c).await {
+        Ok(p) => p,
+        Err(e) => return play_error(inv, e),
+    };
+    let Some(first) = entries.first() else {
+        return inv.err("no_results", &[]);
+    };
+    let added = &entries[..res.added.min(entries.len())];
+    let start = res.first_position.max(1);
+    cards::added_list(
+        &cards::AddedList {
+            name: playlist_name.as_deref(),
+            url: Some(&list.url),
+            origin: first.info.origin,
+            count: res.added,
+            total_ms: added.iter().filter_map(|e| e.info.duration_ms).sum(),
+            thumbnail: first.info.thumbnail.as_deref(),
+            preview: added
+                .iter()
+                .take(PLAYLIST_PREVIEW)
+                .enumerate()
+                .map(|(i, e)| (start + i, card(e)))
+                .collect(),
+            truncated: res.truncated,
+            voice_channel_id: vc,
+        },
+        &lynx.i18n,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1063,6 +1269,13 @@ async fn component(lynx: &Lynx, http: &Http, c: &ComponentInteraction) {
         CustomId::CancelRadio { voice_channel_id, job } => {
             radio_ui::cancel_button(&radio_ctx(&inv), voice_channel_id, &job).await
         }
+        CustomId::PlaylistPick {
+            action,
+            shown,
+            scope,
+            user_id,
+            issued,
+        } => playlist_pick(&inv, c, (action, shown, scope, user_id, issued)).await,
     }
 }
 

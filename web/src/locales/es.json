@@ -457,6 +457,10 @@
         "description": "Entra a tu canal de voz y reproduce un enlace (YouTube, YouTube Music, canción, álbum o playlist de Spotify) o lo que mejor encaje con una búsqueda.",
         "example": "/play query:paper lanterns night drive"
       },
+      "playlist": {
+        "description": "Reproduce una de tus playlists guardadas. Empieza a escribir para elegir una; deja el nombre vacío para verlas todas con su portada. Si varias se llaman igual, se abre un selector para que elijas la correcta.",
+        "example": "/playlist name:Viaje en carretera"
+      },
       "pause": {
         "description": "Pausa la canción actual.",
         "example": "/pause"
