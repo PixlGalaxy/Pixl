@@ -14,7 +14,7 @@ mod player;
 mod playlists;
 mod queue;
 mod search;
-mod session;
+pub(crate) mod session;
 mod settings;
 mod upstream;
 mod ws;
@@ -82,8 +82,10 @@ pub struct Inner {
     pub discord: Arc<dyn Discord>,
     pub sessions: Sessions,
     pub auth_limit: RateLimiter<String>,
-    pub search_limit: RateLimiter<u64>,
-    pub add_limit: RateLimiter<u64>,
+    /// Shared with the Discord commands (`AppState::limits`).
+    pub search_limit: Arc<RateLimiter<u64>>,
+    pub add_limit: Arc<RateLimiter<u64>>,
+    pub ai_limit: Arc<RateLimiter<u64>>,
     /// Saved-playlist refreshes (they reach Spotify / YouTube): see `playlists`.
     pub refresh_limit: playlists::RefreshLimiter,
     pub members: TtlCache<(u64, u64), MemberStatus>,
@@ -119,13 +121,15 @@ impl ApiState {
             .user_agent(crate::sources::USER_AGENT)
             .build()?;
         let store = app.store.clone();
+        let limits = app.limits.clone();
         Ok(Self(Arc::new(Inner {
             app,
             discord,
             sessions: Sessions::new(store, opts.session_ttl, MAX_SESSIONS),
             auth_limit: RateLimiter::new(10, Duration::from_secs(60), 20_000),
-            search_limit: RateLimiter::new(30, Duration::from_secs(60), 20_000),
-            add_limit: RateLimiter::new(15, Duration::from_secs(60), 20_000),
+            search_limit: limits.search.clone(),
+            add_limit: limits.add.clone(),
+            ai_limit: limits.ai.clone(),
             refresh_limit: playlists::RefreshLimiter::new(20_000),
             members: TtlCache::new(MEMBER_TTL, 50_000),
             profiles: TtlCache::new(PROFILE_TTL, 20_000),
@@ -141,8 +145,7 @@ impl ApiState {
     fn sweep(&self) {
         let n = self.sessions.sweep();
         self.auth_limit.sweep();
-        self.search_limit.sweep();
-        self.add_limit.sweep();
+        self.app.limits.sweep();
         self.refresh_limit.sweep();
         self.members.sweep();
         self.profiles.sweep();

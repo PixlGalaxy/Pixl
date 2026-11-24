@@ -398,7 +398,7 @@ async fn autocomplete(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
     let choices = match cmd.data.autocomplete() {
         Some(opt) if cmd.data.name == "play" => {
             let q = opt.value.trim();
-            if q.chars().count() < 2 || q.starts_with("http://") || q.starts_with("https://") {
+            if !suggest(q, &lynx.limits, cmd.user.id.get()) {
                 Vec::new()
             } else {
                 match tokio::time::timeout(AUTOCOMPLETE_TIMEOUT, lynx.sources.search(q, 8)).await {
@@ -410,6 +410,12 @@ async fn autocomplete(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
         _ => Vec::new(),
     };
     respond::respond(http, cmd.id, &cmd.token, &ui::autocomplete_callback(&choices)).await;
+}
+
+/// Whether `/play` autocomplete searches for `q`: a name (not a link) of 2+ characters, within the
+/// user's search budget (shared with the panel; every keystroke is a search). Over it: no suggestions.
+fn suggest(q: &str, limits: &crate::limits::UserLimits, user: u64) -> bool {
+    q.chars().count() >= 2 && !q.starts_with("http://") && !q.starts_with("https://") && limits.search.allow(user)
 }
 
 /// "Title - Artist (3:07)" -> track URL.
@@ -516,6 +522,10 @@ async fn play(inv: &Inv<'_>, query: &str) -> Message {
     // Fail fast (before resolving) when no bot could play here.
     if let Err(e) = play::precheck(play_ctx(lynx), inv.guild_id, vc) {
         return play_error(inv, e);
+    }
+    // Same budget as adding from the panel.
+    if !lynx.limits.add.allow(inv.user_id) {
+        return inv.err("rate_limited", &[]);
     }
     inv.defer(false).await;
 
@@ -879,6 +889,10 @@ async fn lyrics(inv: &Inv<'_>, query: Option<String>) -> Message {
     let lynx = inv.lynx;
     let (track, vc) = match query {
         Some(q) => {
+            // Same budget as searching from the panel.
+            if !lynx.limits.search.allow(inv.user_id) {
+                return inv.err("rate_limited", &[]);
+            }
             inv.defer(false).await;
             match tokio::time::timeout(Duration::from_secs(15), lynx.sources.search(&q, 1)).await {
                 Ok(Ok(mut list)) if !list.is_empty() => (list.swap_remove(0), inv.user_voice()),
@@ -1154,5 +1168,24 @@ async fn replay(inv: &Inv<'_>, original_vc: u64) -> Message {
             )
         }
         Err(m) => m,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::limits::UserLimits;
+
+    #[test]
+    fn autocomplete_spends_the_shared_search_budget() {
+        let limits = UserLimits::default();
+        assert!(!suggest("a", &limits, 1), "too short");
+        assert!(!suggest("https://youtu.be/x", &limits, 1), "links are not searched");
+        for _ in 0..30 {
+            assert!(suggest("song", &limits, 1));
+        }
+        assert!(!suggest("song", &limits, 1), "over the budget: no suggestions");
+        assert!(!limits.search.allow(1), "the panel search shares it");
+        assert!(suggest("song", &limits, 2), "per user");
     }
 }

@@ -238,6 +238,10 @@ pub async fn start(ctx: &RadioCtx<'_>, form: RadioForm) {
     let Some(vc) = ctx.user_voice else {
         return respond_now(ctx.err("not_in_voice", &[])).await;
     };
+    // Shared with the panel: Ollama has one slot for everyone.
+    if !lynx.limits.ai.allow(ctx.user.id) {
+        return respond_now(ctx.err("rate_limited", &[])).await;
+    }
     // Fast answer for history off (no deferral needed).
     if lynx.store.history_enabled(ctx.user.id).await.ok() == Some(false) {
         return respond_now(cards::history_off(vc, ctx.i18n())).await;

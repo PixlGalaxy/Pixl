@@ -217,6 +217,7 @@ async fn harness_with(session_ttl: Duration, ai_enabled: bool) -> Harness {
         bots,
         players,
         ai,
+        limits: Default::default(),
         shutdown: CancellationToken::new(),
     };
     let fake = Arc::new(Fake::default());
@@ -1760,4 +1761,21 @@ async fn saved_playlists_follow_history_and_data_deletion() {
     let (ana, _) = h.login("ana", None).await;
     let (_, v) = h.call("GET", "/api/playlists", Some(&ana), None).await;
     assert_eq!(v["playlists"], json!([]), "Delete my data removes saved playlists");
+}
+
+#[tokio::test]
+async fn ai_radio_starts_are_rate_limited_per_user() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let start = json!({ "channelId": "100" });
+    for _ in 0..5 {
+        let (s, v) = h.call("POST", "/api/ai/start", Some(&ana), Some(start.clone())).await;
+        assert_ne!(s, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    }
+    let (s, v) = h.call("POST", "/api/ai/start", Some(&ana), Some(start)).await;
+    assert_eq!((s, code(&v)), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+    // Shared with the Discord `/ai` (same limiter).
+    assert!(!h.state.app.limits.ai.allow(ANA));
+    assert!(h.state.app.limits.ai.allow(BOSS));
 }

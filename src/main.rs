@@ -3,6 +3,7 @@ mod api;
 mod config;
 mod discord;
 mod i18n;
+mod limits;
 mod perms;
 mod player;
 mod procs;
@@ -44,6 +45,8 @@ pub struct AppState {
     pub bots: Arc<BotRegistry>,
     pub players: PlayerManager,
     pub ai: AiEngine,
+    /// Per-user rate limits shared by the panel and the Discord commands.
+    pub limits: Arc<limits::UserLimits>,
     pub shutdown: CancellationToken,
 }
 
@@ -104,6 +107,7 @@ async fn main() -> Result<()> {
     }
     tokio::spawn(stream_limit_task(sources.clone(), players.clone(), shutdown.clone()));
 
+    let limits = Arc::new(limits::UserLimits::default());
     let state = AppState {
         config: config.clone(),
         store: store.clone(),
@@ -113,9 +117,11 @@ async fn main() -> Result<()> {
         bots: bots.registry.clone(),
         players: players.clone(),
         ai: ai.clone(),
+        limits: limits.clone(),
         shutdown: shutdown.clone(),
     };
     let lynx = Arc::new(Lynx {
+        limits: limits.clone(),
         config: config.clone(),
         i18n,
         store: store.clone(),

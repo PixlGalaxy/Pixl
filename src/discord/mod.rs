@@ -55,6 +55,8 @@ pub struct Lynx {
     pub bots: Arc<BotRegistry>,
     pub players: PlayerManager,
     pub jam: JamInvites,
+    /// Per-user rate limits (shared with the panel API).
+    pub limits: Arc<crate::limits::UserLimits>,
     /// yt-dlp version shown by `/about`.
     pub ytdlp_version: Arc<about::YtdlpVersion>,
     /// Startup finished (guilds loaded, nodes reconciled, sessions resumed).
