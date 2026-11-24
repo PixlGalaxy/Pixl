@@ -261,7 +261,7 @@
       "no_results": { "title": "No se encontró nada.", "body": "Prueba otra búsqueda o pega un enlace." },
       "cannot_connect": { "title": "No puedo entrar a {channel}.", "body": "Necesito los permisos Ver canal, Conectar y Hablar ahí." },
       "join_failed": { "title": "No se pudo conectar al canal de voz.", "body": "Inténtalo de nuevo en un momento." },
-      "command_channel": { "title": "Los comandos de música no están permitidos en este canal.", "body": "Úsalos en {channels}." },
+      "command_channel": { "title": "Los comandos de Lynx no se pueden usar en este canal.", "body": "Úsalos en {channels}." },
       "voice_channel": { "title": "Lynx no puede reproducir en este canal de voz.", "body": "Un administrador limitó la música a {channels}." },
       "outdated": { "title": "Este mensaje ya no está actualizado.", "body": "Esa canción ya no está sonando." },
       "expired": { "title": "Estos botones caducaron.", "body": "Usa `/queue` otra vez." },

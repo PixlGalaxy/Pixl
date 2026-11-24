@@ -6,6 +6,7 @@ import { openExternal, shareJamLink } from '../lib/discord'
 import { cx } from '../lib/format'
 import { useLynx } from '../lib/lynx'
 import type { Jam, JamMember, JamPreview, JamSettings } from '../lib/types'
+import { InfoPopover } from './InfoPopover'
 import { Button, Card, ConfirmButton, IconButton, Notice, Segmented, SectionLabel, SettingRow, Spinner, Tag, Toggle } from './ui'
 
 function memberKey(m: JamMember) {
@@ -56,7 +57,12 @@ function HostSettings({ jam }: { jam: Jam }) {
   }
   return (
     <div className="space-y-3">
-      <SectionLabel>{t('jam.settingsTitle')}</SectionLabel>
+      <SectionLabel>
+        <span className="inline-flex items-center gap-1">
+          {t('jam.settingsTitle')}
+          <InfoPopover k="info.jam.settings" label={t('jam.settingsTitle')} className="normal-case" />
+        </span>
+      </SectionLabel>
       {!can && <p className="px-1 text-xs text-muted">{t('jam.readOnly', { name: jam.hostName })}</p>}
       <SettingRow label={t('jam.allowChannels')} description={t('jam.allowChannelsHint')}>
         <Toggle label={t('jam.allowChannels')} checked={draft.allowChannels} disabled={!can} onChange={(v) => set({ allowChannels: v })} />
@@ -102,6 +108,7 @@ export function JamCard() {
         title={t('jam.title')}
         description={t('jam.startBody')}
         icon={<Users size={18} />}
+        help="info.jam.start"
         actions={
           <Button
             size="xs"
@@ -133,6 +140,7 @@ export function JamCard() {
       title={title}
       description={t('jam.channels', { count: jam.members.length, max: jam.maxMembers })}
       icon={<Users size={18} />}
+      help="info.jam.active"
       actions={
         <Button size="xs" icon={<Share2 size={14} />} disabled={jam.settings.closed} onClick={() => share(jam.id)}>
           {t('jam.share')}
