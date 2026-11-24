@@ -312,27 +312,39 @@ function LyricsCompact({ state }: { state: PlayerState }) {
   )
 }
 
-function QueueRow({ track, index }: { track: Track; index: number }) {
+/** One upcoming song: cover, title over artist (two lines when there is room), duration. */
+function QueueRow({ track, roomy }: { track: Track; roomy: boolean }) {
   const artists = track.artists.join(', ')
   return (
-    <li className="flex min-w-0 items-baseline gap-1.5 text-[clamp(11px,5.5vh,13px)] leading-[1.35]">
-      <span className="w-3 shrink-0 text-right font-mono text-[10px] text-muted tabular-nums">{index + 1}</span>
-      <span className="min-w-0 flex-1 truncate" title={artists ? `${track.title} · ${artists}` : track.title}>
-        {track.title}
-        {artists && <span className="text-muted"> · {artists}</span>}
-        {track.reason && <AiTag />}
+    <li
+      className="flex min-w-0 items-center gap-[clamp(6px,3vw,10px)]"
+      title={artists ? `${track.title} · ${artists}` : track.title}
+    >
+      <Artwork
+        url={track.artworkUrl}
+        className={cx('rounded-md', roomy ? 'size-[clamp(22px,15vh,32px)]' : 'size-[clamp(18px,12vh,24px)]')}
+        iconSize={11}
+      />
+      <span className="flex min-w-0 flex-1 flex-col justify-center leading-tight">
+        <span className="truncate text-[clamp(11px,5.5vh,13px)] font-medium">
+          {track.title}
+          {track.reason && <AiTag />}
+        </span>
+        {roomy && artists && <span className="truncate text-[clamp(10px,4.5vh,11px)] text-muted">{artists}</span>}
       </span>
       <span className="shrink-0 font-mono text-[10px] text-muted tabular-nums">{fmtTime(track.durationMs)}</span>
     </li>
   )
 }
 
+/** Compact queue: the next three songs with their covers, then "+N more". */
 function QueueCompact({ state }: { state: PlayerState }) {
   const { t } = useTranslation()
   const height = useViewportHeight()
-  const rows = height >= 190 ? 4 : 3
+  // Title + artist per row only when the window is tall enough for three two-line rows.
+  const roomy = height >= 170
   const upcoming = state.upcoming
-  const shown = upcoming.slice(0, rows)
+  const shown = upcoming.slice(0, 3)
   const more = upcoming.length - shown.length
   return (
     <>
@@ -340,13 +352,13 @@ function QueueCompact({ state }: { state: PlayerState }) {
       {shown.length === 0 ? (
         <Hint>{t('pip.upNextEmpty')}</Hint>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col justify-center gap-0.5 border-t border-line pt-[clamp(4px,3vh,8px)]">
-          <ol className="flex flex-col gap-[clamp(1px,1vh,4px)]" aria-label={t('queue.upNext')}>
-            {shown.map((tr, i) => (
-              <QueueRow key={tr.uid} track={tr} index={i} />
+        <div className="flex min-h-0 flex-1 flex-col justify-center gap-[clamp(2px,1.5vh,6px)] border-t border-line pt-[clamp(4px,3vh,8px)]">
+          <ol className="flex flex-col gap-[clamp(3px,2vh,6px)]" aria-label={t('queue.upNext')}>
+            {shown.map((tr) => (
+              <QueueRow key={tr.uid} track={tr} roomy={roomy} />
             ))}
           </ol>
-          {more > 0 && <div className="pl-[18px] text-[10px] leading-tight text-muted">{t('pip.more', { count: more })}</div>}
+          {more > 0 && <div className="text-right text-[10px] leading-tight text-muted">{t('pip.more', { count: more })}</div>}
         </div>
       )}
     </>
