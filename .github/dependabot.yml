@@ -31,6 +31,20 @@ updates:
           - "minor"
           - "patch"
 
+  - package-ecosystem: "npm"
+    directory: "/admin/web"
+    target-branch: "Lynx"
+    open-pull-requests-limit: 10
+    schedule:
+      interval: "daily"
+    groups:
+      admin-web-deps:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
   - package-ecosystem: "docker"
     directory: "/"
     target-branch: "Lynx"

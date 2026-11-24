@@ -98,24 +98,30 @@ A bot's own `status` (used by `/health/bots/N`) follows the same rules for that 
 
 ## Admin panel
 
-An operator panel on its own port, separate from the Activity: announce scheduled downtime and other notices, see the health report, and change a few things at runtime. It is **off** unless `ADMIN_PASSWORD` is set.
+An operator panel on its own port, separate from the Activity: status of every bot, an activity summary, the live log, notices / scheduled downtime and a few runtime switches. It is **off** unless `ADMIN_USERNAME` and a password are set. Its code lives in [admin/](admin/): the UI in `admin/web` (its own Vite app) and the backend in `admin/server` (compiled into the bot).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | empty | Turns the admin panel on. At least 12 characters (a shorter one keeps it off, with a warning in the log). Use a long random one. |
+| `ADMIN_USERNAME` | empty | Required to turn the admin panel on. |
+| `ADMIN_PASSWORD` | empty | Plain password, at least 12 characters (shorter keeps the panel off, with a warning in the log). Leading and trailing spaces are ignored. |
+| `ADMIN_PASSWORD_HASH` | empty | Argon2 hash of the password instead of the plain one (wins when both are set). Make it with `docker compose run --rm -T --entrypoint /app/lynx lynx hash-admin-password` (or `lynx hash-admin-password` outside Docker), type the password, and put the output in `.env` **inside single quotes** (it contains `$`). |
 | `ADMIN_HTTP_HOST` / `ADMIN_HTTP_PORT` | `127.0.0.1` / `4001` | Internal admin listener. Only matters without Docker: the image always uses `127.0.0.1:4001`. |
 | `ADMIN_COOKIE_SECURE` | `auto` | `auto`: the session cookie is `Secure` when the request came over HTTPS (`X-Forwarded-Proto: https` from your proxy). `true` / `false` force it. |
 | `ADMIN_WEB_DIR` | empty | Folder of the built admin UI for the backend to serve itself (Windows dev run only; nginx serves it in the image). |
 
 In Docker, nginx serves the admin UI on container port **8081** and proxies only that server's `/api/` to the admin listener; the Activity server on 8080 has no route to it. Publish it in `docker-compose.yml` (`- "81:8081"`, commented out by default). **Keep it off the internet**: publish it on a LAN address only (for example `"192.168.1.10:81:8081"`), or put it behind Nginx Proxy Manager with an access list and HTTPS.
 
-What it offers:
+Sections:
 
-- **Overview**: the `/health` report (bots, shards, ping, servers, database, yt-dlp, Ollama, players), version, commit, uptime and memory.
+- **Overview**: status per bot (Main, Voice A, Voice B... with their names): connection, shards, ping, servers, voice sessions; totals right now (servers, players, players playing music, people listening); services (database, yt-dlp version and update state, Ollama); version, commit, uptime and memory. Refreshed every 10 seconds.
+- **Activity**: the last hour (per minute) and the last 24 hours (per 15 minutes): slash commands by name, button clicks, panel requests by route group, tracks started and failed, searches, yt-dlp resolves with average and p95 resolve time and time to first audio, rate-limit refusals, warnings and errors. Kept in memory only (a restart starts from zero).
+- **Logs**: the bot's log live (the last 2000 lines, then new ones as they come), with level colors, filters by level, source and text, pause, clear and download. Anything that looks like a token, an `Authorization` or `Cookie` value or a session token is redacted before it reaches the viewer.
 - **Notices**: create, edit and delete notices of type scheduled downtime, information or warning, with a title, a message, a start time, a duration or end time, an optional "show from" time (default: right away) and an active switch. Times are entered in your local time and stored in UTC. The soonest visible notice is added as a small line to every message the bot sends in Discord (Discord timestamps, so each user reads it in their own time zone), and appears as a banner at the top of the Activity panel (live; each user can hide it). Notices disappear on their own after the end time and are deleted 30 days later.
 - **Tweaks** (no restart, kept across restarts): maintenance mode (new songs are refused in `/play`, `/ai` and the panel, with the notice; what is playing keeps playing), pause the daily yt-dlp self-update, check for a yt-dlp update now, clear the in-memory stream URL cache, clear the lookup cache (saved searches, list pages, YouTube matches).
 
-Security: the password is compared in constant time; sign-ins are limited to 5 per minute per address (and 30 per minute overall); the session is a random token in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` over HTTPS) that expires after 12 hours (a restart signs you out); every change needs a custom header and a same-origin request (CSRF). The admin panel cannot read settings or secrets and cannot run commands.
+Security: both the username and the password are compared in constant time (or the password is checked against the Argon2 hash); sign-ins are limited to 5 per minute per address (and 30 per minute overall); the session is a random token in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` over HTTPS) that expires after 12 hours (a restart signs you out); every change needs a custom header and a same-origin request (CSRF). The admin panel cannot read settings or secrets and cannot run commands.
+
+Isolation: the admin listener runs on its own small runtime (two threads) on its own thread, with request timeouts, a body size limit, at most 32 requests in flight, 64 connections and 4 live log viewers. Handlers only read snapshots and counters the bot keeps anyway; database and yt-dlp work is handed to the bot with a short timeout. A panic in admin code answers 500; if the admin listener fails (for example its port is taken) it is logged and retried, and the bot keeps running either way. The log tee never waits for a viewer: a slow one skips lines.
 
 ## Development
 
@@ -126,9 +132,9 @@ scripts/cargo.sh check
 scripts/cargo.sh test
 ```
 
-The panel lives in [web/](web/) (React, Vite, Tailwind). The admin UI is a separate entry in the same folder ([web/admin.html](web/admin.html), [web/src/admin/](web/src/admin/)), built to `web/dist-admin` by `pnpm build` (or `pnpm build:admin`).
+The panel lives in [web/](web/) (React, Vite, Tailwind). The admin UI is a separate app in [admin/web/](admin/web/) (`pnpm install`, `pnpm build`, `pnpm test`; `pnpm dev` runs it with live reload against a running admin listener on 127.0.0.1:8081).
 
-On Windows without Docker, `scripts/dev-windows.ps1` runs the bot on `127.0.0.1:8080` and the panel on port 5173; with `ADMIN_PASSWORD` in `.env` the bot also serves the admin UI and API itself on `http://127.0.0.1:8081` (`-AdminPort` to change it).
+On Windows without Docker, `scripts/dev-windows.ps1` runs the bot on `127.0.0.1:8080` and the panel on port 5173; with `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.env` the bot also serves the admin UI and API itself on `http://127.0.0.1:8081` (`-AdminPort` to change it).
 
 ## License
 
