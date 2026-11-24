@@ -1043,7 +1043,10 @@ impl Player {
                 let entry = self.adopt_prepared(entry, &playable);
                 self.begin(entry, playable).await;
             }
-            Err(e) => self.failed(entry, &e.to_string()).await,
+            Err(e) => {
+                debug!(guild = self.guild_id, error = %e, "prepare failed");
+                self.failed(entry, &e.public_reason()).await
+            }
         }
     }
 

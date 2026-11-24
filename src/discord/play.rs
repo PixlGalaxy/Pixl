@@ -191,7 +191,7 @@ pub async fn play(ctx: PlayCtx<'_>, req: PlayRequest<'_>) -> Result<Played, Play
     }
     let settings = ctx.store.guild_settings(req.guild_id).await.unwrap_or_default();
     let owner = ProcOwner::new(req.guild_id, req.voice_channel_id, None);
-    let resolving = ctx.sources.resolve_for_play(query, queue_limit(&settings), &owner);
+    let resolving = ctx.sources.resolve_for_play(query, queue_limit(&settings), &owner, req.user_id);
     let (resolved, list, origin) = match tokio::time::timeout(RESOLVE_TIMEOUT, resolving).await {
         Ok(Ok((r, list, origin))) if !r.tracks.is_empty() => (r, list, origin),
         Ok(Ok(_)) | Ok(Err(SourceError::NotFound(_))) => return Err(PlayError::NoResults),

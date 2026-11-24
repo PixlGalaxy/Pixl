@@ -1,51 +1,71 @@
 name: Dependabot auto-merge
 
-# Minor and patch bumps from Dependabot merge on their own; majors stay open
-# for a manual review. "Auto-merge" only queues the merge: GitHub still waits
-# for the required checks (tests and the Docker build), so a broken update is
-# never merged.
+# What merges on its own (once the required checks pass: tests and the Docker build):
+# - GitHub Actions updates, minor or patch;
+# - development dependencies (cargo dev-dependencies, npm devDependencies), minor or patch.
+# Everything else waits for a manual review: majors, and any update of a runtime dependency
+# (cargo dependencies, npm dependencies, Docker base images), since that code ships in the image.
+# dependabot.yml groups runtime and development dependencies separately so a group PR is one or
+# the other. "Auto-merge" only queues the merge; GitHub still waits for the checks.
 
 on: pull_request
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   auto-merge:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Fetch Dependabot metadata
         id: meta
-        uses: dependabot/fetch-metadata@v3
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
 
-      - name: Summary
+      - name: Decide
+        id: decide
         env:
           UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+          DEP_TYPE: ${{ steps.meta.outputs.dependency-type }}
           DEPS: ${{ steps.meta.outputs.dependency-names }}
         run: |
+          auto=false
+          reason="runtime dependency or major bump"
+          case "$UPDATE_TYPE" in
+            version-update:semver-minor|version-update:semver-patch)
+              if [ "$ECOSYSTEM" = "github_actions" ]; then
+                auto=true; reason="GitHub Actions minor/patch"
+              elif [ "$DEP_TYPE" = "direct:development" ]; then
+                auto=true; reason="development dependency minor/patch"
+              fi
+              ;;
+          esac
+          echo "auto=$auto" >> "$GITHUB_OUTPUT"
           {
             echo "### Dependabot auto-merge"
             echo "- Dependencies: \`$DEPS\`"
-            echo "- Update type: \`$UPDATE_TYPE\`"
-            if [ "$UPDATE_TYPE" = "version-update:semver-major" ]; then
-              echo "- Decision: **manual review** (major version bump)"
+            echo "- Ecosystem: \`$ECOSYSTEM\`, type: \`$DEP_TYPE\`, update: \`$UPDATE_TYPE\`"
+            if [ "$auto" = true ]; then
+              echo "- Decision: **auto-merge** once the checks pass ($reason)"
             else
-              echo "- Decision: **auto-merge** once the checks pass"
+              echo "- Decision: **manual review** ($reason)"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Enable auto-merge for minor and patch
-        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+      - name: Enable auto-merge
+        if: steps.decide.outputs.auto == 'true'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ github.token }}
 
-      - name: Flag majors for review
-        if: steps.meta.outputs.update-type == 'version-update:semver-major' && github.event.action == 'opened'
-        run: gh pr comment "$PR_URL" --body "Major version bump. Not auto-merged; needs a manual review."
+      - name: Flag for review
+        if: steps.decide.outputs.auto != 'true' && github.event.action == 'opened'
+        run: gh pr comment "$PR_URL" --body "Runtime dependency or major version bump. Not auto-merged; needs a manual review."
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ github.token }}

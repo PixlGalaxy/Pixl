@@ -277,7 +277,7 @@ impl Harness {
         let mut req = Request::builder()
             .method(method)
             .uri(path)
-            .header("x-forwarded-for", ip);
+            .header("x-real-ip", ip);
         if let Some(t) = token {
             req = req.header("authorization", format!("Bearer {t}"));
         }

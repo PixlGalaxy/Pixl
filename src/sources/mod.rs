@@ -13,6 +13,7 @@ pub mod fallback;
 pub mod lists;
 pub mod lyrics;
 pub mod matcher;
+pub mod netguard;
 pub mod spotify;
 pub mod startup;
 pub mod text;
@@ -29,7 +30,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     config::Config,
@@ -58,6 +59,9 @@ const MUSIC_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
 const MUSIC_GRACE: Duration = Duration::from_millis(250);
 /// In-memory original -> substitute ids kept for stream invalidation.
 const SUBSTITUTES_MAX: usize = 2048;
+/// Link probes (yt-dlp metadata of a non-YouTube link) one user may have running at once.
+const PROBES_PER_USER: usize = 2;
+const BUSY_LINKS: &str = "You already have links loading; wait for them to finish";
 
 /// Where a track was originally requested from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +184,17 @@ impl From<reqwest::Error> for SourceError {
     }
 }
 
+impl SourceError {
+    /// The text users may see. Internal errors (`Other`: I/O, process spawn) may carry paths, so
+    /// they become a generic text; the caller logs the full error.
+    pub fn public_reason(&self) -> String {
+        match self {
+            Self::Other(_) => "Something went wrong".into(),
+            e => e.to_string(),
+        }
+    }
+}
+
 pub type SourceResult<T> = Result<T, SourceError>;
 
 #[derive(Debug, Clone)]
@@ -231,6 +246,8 @@ struct Inner {
     apple: apple::Apple,
     lrclib: lyrics::Lrclib,
     music_lookups: Semaphore,
+    /// Link probes in flight per user.
+    probe_slots: ProbeSlots,
     /// Shared track lists of playlists / albums (60 min, every user and guild).
     lists: lists::ListCache,
     /// Original video id -> substitute that played (see `invalidate_stream`).
@@ -264,11 +281,14 @@ impl Sources {
                 )
                 .with_limit_rate(config.ytdlp_limit_rate.clone())
                 .with_cache_dir(Some(config.ytdlp_cache_dir()))
-                .with_player_client(config.ytdlp_player_client.clone()),
+                .with_player_client(config.ytdlp_player_client.clone())
+                .with_extractors(config.ytdlp_extractors.clone())
+                .with_link_hosts(netguard::LinkHosts::from_config(&config.link_hosts)),
                 spotify,
                 apple: apple::Apple::new(http.clone()),
                 lrclib: lyrics::Lrclib::new(http.clone()),
                 music_lookups: Semaphore::new(MUSIC_LOOKUPS),
+                probe_slots: ProbeSlots::default(),
                 lists: lists::ListCache::new(store.clone(), lists::LIST_TTL),
                 substitutes: Mutex::new(HashMap::new()),
                 http,
@@ -294,7 +314,7 @@ impl Sources {
     /// `owner` is used for any yt-dlp process this needs (non-YouTube URLs).
     pub async fn resolve(&self, query: &str, limit: usize, owner: &ProcOwner) -> SourceResult<Resolved> {
         let input = self.detect(query).await?;
-        self.resolve_input(input, limit, owner).await
+        self.resolve_input(input, limit, owner, None).await
     }
 
     /// Classify input, following Spotify short links.
@@ -311,12 +331,14 @@ impl Sources {
     }
 
     /// [`resolve`](Self::resolve) for `/play`: lists come from the shared list cache (fetched when
-    /// stale) and are returned with their canonical reference, for saving.
+    /// stale) and are returned with their canonical reference, for saving. `requester` (the user
+    /// id) limits how many links one user can have loading at once.
     pub async fn resolve_for_play(
         &self,
         query: &str,
         limit: usize,
         owner: &ProcOwner,
+        requester: u64,
     ) -> SourceResult<(Resolved, Option<ListRef>, Option<Arc<ListOrigin>>)> {
         let input = self.detect(query).await?;
         let Some(list) = lists::list_ref(&input) else {
@@ -325,7 +347,7 @@ impl Sources {
                 Input::Url(u) => Some(u.clone()),
                 _ => None,
             };
-            let r = self.resolve_input(input, limit, owner).await?;
+            let r = self.resolve_input(input, limit, owner, Some(requester)).await?;
             let origin = set_url.filter(|_| r.tracks.len() > 1).map(|url| {
                 Arc::new(ListOrigin {
                     name: r.playlist_name.clone().unwrap_or_default(),
@@ -378,7 +400,7 @@ impl Sources {
                 if let Some(key) = apple_key {
                     let _ = self.inner.store.cache_delete(apple::CACHE_NS, &key).await;
                 }
-                let r = self.resolve_input(input, DEFAULT_LIST_LIMIT, owner).await?;
+                let r = self.resolve_input(input, DEFAULT_LIST_LIMIT, owner, None).await?;
                 if r.tracks.is_empty() {
                     return Err(SourceError::NotFound("That list is empty".into()));
                 }
@@ -398,7 +420,13 @@ impl Sources {
         self.inner.lists.peek(&list.url).await
     }
 
-    async fn resolve_input(&self, input: Input, limit: usize, owner: &ProcOwner) -> SourceResult<Resolved> {
+    async fn resolve_input(
+        &self,
+        input: Input,
+        limit: usize,
+        owner: &ProcOwner,
+        requester: Option<u64>,
+    ) -> SourceResult<Resolved> {
         let limit = limit.max(1);
         let single = |t: TrackInfo| Resolved {
             tracks: vec![t],
@@ -467,7 +495,13 @@ impl Sources {
                 "Only Spotify tracks, albums and playlists can be played".into(),
             )),
             Input::Url(url) => {
-                let (tracks, name) = self.inner.ytdlp.probe(&url, limit, owner).await?;
+                let _slot = match requester {
+                    Some(user) => Some(
+                        self.inner.probe_slots.take(user).ok_or_else(|| SourceError::Unavailable(BUSY_LINKS.into()))?,
+                    ),
+                    None => None,
+                };
+                let (tracks, name) = self.inner.ytdlp.probe(&url, limit, owner).await.map_err(link_error)?;
                 Ok(Resolved { tracks, playlist_name: name, image: None })
             }
         }
@@ -584,7 +618,8 @@ impl Sources {
         owner: &ProcOwner,
     ) -> SourceResult<Playable> {
         let Some(orig) = track.youtube_id.clone() else {
-            let (stream, stats) = self.inner.ytdlp.resolve_stream_stats(&track.url, &track.url, owner).await?;
+            let (stream, stats) =
+                self.inner.ytdlp.resolve_stream_stats(&track.url, &track.url, owner).await.map_err(link_error)?;
             record(t, stats);
             let page_url = track.url.clone();
             return Ok(self.playable(track, stream, page_url, None, None, owner));
@@ -764,6 +799,53 @@ impl Sources {
     }
 }
 
+/// What users see when a (non-YouTube) link fails: one generic text, whatever went wrong, so
+/// error messages cannot be used to probe hosts and ports. The details are logged.
+fn link_error(e: SourceError) -> SourceError {
+    match e {
+        SourceError::Cancelled => SourceError::Cancelled,
+        SourceError::NotFound(_) => SourceError::NotFound(netguard::LINK_ERROR.into()),
+        SourceError::Unsupported(r) if r == netguard::LINK_ERROR => SourceError::Unsupported(r),
+        e => {
+            info!(error = %e, "link failed");
+            SourceError::Unavailable(netguard::LINK_ERROR.into())
+        }
+    }
+}
+
+/// Link probes in flight per user (see [`PROBES_PER_USER`]).
+#[derive(Default)]
+struct ProbeSlots(Mutex<HashMap<u64, usize>>);
+
+impl ProbeSlots {
+    fn take(&self, user: u64) -> Option<ProbeSlot<'_>> {
+        let mut map = self.0.lock().unwrap();
+        let n = map.entry(user).or_default();
+        if *n >= PROBES_PER_USER {
+            return None;
+        }
+        *n += 1;
+        Some(ProbeSlot { slots: self, user })
+    }
+}
+
+struct ProbeSlot<'a> {
+    slots: &'a ProbeSlots,
+    user: u64,
+}
+
+impl Drop for ProbeSlot<'_> {
+    fn drop(&mut self) {
+        let mut map = self.slots.0.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(n) = map.get_mut(&self.user) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                map.remove(&self.user);
+            }
+        }
+    }
+}
+
 fn watch_url(id: &str) -> String {
     format!("https://www.youtube.com/watch?v={id}")
 }
@@ -831,6 +913,33 @@ impl fallback::Alternatives for LiveAlternatives<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_slots_per_user() {
+        let slots = ProbeSlots::default();
+        let a = slots.take(1).unwrap();
+        let b = slots.take(1).unwrap();
+        assert!(slots.take(1).is_none(), "a third link of the same user waits");
+        let other = slots.take(2).unwrap();
+        drop(a);
+        let c = slots.take(1).unwrap();
+        drop((b, c, other));
+        assert!(slots.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn link_errors_are_generic() {
+        for e in [
+            SourceError::Unavailable("Could not reach the site".into()),
+            SourceError::Http("connection refused".into()),
+            SourceError::Other("/data/streams/1: permission denied".into()),
+            SourceError::Timeout,
+        ] {
+            assert!(matches!(link_error(e), SourceError::Unavailable(r) if r == netguard::LINK_ERROR));
+        }
+        assert!(matches!(link_error(SourceError::Cancelled), SourceError::Cancelled));
+        assert!(matches!(link_error(SourceError::NotFound("x".into())), SourceError::NotFound(r) if r == netguard::LINK_ERROR));
+    }
 
     #[test]
     fn old_track_json_without_music_still_loads() {
@@ -905,6 +1014,8 @@ mod tests {
             ytdlp_cookies_file: None,
             ytdlp_limit_rate: None,
             ytdlp_player_client: None,
+            ytdlp_extractors: None,
+            link_hosts: Vec::new(),
             empty_channel_timeout_secs: 0,
             max_concurrent_extractions: 2,
             stream_cache_max_mb: 100,
@@ -1015,6 +1126,40 @@ mod tests {
         let r = s.resolve("https://music.apple.com/us/album/un-verano-sin-ti/1622045624", 5, &owner).await.unwrap();
         assert_eq!((r.playlist_name.as_deref(), r.tracks.len()), (Some("Un Verano Sin Ti"), 5));
         store.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A SoundCloud link end to end through the guards: allowed site and extractor, stream URL on
+    /// a public host, first bytes read with the guarded player client. Private links are refused.
+    #[tokio::test]
+    #[ignore]
+    async fn sources_link_end_to_end() {
+        let dir = std::env::temp_dir().join(format!("lynx-sources-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = config(dir.clone());
+        let store = Store::open(&cfg.database_path()).await.unwrap();
+        let s = Sources::new(&cfg, store, ProcessRegistry::new()).unwrap();
+        let owner = ProcOwner::new(10, 20, Some(uuid::Uuid::new_v4()));
+
+        let url = "https://soundcloud.com/forss/flickermood";
+        let (r, _, _) = s.resolve_for_play(url, 10, &owner, 1).await.unwrap();
+        assert_eq!(r.tracks.len(), 1);
+        let p = s.prepare(&r.tracks[0], &owner).await.unwrap();
+        let host = reqwest::Url::parse(&p.stream.url).ok().and_then(|u| u.host_str().map(str::to_owned));
+        println!("soundcloud: protocol {:?} fallback {} host {host:?}", p.stream.protocol, p.ytdlp_fallback);
+        if !p.ytdlp_fallback {
+            let http = netguard::guarded(reqwest::Client::builder()).build().unwrap();
+            let res = http.get(&p.stream.url).header(reqwest::header::RANGE, "bytes=0-1023").send().await.unwrap();
+            assert!(res.status().is_success(), "{}", res.status());
+        }
+        for url in [
+            "http://127.0.0.1:4000/api/public",
+            "http://169.254.169.254/latest/meta-data/",
+            "https://example.com/a",
+        ] {
+            let e = s.resolve_for_play(url, 10, &owner, 1).await.unwrap_err();
+            assert_eq!(e.to_string(), netguard::LINK_ERROR, "{url}: {e:?}");
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 
