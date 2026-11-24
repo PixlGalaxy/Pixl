@@ -1,7 +1,8 @@
 version: 2
-# Minor/patch bumps are grouped into one PR per ecosystem and merged
-# automatically by dependabot-auto-merge.yml once the checks pass. Every major
-# bump gets its own PR and waits for a manual review.
+# Runtime and development dependencies are grouped separately (minor/patch only; every major gets
+# its own PR). dependabot-auto-merge.yml merges GitHub Actions and development-dependency
+# minor/patch PRs once the checks pass; runtime cargo/npm updates and Docker base-image digests
+# always wait for a manual review.
 updates:
   - package-ecosystem: "cargo"
     directory: "/"
@@ -10,7 +11,15 @@ updates:
     schedule:
       interval: "daily"
     groups:
-      rust-deps:
+      rust-runtime:
+        dependency-type: "production"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      rust-dev:
+        dependency-type: "development"
         patterns:
           - "*"
         update-types:
@@ -24,13 +33,22 @@ updates:
     schedule:
       interval: "daily"
     groups:
-      web-deps:
+      web-runtime:
+        dependency-type: "production"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      web-dev:
+        dependency-type: "development"
         patterns:
           - "*"
         update-types:
           - "minor"
           - "patch"
 
+  # Base images in the Dockerfile are pinned by digest; Dependabot bumps tag and digest together.
   - package-ecosystem: "docker"
     directory: "/"
     target-branch: "Lynx"
@@ -42,6 +60,7 @@ updates:
         patterns:
           - "*"
 
+  # Actions are pinned to commit SHAs; Dependabot bumps the SHA and the version comment.
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "Lynx"
