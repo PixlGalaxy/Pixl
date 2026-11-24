@@ -1779,3 +1779,30 @@ async fn ai_radio_starts_are_rate_limited_per_user() {
     assert!(!h.state.app.limits.ai.allow(ANA));
     assert!(h.state.app.limits.ai.allow(BOSS));
 }
+
+#[tokio::test]
+async fn skip_takes_an_optional_expected_uid() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (s, v) = h
+        .call(
+            "POST",
+            "/api/player/skip",
+            Some(&ana),
+            Some(json!({ "channelId": "100", "expectedUid": "nope" })),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::BAD_REQUEST, "invalid"));
+    // A valid one reaches the player check (nothing plays here).
+    let uid = uuid::Uuid::new_v4().to_string();
+    let (s, _) = h
+        .call(
+            "POST",
+            "/api/player/skip",
+            Some(&ana),
+            Some(json!({ "channelId": "100", "expectedUid": uid })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}

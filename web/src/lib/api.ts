@@ -153,7 +153,8 @@ export const api = {
   // Player actions
   pause: (channelId: string) => request<void>('/player/pause', 'POST', { channelId }),
   resume: (channelId: string) => request<void>('/player/resume', 'POST', { channelId }),
-  skip: (channelId: string) => request<void>('/player/skip', 'POST', { channelId }),
+  /** `expectedUid`: the current track shown; when another one plays by then nothing is skipped (a double click skips one track). */
+  skip: (channelId: string, expectedUid?: string) => request<void>('/player/skip', 'POST', { channelId, expectedUid }),
   previous: (channelId: string) => request<void>('/player/previous', 'POST', { channelId }),
   seek: (channelId: string, positionMs: number) => request<void>('/player/seek', 'POST', { channelId, positionMs }),
   loop: (channelId: string, mode: LoopMode) => request<void>('/player/loop', 'POST', { channelId, mode }),

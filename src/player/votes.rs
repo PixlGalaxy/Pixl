@@ -27,6 +27,8 @@ pub enum VoteResult {
         current: usize,
         required: usize,
     },
+    /// Not a listener (deafened, or not in the channel): the vote is not counted.
+    NotEligible,
 }
 
 /// Votes for the current track; reset whenever the track changes.
@@ -47,6 +49,10 @@ impl Votes {
 
     pub fn vote(&mut self, user: u64, listeners: &HashSet<u64>, rule: &VoteSkip) -> VoteResult {
         self.voters.retain(|v| listeners.contains(v));
+        // Deafened people (and anyone not in the channel) neither vote nor count.
+        if !listeners.contains(&user) {
+            return VoteResult::NotEligible;
+        }
         let required = required_votes(rule, listeners.len());
         let fresh = self.voters.insert(user);
         let current = self.voters.len();
@@ -141,5 +147,26 @@ mod tests {
         let two: HashSet<u64> = [1, 3].into();
         assert!(v.passes(&two, &r));
         assert!(!Votes::default().passes(&two, &r));
+    }
+}
+
+#[cfg(test)]
+mod eligibility_tests {
+    use super::*;
+
+    #[test]
+    fn deafened_or_absent_users_cannot_vote() {
+        let r = VoteSkip {
+            enabled: true,
+            mode: VoteSkipMode::Count,
+            value: 1,
+        };
+        // 9 is deafened (not a listener): with a 1-vote rule they would have skipped alone.
+        let listeners: HashSet<u64> = [1, 2].into();
+        let mut v = Votes::default();
+        assert_eq!(v.vote(9, &listeners, &r), VoteResult::NotEligible);
+        assert_eq!(v.current(&[1, 2, 9].into()), 0, "the vote was not stored");
+        assert!(!v.passes(&listeners, &r));
+        assert_eq!(v.vote(1, &listeners, &r), VoteResult::Passed);
     }
 }

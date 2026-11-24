@@ -145,7 +145,7 @@ function Controls({ state }: { state: PlayerState }) {
           type="button"
           aria-label={nextLabel}
           title={nextLabel}
-          onClick={() => run(() => api.skip(channelId), voteSkip ? t('player.voteSent') : undefined)}
+          onClick={() => run(() => api.skip(channelId, state.current?.uid), voteSkip ? t('player.voteSent') : undefined)}
           className={iconBtn}
         >
           <SkipForward size={16} />

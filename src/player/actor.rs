@@ -615,9 +615,10 @@ impl Player {
                 user,
                 force,
                 rule,
+                expected,
                 reply,
             } => {
-                let outcome = self.skip(user, force, &rule).await;
+                let outcome = self.skip(user, force, &rule, expected).await;
                 let _ = reply.send(outcome);
             }
             Command::Previous { reply } => {
@@ -729,6 +730,7 @@ impl Player {
                 self.humans = h;
                 self.on_humans_changed().await;
             }
+            Command::Listeners => self.on_listeners_changed().await,
             Command::Moved(to) => self.moved(to).await,
             Command::End(reason) => self.ending = Some(reason),
             Command::Prepared { uid, prefetch, result } => self.on_prepared(uid, prefetch, *result).await,
@@ -1686,27 +1688,42 @@ impl Player {
         }
     }
 
-    async fn skip(&mut self, user: u64, force: bool, rule: &crate::store::VoteSkip) -> SkipOutcome {
+    async fn skip(
+        &mut self,
+        user: u64,
+        force: bool,
+        rule: &crate::store::VoteSkip,
+        expected: Option<Uuid>,
+    ) -> SkipOutcome {
         let Some(current) = self.queue.current().cloned() else {
             return SkipOutcome::NothingPlaying;
         };
+        if stale(expected, Some(current.uid)) {
+            return SkipOutcome::Outdated;
+        }
         if !force && rule.enabled {
-            let listeners = self.listeners();
-            match self.votes.vote(user, &listeners, rule) {
-                VoteResult::Passed => {}
-                VoteResult::Counted { current, required } => {
-                    self.publish();
-                    return SkipOutcome::Voted { current, required };
-                }
-                VoteResult::AlreadyVoted { current, required } => {
-                    return SkipOutcome::AlreadyVoted { current, required };
-                }
+            if let Some(outcome) = self.vote_skip(user, rule) {
+                return outcome;
             }
         }
         self.next_track(true).await;
         SkipOutcome::Skipped {
             skipped: current,
             next: self.queue.current().cloned(),
+        }
+    }
+
+    /// Count a vote to skip; None when it passed (skip now), else the answer.
+    fn vote_skip(&mut self, user: u64, rule: &crate::store::VoteSkip) -> Option<SkipOutcome> {
+        let listeners = self.listeners();
+        match self.votes.vote(user, &listeners, rule) {
+            VoteResult::Passed => None,
+            VoteResult::Counted { current, required } => {
+                self.publish();
+                Some(SkipOutcome::Voted { current, required })
+            }
+            VoteResult::AlreadyVoted { current, required } => Some(SkipOutcome::AlreadyVoted { current, required }),
+            VoteResult::NotEligible => Some(SkipOutcome::NotEligible),
         }
     }
 
@@ -1722,6 +1739,17 @@ impl Player {
     /// People in the channel who can hear the music (deafened users don't vote or count for votes).
     fn listeners(&self) -> std::collections::HashSet<u64> {
         self.deps.bots.listeners_in(self.guild_id, self.voice_channel_id)
+    }
+
+    /// Deafen / undeafen: votes of people who can no longer hear stop counting, and fewer listeners
+    /// can make the remaining votes enough.
+    async fn on_listeners_changed(&mut self) {
+        let rule = self.settings.vote_skip;
+        if rule.enabled && self.playing.is_some() && self.votes.passes(&self.listeners(), &rule) {
+            self.next_track(true).await;
+        } else {
+            self.publish();
+        }
     }
 
     async fn on_humans_changed(&mut self) {
@@ -1866,27 +1894,27 @@ impl Player {
                 user,
                 force,
                 rule,
+                expected,
                 reply,
             } => {
+                // The mirrored queue keeps the jam's uids: a stale request stops here.
+                let current = self.queue.current().map(|e| e.uid);
+                if stale(expected, current) {
+                    let _ = reply.send(SkipOutcome::Outdated);
+                    return None;
+                }
                 if !force && rule.enabled {
-                    let listeners = self.listeners();
-                    match self.votes.vote(user, &listeners, &rule) {
-                        VoteResult::Passed => {}
-                        VoteResult::Counted { current, required } => {
-                            self.publish();
-                            let _ = reply.send(SkipOutcome::Voted { current, required });
-                            return None;
-                        }
-                        VoteResult::AlreadyVoted { current, required } => {
-                            let _ = reply.send(SkipOutcome::AlreadyVoted { current, required });
-                            return None;
-                        }
+                    if let Some(outcome) = self.vote_skip(user, &rule) {
+                        let _ = reply.send(outcome);
+                        return None;
                     }
                 }
+                // The jam checks `expected` again against its own current track.
                 let cmd = Command::Skip {
                     user,
                     force: true,
                     rule,
+                    expected,
                     reply,
                 };
                 handle.post(JamCmd::Edit { from, cmd });
@@ -3207,5 +3235,25 @@ mod tests {
         // The playback id never changes.
         assert_eq!(snap.current.as_ref().unwrap().info.youtube_id.as_deref(), Some("a"));
         tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
+    }
+}
+
+/// A skip meant for `expected` while `current` plays: true when it is about another track (the
+/// first of a double click already skipped it). No expectation, or nothing current, is not stale.
+fn stale(expected: Option<Uuid>, current: Option<Uuid>) -> bool {
+    matches!((expected, current), (Some(e), Some(c)) if e != c)
+}
+
+#[cfg(test)]
+mod stale_tests {
+    use super::*;
+
+    #[test]
+    fn a_skip_for_another_track_is_stale() {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        assert!(stale(Some(a), Some(b)));
+        assert!(!stale(Some(a), Some(a)));
+        assert!(!stale(None, Some(a)));
+        assert!(!stale(Some(a), None));
     }
 }

@@ -726,8 +726,13 @@ impl JamCore {
             Command::Resume { reply } => {
                 let _ = reply.send(self.resume(now_ms));
             }
-            Command::Skip { reply, .. } => {
-                let _ = reply.send(self.skip(now_ms));
+            Command::Skip { reply, expected, .. } => {
+                let outcome = match (expected, self.queue.current()) {
+                    // Another member skipped first (or a double click): don't skip the next one.
+                    (Some(uid), Some(e)) if e.uid != uid => SkipOutcome::Outdated,
+                    _ => self.skip(now_ms),
+                };
+                let _ = reply.send(outcome);
             }
             Command::Previous { reply } => {
                 let _ = reply.send(self.previous(now_ms));
@@ -1299,6 +1304,37 @@ mod tests {
         let (tx, mut rx) = oneshot::channel();
         JamCore::refuse(Command::Clear { reply: tx });
         assert_eq!(rx.try_recv(), Ok(0));
+    }
+
+    #[test]
+    fn a_shared_skip_for_another_track_is_outdated() {
+        let now = 1_000_000;
+        let mut core = playing_jam(now);
+        let mut rng = fastrand::Rng::with_seed(1);
+        let skip = |expected| {
+            let (tx, rx) = oneshot::channel();
+            let cmd = Command::Skip {
+                user: 1,
+                force: true,
+                rule: Default::default(),
+                expected,
+                reply: tx,
+            };
+            (cmd, rx)
+        };
+        let a = core.queue.current().unwrap().uid;
+        let (cmd, mut rx) = skip(Some(uuid::Uuid::new_v4()));
+        core.edit(cmd, &mut rng, now);
+        assert!(matches!(rx.try_recv(), Ok(SkipOutcome::Outdated)));
+        assert_eq!(core.queue.current().unwrap().uid, a);
+        // The right track: skipped once; the same click again is outdated.
+        for expect_skip in [true, false] {
+            let (cmd, mut rx) = skip(Some(a));
+            core.edit(cmd, &mut rng, now);
+            let out = rx.try_recv().unwrap();
+            assert_eq!(matches!(out, SkipOutcome::Skipped { .. }), expect_skip, "{out:?}");
+        }
+        assert_eq!(core.queue.current().unwrap().info.youtube_id.as_deref(), Some("b"));
     }
 
     #[test]

@@ -630,23 +630,29 @@ async fn resume(inv: &Inv<'_>) -> Message {
 
 /// `/skip` or the Skip / Vote buttons. `tag`: the button's track (must still be current).
 async fn skip(inv: &Inv<'_>, button: Option<(PlayerHandle, &str)>) -> Message {
-    let (p, settings, decision) = match button {
+    // The track this skip is about: the button's (checked now), or the one playing for `/skip`. The
+    // player answers `Outdated` when another one plays by the time it gets the command, so a double
+    // click skips one track, not two.
+    let (p, settings, decision, expected) = match button {
         Some((player, tag)) => {
-            if player.snapshot().current.as_ref().map(|e| track_tag(&e.uid)).as_deref() != Some(tag) {
+            let Some(uid) = tagged_current(&player, tag) else {
                 return inv.err("outdated", &[]);
-            }
+            };
             match inv.check(player, Action::Skip).await {
-                Ok(x) => x,
+                Ok((p, s, d)) => (p, s, d, uid),
                 Err(m) => return m,
             }
         }
         None => match inv.player_for(Action::Skip).await {
-            Ok(x) => x,
+            Ok((p, s, d)) => match p.snapshot().current.as_ref().map(|e| e.uid) {
+                Some(uid) => (p, s, d, uid),
+                None => return gone(inv),
+            },
             Err(m) => return m,
         },
     };
     let force = decision == Decision::Allow;
-    match p.skip(inv.user_id, force, settings.vote_skip).await {
+    match p.skip(inv.user_id, force, settings.vote_skip, Some(expected)).await {
         Ok(SkipOutcome::Skipped {
             skipped,
             next: Some(next),
@@ -679,8 +685,19 @@ async fn skip(inv: &Inv<'_>, button: Option<(PlayerHandle, &str)>) -> Message {
                 &[("current", &current.to_string()), ("required", &required.to_string())],
             ),
         ),
+        Ok(SkipOutcome::NotEligible) => inv.err("vote_not_eligible", &[]),
+        Ok(SkipOutcome::Outdated) => inv.err("outdated", &[]),
         Ok(SkipOutcome::NothingPlaying) | Err(_) => gone(inv),
     }
+}
+
+/// The current entry's uid when it is still the track a button was made for (its tag).
+fn tagged_current(player: &PlayerHandle, tag: &str) -> Option<uuid::Uuid> {
+    current_if_tagged(&player.snapshot(), tag).map(|e| e.uid)
+}
+
+fn current_if_tagged<'s>(snap: &'s PlayerSnapshot, tag: &str) -> Option<&'s Entry> {
+    snap.current.as_ref().filter(|e| track_tag(&e.uid) == tag)
 }
 
 async fn stop(inv: &Inv<'_>, announce: bool) -> Message {
@@ -1004,7 +1021,9 @@ async fn np_button(inv: &Inv<'_>, action: NpAction, vc: u64, tag: &str) -> Optio
     let Some(player) = lynx.players.get(inv.guild_id, vc) else {
         return Some(gone(inv));
     };
-    let current_tag = player.snapshot().current.as_ref().map(|e| track_tag(&e.uid));
+    // The button's track, taken before any await (it may change while the checks run).
+    let snap = player.snapshot();
+    let tagged = current_if_tagged(&snap, tag).cloned();
     match action {
         NpAction::Pause | NpAction::Resume | NpAction::Stop => {
             let (p, _, _) = match inv.check_in(player, Action::Control, action != NpAction::Stop).await {
@@ -1032,17 +1051,16 @@ async fn np_button(inv: &Inv<'_>, action: NpAction, vc: u64, tag: &str) -> Optio
             if !lynx.config.ai_enabled {
                 return Some(inv.err("generic", &[]));
             }
-            if current_tag.as_deref() != Some(tag) {
+            // Feedback goes to the track the button was for, even if the next one started meanwhile.
+            let Some(e) = tagged.as_ref() else {
                 return Some(inv.err("outdated", &[]));
-            }
+            };
             if let Err(m) = inv.check(player.clone(), Action::Feedback).await {
                 return Some(m);
             }
             if !lynx.store.history_enabled(inv.user_id).await.unwrap_or(true) {
                 return Some(cards::history_off(vc, &lynx.i18n));
             }
-            let snap = player.snapshot();
-            let e = snap.current.as_ref()?;
             let wanted = if action == NpAction::Like {
                 Feedback::Like
             } else {

@@ -187,7 +187,7 @@ function Controls({ state }: { state: PlayerState }) {
         label={voteSkip ? t('player.voteSkip') : t('player.next')}
         disabled={!can && !voteSkip}
         className="size-10"
-        onClick={() => run(() => api.skip(channelId), voteSkip ? t('player.voteSent') : undefined)}
+        onClick={() => run(() => api.skip(channelId, state.current?.uid), voteSkip ? t('player.voteSent') : undefined)}
       >
         <SkipForward size={18} />
       </IconButton>

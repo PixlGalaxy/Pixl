@@ -785,6 +785,8 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       return changed()
     case 'POST /player/skip':
       if (!permissionsFor(f).canControl && !s.settings.voteSkip.enabled) throw new HttpError(403, 'no_permission')
+      // Like the backend: a skip for a track that already ended does nothing (double click).
+      if (typeof body.expectedUid === 'string' && body.expectedUid !== s.current?.uid) return undefined
       advance()
       return changed()
     case 'POST /player/previous': {

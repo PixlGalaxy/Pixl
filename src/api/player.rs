@@ -213,17 +213,38 @@ pub async fn resume(State(st): State<ApiState>, m: Member, Body(b): Body<Channel
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn skip(State(st): State<ApiState>, m: Member, Body(b): Body<ChannelBody>) -> ApiResult<StatusCode> {
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkipBody {
+    channel_id: String,
+    /// Uid of the current track the panel showed (optional): when another one plays by then the
+    /// skip does nothing, so a double click skips one track.
+    #[serde(default)]
+    expected_uid: Option<String>,
+}
+
+pub async fn skip(State(st): State<ApiState>, m: Member, Body(b): Body<SkipBody>) -> ApiResult<StatusCode> {
     let channel = st.own_channel(&m, &b.channel_id)?;
+    let expected = b
+        .expected_uid
+        .as_deref()
+        .map(|u| uuid::Uuid::parse_str(u.trim()).map_err(|_| ApiError::invalid("invalid expectedUid")))
+        .transpose()?;
     let a = st.allowed(&m, channel, |_| Action::Skip).await?;
     let force = a.decision == Decision::Allow;
     match a
         .player
-        .skip(m.user_id(), force, a.settings.vote_skip)
+        .skip(m.user_id(), force, a.settings.vote_skip, expected)
         .await
         .map_err(gone)?
     {
         SkipOutcome::NothingPlaying => Err(ApiError::not_found("Nothing is playing")),
+        SkipOutcome::NotEligible => Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "not_eligible",
+            "Deafened listeners can't vote to skip",
+        )),
+        // Outdated: that track already ended (the first click skipped it); nothing more to do.
         _ => Ok(StatusCode::NO_CONTENT),
     }
 }
