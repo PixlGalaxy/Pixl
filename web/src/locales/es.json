@@ -8,7 +8,7 @@
   },
   "errors": {
     "generic": "Algo salió mal. Inténtalo de nuevo.",
-    "maintenance": "Lynx está en mantenimiento: ahora no se pueden añadir canciones nuevas. La música que ya suena sigue sonando.",
+    "maintenance": "Lynx está en mantenimiento: ahora no se pueden agregar canciones nuevas. La música que ya suena sigue sonando.",
     "network": "No se pudo conectar con Lynx. Revisa tu conexión.",
     "not_in_channel": "Entra al canal de voz para hacer eso.",
     "no_permission": "No tienes permiso para hacer eso aquí.",
@@ -18,21 +18,21 @@
     "rate_limited": "Ve un poco más despacio y vuelve a intentarlo.",
     "not_eligible": "Quien está ensordecido no puede votar para saltar.",
     "bot_unavailable": "Ahora mismo no hay ningún bot de Lynx libre para este canal.",
-    "invalid": "La petición no es válida.",
+    "invalid": "La solicitud no es válida.",
     "history_disabled": "Activa tu historial de escucha en tu cuenta (arriba a la derecha) para usar esto.",
     "channel_not_allowed": "Lynx no está permitido en este canal.",
     "unavailable": "Eso no está disponible ahora.",
-    "in_jam": "La radio no funciona en una escucha compartida. Sal de ella para iniciar una aquí.",
-    "not_in_jam": "Este canal no está en una escucha compartida.",
+    "in_jam": "La radio no funciona en un jam. Sal de él para iniciar una aquí.",
+    "not_in_jam": "Este canal no está en un jam.",
     "jam_host_only": "Solo la gente del canal anfitrión puede cambiar la música.",
-    "jam_not_host": "Solo el canal anfitrión gestiona la escucha compartida.",
-    "jam_closed": "Esta escucha compartida no admite más canales.",
-    "jam_full": "Esta escucha compartida está llena.",
-    "jam_already_in": "Tu canal ya está en esta escucha compartida.",
+    "jam_not_host": "Solo el canal anfitrión administra el jam.",
+    "jam_closed": "Este jam no admite más canales.",
+    "jam_full": "Este jam está lleno.",
+    "jam_already_in": "Tu canal ya está en este jam.",
     "jam_channels_off": "El anfitrión no deja unirse a otros canales del servidor.",
     "jam_servers_off": "El anfitrión no deja unirse a canales de otros servidores.",
-    "jam_ended": "Esa escucha compartida terminó.",
-    "jam_other": "Tu canal está en otra escucha compartida. Sal de ella primero.",
+    "jam_ended": "Ese jam terminó.",
+    "jam_other": "Tu canal está en otro jam. Sal de él primero.",
     "refresh_blocked": "Demasiadas actualizaciones. Espera 5 minutos.",
     "playlists_full": "Todas tus listas guardadas están fijadas. Desfija o quita una en la pestaña Playlists primero.",
     "saving_off": "Guardar listas está desactivado en este bot.",
@@ -85,7 +85,7 @@
     "emptyChannelTitle": "En pausa: no hay nadie en el canal de voz",
     "emptyChannelCountdown": "La cola se borrará en",
     "emptyChannelBody": "La música sigue cuando alguien entre.",
-    "live": "En directo",
+    "live": "En vivo",
     "seek": "Posición",
     "seekLocked": "{{name}} está moviendo la barra",
     "seekReleased": "Se soltó tras 5 segundos",
@@ -111,7 +111,7 @@
     "openQueue_one": "{{count}} en la cola",
     "openQueue_other": "{{count}} en la cola",
     "nothingTitle": "No suena nada",
-    "nothingBody": "Añade una canción abajo o usa /play en Discord.",
+    "nothingBody": "Agrega una canción abajo o usa /play en Discord.",
     "nothingNoAdd": "Usa /play en Discord para empezar la música.",
     "status": {
       "playing": "Sonando",
@@ -138,7 +138,7 @@
     "lyricsError": "No se pudo cargar la letra.",
     "upNextEmpty": "No hay nada después de esta canción.",
     "more": "+{{count}} más",
-    "radioOn": "Radio activa · {{count}} añadidas",
+    "radioOn": "Radio activa · {{count}} agregadas",
     "radioOff": "Radio apagada",
     "radioOffHint": "Una mezcla sin fin según tus gustos.",
     "radioNoPermission": "No puedes iniciar la radio aquí.",
@@ -148,20 +148,20 @@
   "queue": {
     "upNext": "A continuación",
     "emptyUpcoming": "No hay nada en la cola después de esta canción.",
-    "added_one": "Se añadió {{count}} canción a la cola.",
-    "added_other": "Se añadieron {{count}} canciones a la cola.",
+    "added_one": "Se agregó {{count}} canción a la cola.",
+    "added_other": "Se agregaron {{count}} canciones a la cola.",
     "addedNext_one": "{{count}} canción sonará a continuación.",
     "addedNext_other": "{{count}} canciones sonarán a continuación, en orden.",
-    "addTitle": "Añadir a la cola",
+    "addTitle": "Agregar a la cola",
     "addHint": "Pega un enlace de YouTube o Spotify, o busca una canción.",
     "addPlaceholder": "Enlace o nombre de la canción",
-    "add": "Añadir",
-    "addThis": "Añadir {{title}}",
+    "add": "Agregar",
+    "addThis": "Agregar {{title}}",
     "addThisNext": "Reproducir {{title}} a continuación",
-    "addWhere": "Dónde añadir",
+    "addWhere": "Dónde agregar",
     "addEnd": "Al final",
     "addNext": "A continuación",
-    "addNextDjOnly": "Solo los DJs pueden añadir canciones para que suenen a continuación.",
+    "addNextDjOnly": "Solo los DJs pueden agregar canciones para que suenen a continuación.",
     "searching": "Buscando",
     "noResults": "Sin resultados.",
     "dragHandle": "Arrastra para mover {{title}}",
@@ -175,16 +175,16 @@
     "history": "Historial",
     "historyHint": "Las últimas canciones que sonaron en este canal.",
     "emptyHistory": "Todavía no ha sonado nada.",
-    "addAgain": "Añadir {{title}} otra vez"
+    "addAgain": "Agregar {{title}} otra vez"
   },
   "playlists": {
     "title": "Tus playlists",
-    "hint": "Las playlists y álbumes que añades se guardan aquí, hasta {{max}}. Las fijadas quedan arriba y nunca se reemplazan.",
+    "hint": "Las playlists y álbumes que agregas se guardan aquí, hasta {{max}}. Las fijadas quedan arriba y nunca se reemplazan.",
     "count": "{{count}} de {{max}}",
-    "empty": "Aún no tienes playlists guardadas. Añade un enlace de playlist o álbum con /play o en la pestaña Cola y aparecerá aquí.",
+    "empty": "Aún no tienes playlists guardadas. Agrega un enlace de playlist o álbum con /play o en la pestaña Cola y aparecerá aquí.",
     "savingOff": "Tu historial de escucha está desactivado, así que las playlists nuevas no se guardan. Las guardadas siguen aquí hasta que las quites.",
     "savingDisabled": "Guardar playlists está desactivado en este bot.",
-    "full": "Todas tus playlists guardadas están fijadas, así que las nuevas no se guardan. Desfija o quita una para hacer sitio.",
+    "full": "Todas tus playlists guardadas están fijadas, así que las nuevas no se guardan. Desfija o quita una para hacer espacio.",
     "untitled": "Playlist sin nombre",
     "open": "Abrir {{name}}",
     "pin": "Fijar {{name}}",
@@ -197,14 +197,14 @@
     "updatedAgo": "actualizada {{ago}}",
     "loading": "Cargando canciones",
     "noSongs": "Esta playlist no tiene canciones.",
-    "addAll": "Añadir todo a la cola",
-    "addSong": "Añadir {{title}}",
+    "addAll": "Agregar todo a la cola",
+    "addSong": "Agregar {{title}}",
     "refresh": "Actualizar datos de la playlist",
     "refreshed": "Playlist actualizada.",
     "refreshTooSoon": "Se acaba de actualizar. Se muestran las canciones de hace un momento.",
     "blocked": "Demasiadas actualizaciones. Espera 5 minutos (quedan {{time}}).",
-    "noChannel": "Entra en un canal de voz para añadir canciones a la cola.",
-    "noAdd": "Ahora mismo no puedes añadir canciones en este canal.",
+    "noChannel": "Entra a un canal de voz para agregar canciones a la cola.",
+    "noAdd": "Ahora mismo no puedes agregar canciones en este canal.",
     "platforms": {
       "spotify": "Spotify",
       "youtube": "YouTube",
@@ -228,12 +228,12 @@
     "description": "Una mezcla continua según tus gustos y los de la gente del canal.",
     "on": "Encendida",
     "off": "Apagada",
-    "startedByYou": "Tú encendiste la radio. Sigue añadiendo canciones hasta que se apague.",
-    "startedBySomeone": "Alguien del canal encendió la radio. Sigue añadiendo canciones hasta que se apague.",
+    "startedByYou": "Tú encendiste la radio. Sigue agregando canciones hasta que se apague.",
+    "startedBySomeone": "Alguien del canal encendió la radio. Sigue agregando canciones hasta que se apague.",
     "stop": "Apagar la radio",
     "noPermission": "No puedes encender la radio en este canal.",
     "noChannel": "Abre el panel desde un canal de voz para usar la radio.",
-    "promptLabel": "¿Qué te apetece? (opcional)",
+    "promptLabel": "¿Qué quieres escuchar? (opcional)",
     "promptPlaceholder": "Déjalo vacío para usar tus gustos",
     "examples": {
       "study": "música tranquila para estudiar",
@@ -258,17 +258,17 @@
       "cancelled": "Cancelada"
     },
     "picksTitle": "Por qué estas canciones",
-    "picksHint": "Canciones que añadió la radio y el motivo por el que las eligió.",
-    "noPicks": "La radio todavía no ha añadido nada.",
+    "picksHint": "Canciones que agregó la radio y el motivo por el que las eligió.",
+    "noPicks": "La radio todavía no ha agregado nada.",
     "result": {
-      "ready": "La radio añadió canciones",
+      "ready": "La radio agregó canciones",
       "failed": "La radio no pudo elegir canciones",
       "cancelled": "Se canceló la radio"
     },
     "resultHint": {
       "ready": "Están al final de la cola.",
-      "failed": "No se añadió nada.",
-      "cancelled": "No se añadió nada."
+      "failed": "No se agregó nada.",
+      "cancelled": "No se agregó nada."
     }
   },
   "lyrics": {
@@ -288,14 +288,14 @@
     "modeEveryone": "Todos",
     "modeDj": "Solo DJs",
     "modeEveryoneHint": "Cualquiera en el canal de voz puede pausar, saltar, mover la posición, reordenar y quitar.",
-    "modeDjHint": "Solo los DJs y los managers controlan. El resto puede añadir canciones y quitar las suyas.",
+    "modeDjHint": "Solo los DJs y los managers controlan. El resto puede agregar canciones y quitar las suyas.",
     "djs": "DJs",
     "djsHint": "Personas que siempre pueden controlar la música, en cualquier modo.",
     "noDjs": "Todavía no hay DJs.",
     "removeDj": "Quitar a {{name}} como DJ",
-    "addDj": "Añadir un DJ",
+    "addDj": "Agregar un DJ",
     "searchMembers": "Buscar miembros",
-    "noCandidates": "No hay nadie para añadir. Aquí aparece la gente que está en canales de voz.",
+    "noCandidates": "No hay nadie para agregar. Aquí aparece la gente que está en canales de voz.",
     "makeDj": "Hacer DJ",
     "djAdded": "{{name}} ahora es DJ.",
     "voteSkip": "Votar para saltar",
@@ -329,7 +329,7 @@
     "commandChannelsHint": "Canales de texto (o el chat de un canal de voz) donde funcionan los comandos y botones de Lynx. Con un canal de Lynx, funcionan allí y aquí.",
     "voiceChannels": "Canales de reproducción",
     "voiceChannelsHint": "Canales de voz donde Lynx puede reproducir.",
-    "addChannel": "Añadir un canal",
+    "addChannel": "Agregar un canal",
     "allChannels": "Todos los canales",
     "removeChannel": "Quitar {{name}}",
     "noCategory": "Sin categoría",
@@ -386,13 +386,13 @@
     "statusBefore": "Consulta el estado en"
   },
   "trackMenu": {
-    "addToQueue": "Añadir a la cola",
+    "addToQueue": "Agregar a la cola",
     "openOn": "Abrir en {{platform}}",
     "openLink": "Abrir enlace",
-    "noAdd": "Entra a un canal de voz donde puedas añadir canciones."
+    "noAdd": "Entra a un canal de voz donde puedas agregar canciones."
   },
   "taste": {
-    "genresHint": "Pulsa un género para ver sus canciones de tu historial.",
+    "genresHint": "Presiona un género para ver sus canciones de tu historial.",
     "noGenres": "Todavía no hay géneros. Aparecen cuando tus canciones tienen etiquetas.",
     "genreSongs": "{{genre}} en tu historial",
     "genreSongsCount_one": "{{genre}}: {{count}} canción",
@@ -421,11 +421,11 @@
       },
       "queue": {
         "title": "Cola",
-        "body": "Pega un enlace o busca para añadir canciones. Arrastra el asa para reordenar, usa la cruz para quitar una canción y Vaciar para borrar la cola. El historial muestra las últimas canciones y deja volver a añadirlas."
+        "body": "Pega un enlace o busca para agregar canciones. Arrastra el asa para reordenar, usa la cruz para quitar una canción y Vaciar para borrar la cola. El historial muestra las últimas canciones y deja volver a agregarlas."
       },
       "playlists": {
         "title": "Playlists",
-        "body": "Cada playlist, álbum o página de artista que añades con /play o en la pestaña Cola se guarda aquí para ti, en cualquier servidor. Abre una para ver sus canciones y añadirlas todas o de una en una. Fija las que quieras tener arriba; cuando la lista se llena, la más antigua sin fijar deja su sitio. Las canciones se actualizan como mucho cada hora; Actualizar datos de la playlist la vuelve a leer ahora (una vez cada pocos segundos)."
+        "body": "Cada playlist, álbum o página de artista que agregas con /play o en la pestaña Cola se guarda aquí para ti, en cualquier servidor. Abre una para ver sus canciones y agregarlas todas o de una en una. Fija las que quieras tener arriba; cuando la lista se llena, la más antigua sin fijar deja su lugar. Las canciones se actualizan como mucho cada hora; Actualizar datos de la playlist la vuelve a leer ahora (una vez cada pocos segundos)."
       },
       "lyrics": {
         "title": "Letra",
@@ -433,7 +433,7 @@
       },
       "radio": {
         "title": "Radio",
-        "body": "Empieza una mezcla sin fin a partir de tu historial, tus Me gusta y gente con gustos parecidos. Puedes añadir un texto corto, como \"música tranquila para estudiar\". Mientras elige canciones, la cola muestra cada paso y puedes cancelarlo. Al final, Tus gustos muestra tus géneros principales: pulsa uno para ver sus canciones y quitar las que no quieras en tu radio."
+        "body": "Empieza una mezcla sin fin a partir de tu historial, tus Me gusta y gente con gustos parecidos. Puedes agregar un texto corto, como \"música tranquila para estudiar\". Mientras elige canciones, la cola muestra cada paso y puedes cancelarlo. Al final, Tus gustos muestra tus géneros principales: presiona uno para ver sus canciones y quitar las que no quieras en tu radio."
       },
       "settings": {
         "title": "Ajustes",
@@ -448,8 +448,8 @@
         "body": "Cámbialo en tu cuenta (arriba a la derecha). Solo cambia el idioma del panel para ti. Los mensajes del bot en el canal siguen en el idioma del servidor."
       },
       "jam": {
-        "title": "Escucha compartida",
-        "body": "Invitar a escuchar (en el panel o en el mensaje de lo que suena) comparte un enlace. Quien lo abra ve el panel en su propio canal de voz y puede unirse: todos los canales ponen la misma cola en el mismo punto y el volumen es de cada canal. El canal anfitrión decide quién puede unirse (otros canales del servidor, otros servidores), quién edita la cola compartida, la cierra, quita canales o la termina. Al unirte se guarda la cola de tu canal y vuelve cuando sales o termina. Si el canal anfitrión se vacía, el papel de anfitrión pasa al canal que se unió primero. Las escuchas compartidas no se conservan si Lynx se reinicia: cada canal retoma su propia cola."
+        "title": "Jam",
+        "body": "Invitar al jam (en el panel o en el mensaje de lo que suena) comparte un enlace. Quien lo abra ve el panel en su propio canal de voz y puede unirse: todos los canales ponen la misma cola en el mismo punto y el volumen es de cada canal. El canal anfitrión decide quién puede unirse (otros canales del servidor, otros servidores), quién edita la cola compartida, lo cierra, quita canales o lo termina. Al unirte se guarda la cola de tu canal y vuelve cuando sales o termina. Si el canal anfitrión se vacía, el papel de anfitrión pasa al canal que se unió primero. Los jams no se conservan si Lynx se reinicia: cada canal retoma su propia cola."
       }
     },
     "seekNote": "Ir a un punto de la canción solo se puede aquí, con el slider. No hay comando para eso. Mientras alguien lo arrastra, los demás lo ven bloqueado hasta 5 segundos.",
@@ -524,7 +524,7 @@
         "example": "/lyrics"
       },
       "invite": {
-        "description": "Muestra un enlace para añadir Lynx a otro servidor, junto con el servidor de soporte y el sitio web si están configurados.",
+        "description": "Muestra un enlace para agregar Lynx a otro servidor, junto con el servidor de soporte y el sitio web si están configurados.",
         "example": "/invite"
       },
       "about": {
@@ -542,20 +542,20 @@
     },
     "accessNote": "Control significa que el comando sigue el modo de control del servidor. Voto significa que puede necesitar votos del canal.",
     "permissionsTitle": "Permisos",
-    "permissionsHint": "El bot los comprueba en cada acción, en el panel y en los comandos.",
+    "permissionsHint": "El bot los verifica en cada acción, en el panel y en los comandos.",
     "permissions": {
       "manager": {
         "title": "Manager de Lynx",
-        "body": "El dueño del servidor y cualquiera con Administrador o Gestionar servidor. Los managers siempre pueden controlar la música y son los únicos que ven Ajustes."
+        "body": "El dueño del servidor y cualquiera con Administrador o Administrar servidor. Los managers siempre pueden controlar la música y son los únicos que ven Ajustes."
       },
       "dj": {
         "title": "DJ",
-        "body": "Personas que un manager añadió a la lista de DJs en Ajustes. Es una lista de Lynx, no un rol de Discord. Los DJs controlan la música en cualquier modo y saltan sin votos."
+        "body": "Personas que un manager agregó a la lista de DJs en Ajustes. Es una lista de Lynx, no un rol de Discord. Los DJs controlan la música en cualquier modo y saltan sin votos."
       },
       "modes": {
         "title": "Modos de control",
         "everyone": "Todos (por defecto): cualquiera en el canal de voz puede pausar, saltar, mover la posición, reordenar y quitar canciones.",
-        "dj": "Solo DJs: solo los DJs y los managers controlan la música. El resto puede añadir canciones y quitar las suyas."
+        "dj": "Solo DJs: solo los DJs y los managers controlan la música. El resto puede agregar canciones y quitar las suyas."
       },
       "vote": {
         "title": "Votar para saltar",
@@ -626,7 +626,7 @@
       "items": [
         "Las últimas 2000 canciones distintas que pediste: título, artista, enlace, cuántas veces sonó cada una y cuándo sonó por última vez.",
         "Tus votos de Me gusta y No me gusta.",
-        "Las playlists y álbumes que añades (nombre, imagen, plataforma y enlace), para la pestaña Playlists."
+        "Las playlists y álbumes que agregas (nombre, imagen, plataforma y enlace), para la pestaña Playlists."
       ]
     },
     "used": {
@@ -668,22 +668,22 @@
     }
   },
   "jam": {
-    "title": "Escucha compartida",
+    "title": "Jam",
     "startBody": "Pon la misma música en otros canales de voz a la vez.",
     "startHint": "Comparte el enlace: quien lo abra ve el panel en su propio canal de voz y puede unirse. Todos los canales oyen la misma canción en el mismo punto; el volumen es de cada canal.",
-    "invite": "Invitar a escuchar",
+    "invite": "Invitar al jam",
     "share": "Compartir enlace",
-    "shareMessage": "Únete a mi escucha compartida de Lynx desde {{channel}}",
-    "hosting": "Eres el anfitrión de una escucha compartida",
-    "withHost": "Escucha compartida con {{name}}",
+    "shareMessage": "Únete a mi jam de Lynx desde {{channel}}",
+    "hosting": "Eres el anfitrión de un jam",
+    "withHost": "Jam con {{name}}",
     "channels": "{{count}} de {{max}} canales",
     "host": "Anfitrión",
     "you": "Tú",
     "listening": "Hay gente escuchando",
     "empty": "No hay nadie en este canal",
     "unnamedChannel": "Canal de voz",
-    "kick": "Quitar {{name}} de la escucha compartida",
-    "kicked": "{{name}} salió de la escucha compartida.",
+    "kick": "Quitar {{name}} del jam",
+    "kicked": "{{name}} salió del jam.",
     "settingsTitle": "Ajustes del anfitrión",
     "readOnly": "Solo la gente de {{name}} puede cambiarlos.",
     "allowChannels": "Otros canales de este servidor",
@@ -694,35 +694,35 @@
     "editableByHint": "El modo DJ de cada servidor sigue aplicando.",
     "editEveryone": "Todos",
     "editHost": "Canal anfitrión",
-    "closed": "Cerrada a nuevos canales",
+    "closed": "Cerrado a nuevos canales",
     "closedHint": "Los canales que ya están se quedan.",
     "hostOnlyNotice": "Solo la gente de {{name}} puede cambiar la música. El volumen sí lo puedes cambiar aquí.",
     "end": "Terminar",
     "endQuestion": "Cada canal vuelve a su propia cola. ¿Terminar?",
     "leave": "Salir",
     "leaveQuestion": "Tu canal recupera su propia cola. ¿Salir?",
-    "joinTitle": "¿Unirte a la escucha compartida de {{name}}?",
+    "joinTitle": "¿Unirte al jam de {{name}}?",
     "joinBody": "{{channel}} pondrá la misma música que los demás a la vez. Su propia cola queda guardada y vuelve cuando salga.",
     "joinFrom": "Desde {{guild}}, con {{count}} canales.",
-    "joinUnavailable": "Esta escucha compartida no está disponible",
+    "joinUnavailable": "Este jam no está disponible",
     "join": "Unirse",
     "notNow": "Ahora no",
-    "addBot": "Añadir otro Lynx"
+    "addBot": "Agregar otro Lynx"
   },
   "info": {
     "about": "Acerca de {{name}}",
     "example": "Ejemplo",
     "settings": {
       "controlMode": {
-        "body": "Decide quién puede pausar, saltar, mover la posición, cambiar la repetición, reordenar y quitar canciones. Con Todos (por defecto), cualquiera en el canal de voz puede. Con Solo DJs, solo los DJs y los managers; el resto puede seguir añadiendo canciones y quitar las suyas. Los managers (dueño, Administrador o Gestionar servidor) siempre pueden controlar, incluso desde fuera del canal.",
-        "example": "Eliges Solo DJs y añades a Ana a la lista de DJs. Ana y los managers pueden saltar y reordenar; Leo, que no es DJ, puede añadir canciones y quitar las suyas, pero el botón de pausa está desactivado para él."
+        "body": "Decide quién puede pausar, saltar, mover la posición, cambiar la repetición, reordenar y quitar canciones. Con Todos (por defecto), cualquiera en el canal de voz puede. Con Solo DJs, solo los DJs y los managers; el resto puede seguir agregando canciones y quitar las suyas. Los managers (dueño, Administrador o Administrar servidor) siempre pueden controlar, incluso desde fuera del canal.",
+        "example": "Eliges Solo DJs y agregas a Ana a la lista de DJs. Ana y los managers pueden saltar y reordenar; Leo, que no es DJ, puede agregar canciones y quitar las suyas, pero el botón de pausa está desactivado para él."
       },
       "djs": {
         "body": "Una lista de Lynx, no un rol de Discord. Los DJs controlan la música en cualquier modo y saltan al momento aunque votar para saltar esté activado. Como candidatos solo aparecen personas que están en un canal de voz del servidor. Los managers no necesitan estar en la lista.",
         "example": "Con Solo DJs y los votos activados, haces DJ a Leo. Desde entonces su botón de saltar pasa a la siguiente canción al momento, mientras el resto del canal sigue votando."
       },
       "lynxChannel": {
-        "body": "El único canal de texto donde van todos los mensajes automáticos de Lynx: lo que suena, los avisos, las novedades de la escucha compartida y de la radio, y el mensaje tras un reinicio. Los comandos y botones también solo funcionan aquí y en los canales de comandos, excepto /invite, que funciona en cualquier canal. Los managers quedan exentos mientras \"Los managers pueden usar Lynx en cualquier canal\" esté activado. Si no eliges ninguno, los mensajes van al canal donde se usó el último comando o al chat del canal de voz.",
+        "body": "El único canal de texto donde van todos los mensajes automáticos de Lynx: lo que suena, los avisos, las novedades del jam y de la radio, y el mensaje tras un reinicio. Los comandos y botones también solo funcionan aquí y en los canales de comandos, excepto /invite, que funciona en cualquier canal. Los managers quedan exentos mientras \"Los managers pueden usar Lynx en cualquier canal\" esté activado. Si no eliges ninguno, los mensajes van al canal donde se usó el último comando o al chat del canal de voz.",
         "example": "Eliges #música. Alguien usa /play en #general: Lynx le pide que use #música. El mensaje de lo que suena, los avisos y el mensaje tras un reinicio siempre se publican en #música."
       },
       "commandChannels": {
@@ -734,12 +734,12 @@
         "example": "Solo permites Salón. Alguien en Juegos usa /play: Lynx lo rechaza y le indica Salón. Un manager en Juegos sí puede reproducir allí mientras el interruptor esté activado."
       },
       "managersExempt": {
-        "body": "Activado por defecto. Mientras lo esté, los managers (dueño, Administrador o Gestionar servidor) pueden usar comandos, botones y la reproducción en cualquier canal, digan lo que digan las listas de canales. Desactívalo para que los managers sigan las mismas reglas que los demás. /invite funciona en cualquier canal en los dos casos.",
+        "body": "Activado por defecto. Mientras lo esté, los managers (dueño, Administrador o Administrar servidor) pueden usar comandos, botones y la reproducción en cualquier canal, digan lo que digan las listas de canales. Desactívalo para que los managers sigan las mismas reglas que los demás. /invite funciona en cualquier canal en los dos casos.",
         "example": "El canal de Lynx es #música. Con el interruptor activado, un administrador puede usar /queue en #staff. Desactivado, Lynx también le pide que use #música."
       },
       "voteSkip": {
-        "body": "Desactivado por defecto. Si lo activas, cuando alguien que no puede saltar directamente pulsa saltar, cuenta como un voto, y la canción se salta cuando vota suficiente gente del canal. Los DJs, los managers y quien pidió la canción actual saltan al momento. En el modo Solo DJs, el resto también puede votar. Los votos se reinician al cambiar de canción.",
-        "example": "Hay cuatro personas escuchando y la regla es 50 %. Leo pulsa saltar: 1 de 2 votos. Mia también lo pulsa y la canción se salta."
+        "body": "Desactivado por defecto. Si lo activas, cuando alguien que no puede saltar directamente presiona saltar, cuenta como un voto, y la canción se salta cuando vota suficiente gente del canal. Los DJs, los managers y quien pidió la canción actual saltan al momento. En el modo Solo DJs, el resto también puede votar. Los votos se reinician al cambiar de canción.",
+        "example": "Hay cuatro personas escuchando y la regla es 50 %. Leo presiona saltar: 1 de 2 votos. Mia también lo presiona y la canción se salta."
       },
       "voteMode": {
         "body": "Cómo se fijan los votos necesarios. Número es una cantidad fija de votos; Porcentaje es una parte de la gente que escucha, redondeada hacia arriba. En los dos casos hace falta al menos 1 voto y nunca más que la gente que escucha. Quien está ensordecido no vota ni cuenta como oyente.",
@@ -754,68 +754,68 @@
         "example": "En 50 %: con 4 oyentes hacen falta 2 votos, con 5 oyentes 3. En 100 %, tienen que votar todos."
       },
       "maxQueue": {
-        "body": "Las canciones que pueden esperar en la cola como máximo (la que suena no cuenta), de 1 a 5000. Por defecto 500. Si una playlist no cabe, solo se añaden las canciones que caben, y la radio nunca pasa de este límite.",
-        "example": "El límite es 100 y hay 90 canciones en cola. Alguien añade una playlist de 30: se añaden las 10 primeras y el resto se queda fuera."
+        "body": "Las canciones que pueden esperar en la cola como máximo (la que suena no cuenta), de 1 a 5000. Por defecto 500. Si una playlist no cabe, solo se agregan las canciones que caben, y la radio nunca pasa de este límite.",
+        "example": "El límite es 100 y hay 90 canciones en cola. Alguien agrega una playlist de 30: se agregan las 10 primeras y el resto se queda fuera."
       },
       "defaultVolume": {
         "body": "El volumen con el que empieza un canal cuando Lynx entra, del 10 % al 100 %. Por defecto 100 %, que deja el audio sin cambios; Lynx nunca sube más. Cambiar el volumen durante una sesión solo afecta a ese canal, y las sesiones que se recuperan tras un reinicio mantienen su volumen.",
-        "example": "Pones 60 %. La próxima vez que Lynx entre en un canal de voz sonará al 60 %. Alguien lo sube al 80 % allí; los demás canales siguen empezando al 60 %."
+        "example": "Pones 60 %. La próxima vez que Lynx entre a un canal de voz sonará al 60 %. Alguien lo sube al 80 % allí; los demás canales siguen empezando al 60 %."
       }
     },
     "player": {
       "skipVotes": {
-        "body": "En este servidor saltar va por votos, así que cuando alguien que no es DJ, manager ni quien pidió esta canción pulsa saltar, cuenta como un voto. La barra muestra los votos que hay y los que hacen falta. Los votos se reinician al cambiar de canción; quien está ensordecido no vota ni cuenta.",
-        "example": "La barra muestra 1 / 2. Una persona más del canal pulsa saltar y empieza la siguiente canción."
+        "body": "En este servidor saltar va por votos, así que cuando alguien que no es DJ, manager ni quien pidió esta canción presiona saltar, cuenta como un voto. La barra muestra los votos que hay y los que hacen falta. Los votos se reinician al cambiar de canción; quien está ensordecido no vota ni cuenta.",
+        "example": "La barra muestra 1 / 2. Una persona más del canal presiona saltar y empieza la siguiente canción."
       },
       "feedback": {
-        "body": "Dile a la radio qué te parece esta canción. Me gusta hace más probable que vuelva entre tus favoritas; No me gusta la deja fuera de lo que elige la radio para todos los del canal, pero nunca la salta. Pulsa otra vez para quitar tu voto. Necesita tu historial de escucha activado.",
+        "body": "Dile a la radio qué te parece esta canción. Me gusta hace más probable que vuelva entre tus favoritas; No me gusta la deja fuera de lo que elige la radio para todos los del canal, pero nunca la salta. Presiona otra vez para quitar tu voto. Necesita tu historial de escucha activado.",
         "example": "Marcas No me gusta en una canción que suena. Sigue hasta el final, pero la radio no la vuelve a elegir mientras estés en el canal."
       },
       "ai": {
         "body": "Las canciones marcadas con IA las eligió la radio IA, no las pidió una persona. La línea bajo el título dice por qué se eligió, por ejemplo porque es una de tus favoritas o porque es popular entre gente con gustos parecidos.",
-        "example": "\"Pedida por Ana · Elegida por la IA\" con \"Porque te gusta Daft Punk\": Ana encendió la radio y esta añadió la canción por sus gustos."
+        "example": "\"Pedida por Ana · Elegida por la IA\" con \"Porque te gusta Daft Punk\": Ana encendió la radio y esta agregó la canción por sus gustos."
       },
       "stop": {
-        "body": "Termina la sesión en este canal: la música se para, la cola se borra, la radio se apaga y Lynx sale del canal de voz. En una escucha compartida, este canal sale de ella primero. Necesita permiso para controlar la música y no se puede deshacer.",
-        "example": "Pulsas Parar y confirmas. Lynx sale del canal y la cola desaparece; el próximo /play empieza una sesión nueva."
+        "body": "Termina la sesión en este canal: la música se para, la cola se borra, la radio se apaga y Lynx sale del canal de voz. En un jam, este canal sale de él primero. Necesita permiso para controlar la música y no se puede deshacer.",
+        "example": "Presionas Parar y confirmas. Lynx sale del canal y la cola desaparece; el próximo /play empieza una sesión nueva."
       }
     },
     "jam": {
       "start": {
-        "body": "Una escucha compartida deja que varios canales de voz, de este servidor o de otros, oigan la misma cola en el mismo momento. Al invitar, la cola de este canal pasa a ser la compartida y recibes un enlace; quien lo abra ve el panel en su propio canal de voz y puede unirse. Cada canal mantiene su volumen y su botón de parar. Hasta 8 canales; termina si Lynx se reinicia.",
-        "example": "Estás en Salón con música sonando y pulsas Invitar a escuchar. Un amigo abre el enlace desde Juegos y se une: los dos canales oyen la misma canción en el mismo punto."
+        "body": "Un jam deja que varios canales de voz, de este servidor o de otros, oigan la misma cola en el mismo momento. Al invitar, la cola de este canal pasa a ser la compartida y recibes un enlace; quien lo abra ve el panel en su propio canal de voz y puede unirse. Cada canal mantiene su volumen y su botón de parar. Hasta 8 canales; termina si Lynx se reinicia.",
+        "example": "Estás en Salón con música sonando y presionas Invitar al jam. Un amigo abre el enlace desde Juegos y se une: los dos canales oyen la misma canción en el mismo punto."
       },
       "active": {
-        "body": "Los canales de esta escucha compartida comparten una sola cola. El canal anfitrión decide sus ajustes, puede quitar canales y terminarla. Al salir, un canal recupera su propia cola. Si el canal anfitrión sale o se queda vacío, el papel de anfitrión pasa al canal más antiguo que siga teniendo gente. Un canal que se queda vacío unos minutos sale de la escucha compartida.",
-        "example": "Juegos se unió a la escucha compartida de Salón con su propia cola. Cuando Juegos sale, su cola guardada vuelve tal como estaba; Salón sigue con la música compartida."
+        "body": "Los canales de este jam comparten una sola cola. El canal anfitrión decide sus ajustes, puede quitar canales y terminarlo. Al salir, un canal recupera su propia cola. Si el canal anfitrión sale o se queda vacío, el papel de anfitrión pasa al canal más antiguo que siga teniendo gente. Un canal que se queda vacío unos minutos sale del jam.",
+        "example": "Juegos se unió al jam de Salón con su propia cola. Cuando Juegos sale, su cola guardada vuelve tal como estaba; Salón sigue con la música compartida."
       },
       "settings": {
-        "body": "Solo la gente del canal anfitrión puede cambiarlos, con los permisos de control normales de su servidor. Por defecto pueden unirse otros canales de este servidor; otros servidores, solo si lo permites. La cola la pueden editar todos los canales o solo el anfitrión; el modo DJ de cada servidor sigue aplicándose. Cerrarla mantiene los canales que ya están y no deja entrar a otros nuevos.",
-        "example": "Activas Otros servidores y en Quién edita la cola eliges Canal anfitrión. El servidor de un amigo puede unirse y escuchar, pero solo la gente de tu canal puede añadir, saltar o reordenar."
+        "body": "Solo la gente del canal anfitrión puede cambiarlos, con los permisos de control normales de su servidor. Por defecto pueden unirse otros canales de este servidor; otros servidores, solo si lo permites. La cola la pueden editar todos los canales o solo el anfitrión; el modo DJ de cada servidor sigue aplicándose. Cerrarlo mantiene los canales que ya están y no deja entrar a otros nuevos.",
+        "example": "Activas Otros servidores y en Quién edita la cola eliges Canal anfitrión. El servidor de un amigo puede unirse y escuchar, pero solo la gente de tu canal puede agregar, saltar o reordenar."
       }
     },
     "queue": {
       "add": {
-        "body": "Pega un enlace o escribe para buscar. Los enlaces de playlists, álbumes y artistas añaden sus canciones hasta el límite de la cola y se guardan en tu pestaña Playlists mientras tu historial esté activado. Tienes que estar en el canal de voz. Al final añade después de todo lo que hay en la cola; A continuación pone las canciones justo después de la actual, una lista en su orden (en un jam, después de la canción compartida). En modo DJ solo los DJs y los administradores pueden usar A continuación.",
+        "body": "Pega un enlace o escribe para buscar. Los enlaces de playlists, álbumes y artistas agregan sus canciones hasta el límite de la cola y se guardan en tu pestaña Playlists mientras tu historial esté activado. Tienes que estar en el canal de voz. Al final agrega después de todo lo que hay en la cola; A continuación pone las canciones justo después de la actual, una lista en su orden (en un jam, después de la canción compartida). En modo DJ solo los DJs y los administradores pueden usar A continuación.",
         "example": "Pegas el enlace de un álbum de Spotify. Sus canciones van al final de la cola y el álbum aparece en tu pestaña Playlists."
       },
       "upNext": {
-        "body": "Las canciones que esperan después de la actual, en orden. Quien puede controlar la música puede arrastrar para reordenar, quitar cualquier canción o vaciar la cola; cualquiera del canal puede quitar las canciones que añadió. La cola tiene un límite que fijan los managers (500 por defecto).",
-        "example": "En el modo Solo DJs, Leo añadió dos canciones. Puede quitar esas dos, pero solo un DJ o un manager puede subirlas en la cola."
+        "body": "Las canciones que esperan después de la actual, en orden. Quien puede controlar la música puede arrastrar para reordenar, quitar cualquier canción o vaciar la cola; cualquiera del canal puede quitar las canciones que agregó. La cola tiene un límite que fijan los managers (500 por defecto).",
+        "example": "En el modo Solo DJs, Leo agregó dos canciones. Puede quitar esas dos, pero solo un DJ o un manager puede subirlas en la cola."
       },
       "history": {
         "body": "Las últimas 20 canciones que sonaron en este canal durante la sesión actual, de la más reciente a la más antigua, incluidas las que se saltaron después de empezar. No aparecen las que se pasaron por alto o se quitaron antes de sonar. Se borra cuando termina la sesión (al parar o cuando Lynx sale).",
-        "example": "Saltas una canción a la mitad: aparece arriba del todo en el historial y puedes volver a añadirla desde ahí."
+        "example": "Saltas una canción a la mitad: aparece hasta arriba en el historial y puedes volver a agregarla desde ahí."
       },
       "sources": {
-        "body": "Las listas y álbumes que tienen canciones sonando ahora o esperando en la cola, apilados como CDs. La lista de la canción actual siempre va delante; las demás esperan detrás en el orden de la cola. Pasa el ratón por la pila para abrirla y haz clic en una portada para abrir la lista, guardarla en tus listas o saltar a su siguiente canción en la cola. Las canciones sueltas y las de la radio no forman parte de ninguna lista.",
-        "example": "Ana añade su playlist de Spotify y Leo su álbum de YouTube Music. Mientras suenan las canciones de Ana, su playlist va delante; cuando empieza la primera canción del álbum de Leo, su álbum pasa al frente."
+        "body": "Las listas y álbumes que tienen canciones sonando ahora o esperando en la cola, apilados como CDs. La lista de la canción actual siempre va delante; las demás esperan detrás en el orden de la cola. Pasa el mouse sobre la pila para abrirla y haz clic en una portada para abrir la lista, guardarla en tus listas o saltar a su siguiente canción en la cola. Las canciones sueltas y las de la radio no forman parte de ninguna lista.",
+        "example": "Ana agrega su playlist de Spotify y Leo su álbum de YouTube Music. Mientras suenan las canciones de Ana, su playlist va delante; cuando empieza la primera canción del álbum de Leo, su álbum pasa al frente."
       }
     },
     "playlists": {
       "list": {
-        "body": "Las playlists, álbumes y páginas de artistas que añades con /play o en la pestaña Cola se guardan aquí para ti, en cualquier servidor, mientras tu historial esté activado. Cuando la lista se llena, deja su sitio la playlist sin fijar que usaste hace más tiempo; las fijadas quedan arriba y nunca se reemplazan. Las listas de canciones se comparten y se guardan una hora; Actualizar vuelve a leer la playlist ahora, una vez cada 5 segundos, y si actualizas demasiadas veces se bloquea durante 5 minutos.",
-        "example": "Tienes 20 playlists guardadas y 3 fijadas. Al añadir el enlace de un álbum nuevo se quita la playlist sin fijar que usaste hace más tiempo; las fijadas se quedan."
+        "body": "Las playlists, álbumes y páginas de artistas que agregas con /play o en la pestaña Cola se guardan aquí para ti, en cualquier servidor, mientras tu historial esté activado. Cuando la lista se llena, deja su lugar la playlist sin fijar que usaste hace más tiempo; las fijadas quedan arriba y nunca se reemplazan. Las listas de canciones se comparten y se guardan una hora; Actualizar vuelve a leer la playlist ahora, una vez cada 5 segundos, y si actualizas demasiadas veces se bloquea durante 5 minutos.",
+        "example": "Tienes 20 playlists guardadas y 3 fijadas. Al agregar el enlace de un álbum nuevo se quita la playlist sin fijar que usaste hace más tiempo; las fijadas se quedan."
       }
     },
     "lyrics": {
@@ -826,8 +826,8 @@
     },
     "radio": {
       "card": {
-        "body": "Va añadiendo canciones elegidas según tus gustos y los de la gente del canal que tiene el historial activado. La primera canción entra en la cola al momento y se añaden más cuando quedan menos de 3. Una indicación opcional orienta lo que elige. Para encenderla necesitas el historial activado; al apagarla, las canciones ya en cola se quedan. No funciona durante una escucha compartida. En Discord, /ai también deja elegir la mezcla (sobre todo tus favoritas, equilibrada o música nueva) y desactivar la mezcla de gustos del canal.",
-        "example": "Enciendes la radio con \"música tranquila para estudiar\". Pone una primera canción al momento y sigue añadiendo otras parecidas hasta que alguien la apaga."
+        "body": "Va agregando canciones elegidas según tus gustos y los de la gente del canal que tiene el historial activado. La primera canción entra en la cola al momento y se agregan más cuando quedan menos de 3. Una indicación opcional orienta lo que elige. Para encenderla necesitas el historial activado; al apagarla, las canciones ya en cola se quedan. No funciona durante un jam. En Discord, /ai también deja elegir la mezcla (sobre todo tus favoritas, equilibrada o música nueva) y desactivar la mezcla de gustos del canal.",
+        "example": "Enciendes la radio con \"música tranquila para estudiar\". Pone una primera canción al momento y sigue agregando otras parecidas hasta que alguien la apaga."
       },
       "picks": {
         "body": "Las canciones que puso la radio y por qué eligió cada una: una de tus favoritas, un artista que te gusta, que encaja con la indicación o que es popular entre gente con gustos como los tuyos. Se muestran hasta 8.",
@@ -845,7 +845,7 @@
       },
       "danger": {
         "body": "Borra al momento y para siempre todo lo que Lynx guardó sobre lo que escuchas: historial, votos de Me gusta y No me gusta, gustos y playlists guardadas. Se mantienen los ajustes del panel (idioma, tema, color y el interruptor del historial).",
-        "example": "Borras tus datos. La pestaña Radio todavía no muestra gustos y tu pestaña Playlists queda vacía hasta que añadas una playlist nueva."
+        "example": "Borras tus datos. La pestaña Radio todavía no muestra gustos y tu pestaña Playlists queda vacía hasta que agregues una playlist nueva."
       }
     }
   },
@@ -867,7 +867,7 @@
     "cardHint_other": "{{count}} listas entre lo que suena y lo que sigue",
     "nowPlaying": "Sonando ahora",
     "upNext": "A continuación",
-    "addedBy": "{{platform}} · añadida por {{name}}",
+    "addedBy": "{{platform}} · agregada por {{name}}",
     "behind": "Detrás: {{names}}",
     "more": "+{{count}}",
     "platforms": {

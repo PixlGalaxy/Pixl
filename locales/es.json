@@ -4,16 +4,16 @@
   },
   "bot": {
     "track": {
-      "live": "En directo",
+      "live": "En vivo",
       "requested_by": "Pedida por {user}",
       "selected_by_ai": "Elegida por la IA"
     },
     "added": {
-      "title": "Añadida a la cola",
+      "title": "Agregada a la cola",
       "playing_now": "Empieza en unos segundos",
       "position": "Posición {position} en la cola",
       "eta": "Suena en unos {minutes} minutos",
-      "list_title": "Se añadió una playlist",
+      "list_title": "Se agregó una playlist",
       "list_named": "{count} canciones de {name}",
       "list": "{count} canciones",
       "source_spotify": "Playlist de Spotify",
@@ -33,7 +33,7 @@
       "panel": "Abrir panel",
       "like": "Me gusta",
       "dislike": "No me gusta",
-      "jam": "Invitar a escuchar",
+      "jam": "Invitar al jam",
       "previous": "Anterior",
       "next": "Siguiente",
       "select": "Seleccionar",
@@ -42,7 +42,7 @@
       "replay": "Volver a reproducir",
       "start_radio": "Iniciar radio",
       "vote": "Votar para saltar",
-      "invite_node": "Añadir otro Lynx",
+      "invite_node": "Agregar otro Lynx",
       "invite_main": "Invitar Lynx",
       "cancel": "Cancelar",
       "stop_radio": "Apagar radio",
@@ -53,8 +53,8 @@
     "now_playing": {
       "title_in": "Sonando en {channel}",
       "played_by": "la reproduce {bot}",
-      "jam_with": "Escucha compartida con {channel} · {count} canales",
-      "jam_host": "Anfitrión de una escucha compartida · {count} canales",
+      "jam_with": "Jam con {channel} · {count} canales",
+      "jam_host": "Anfitrión de un jam · {count} canales",
       "paused": "En pausa",
       "volume": "Volumen: {volume}%"
     },
@@ -68,7 +68,7 @@
       "title": "Cola en {channel}",
       "summary": "{count} canciones · quedan {duration}",
       "now": "Ahora",
-      "empty": "No hay nada en cola. Añade canciones con `/play`.",
+      "empty": "No hay nada en cola. Agrega canciones con `/play`.",
       "page": "Página {page} de {pages}"
     },
     "lyrics": {
@@ -76,7 +76,7 @@
       "footer": "Letra de LRCLIB. El panel la muestra sincronizada con la canción."
     },
     "jam": {
-      "title": "Escucha compartida desde {channel}",
+      "title": "Jam desde {channel}",
       "body": "Comparte este enlace. Quien lo abra ve el panel de Lynx en su propio canal de voz y puede unirse: todos los canales oyen la misma música a la vez.",
       "invite": "O trae a la gente directamente a {channel}: {url}"
     },
@@ -99,8 +99,8 @@
       },
       "queue_finished": {
         "title": "Terminó la cola",
-        "body": "Esa fue la última canción en {channel}. Añade más con `/play`.",
-        "body_ai": "Esa fue la última canción en {channel}. Añade más con `/play` o inicia una radio según tus gustos."
+        "body": "Esa fue la última canción en {channel}. Agrega más con `/play`.",
+        "body_ai": "Esa fue la última canción en {channel}. Agrega más con `/play` o inicia una radio según tus gustos."
       },
       "track_failed": {
         "title": "No se pudo reproducir {track}.",
@@ -119,41 +119,41 @@
         "body": "{user} detuvo la música y salí de {channel}."
       },
       "jam_entered": {
-        "title": "Te uniste a la escucha compartida de {host}",
+        "title": "Te uniste al jam de {host}",
         "body": "{channel} reproduce ahora la cola compartida. Su propia cola queda guardada y vuelve cuando salga."
       },
       "jam_joined": {
-        "title": "{channel} se unió a la escucha compartida",
+        "title": "{channel} se unió al jam",
         "body": "Ahora {count} canales oyen la misma música."
       },
       "jam_left": {
-        "title": "{channel} salió de la escucha compartida",
-        "body": "Quedan {count} canales en la escucha compartida."
+        "title": "{channel} salió del jam",
+        "body": "Quedan {count} canales en el jam."
       },
       "jam_host": {
         "title": "{channel} es ahora el anfitrión",
-        "body": "El canal anfitrión anterior salió de la escucha compartida.",
+        "body": "El canal anfitrión anterior salió del jam.",
         "title_own": "{channel} es ahora el anfitrión",
         "body_own": "El canal anfitrión salió, así que ahora los ajustes se deciden aquí."
       },
       "jam_ended": {
-        "title": "La escucha compartida terminó",
+        "title": "El jam terminó",
         "body": "La música sigue sonando en {channel}.",
         "body_restored": "{channel} vuelve a su propia cola."
       },
       "jam_left_own": {
-        "title": "{channel} salió de la escucha compartida"
+        "title": "{channel} salió del jam"
       },
       "jam_empty": {
         "title": "Aquí no hay nadie escuchando",
-        "body": "Todos salieron de {channel}. Lynx saldrá de la escucha compartida y se desconectará {time} si no entra nadie."
+        "body": "Todos salieron de {channel}. Lynx saldrá del jam y se desconectará {time} si no entra nadie."
       },
       "jam_back": {
-        "title": "Sigue en la escucha compartida",
-        "body": "Alguien entró a {channel}, así que sigue en la escucha compartida."
+        "title": "Sigue en el jam",
+        "body": "Alguien entró a {channel}, así que sigue en el jam."
       },
       "jam_removed": {
-        "title": "Este canal salió de la escucha compartida",
+        "title": "Este canal salió del jam",
         "body": "El anfitrión lo quitó. {channel} vuelve a su propia cola."
       }
     },
@@ -164,13 +164,13 @@
     },
     "busy": {
       "title": "Todos los bots de Lynx están ocupados en este servidor",
-      "body": "Lynx ya está sonando en {busy}. Añade otro Lynx para que pueda sonar en {channel} a la vez.",
-      "body_generic": "Añade otro Lynx para que pueda sonar en {channel} a la vez.",
-      "no_more": "Todos los bots de Lynx ya están sonando en otros canales de voz y no hay más bots para añadir. Inténtalo cuando uno quede libre para sonar en {channel}."
+      "body": "Lynx ya está sonando en {busy}. Agrega otro Lynx para que pueda sonar en {channel} a la vez.",
+      "body_generic": "Agrega otro Lynx para que pueda sonar en {channel} a la vez.",
+      "no_more": "Todos los bots de Lynx ya están sonando en otros canales de voz y no hay más bots para agregar. Inténtalo cuando uno quede libre para sonar en {channel}."
     },
     "invite": {
       "title": "Invita a Lynx",
-      "body": "Añade Lynx a un servidor para poner música en sus canales de voz. Puede añadirlo cualquiera que tenga el permiso Gestionar servidor allí."
+      "body": "Agrega Lynx a un servidor para poner música en sus canales de voz. Puede agregarlo cualquiera que tenga el permiso Administrar servidor allí."
     },
     "about": {
       "tagline": "Música para tus canales de voz, con un panel que se abre dentro de Discord.",
@@ -183,14 +183,14 @@
       "voice_channels": "Canales de voz",
       "playing": "Sonando ahora",
       "memory": "Memoria",
-      "checking": "comprobando",
+      "checking": "verificando",
       "unavailable": "no disponible",
       "license": "AGPL-3.0 con Commons Clause",
       "developed_by": "Desarrollado por {name}",
       "hosted_on": "Alojado en {host}"
     },
     "add_main": {
-      "title": "Añade el Lynx principal",
+      "title": "Agrega el Lynx principal",
       "body": "Este Lynx pone música cuando el Lynx principal está ocupado en otro canal. Para usar los comandos, este servidor también necesita el Lynx principal."
     },
     "radio": {
@@ -229,8 +229,8 @@
       },
       "on": {
         "title": "La radio está encendida",
-        "body": "Añadí {count} canciones a {channel}. Añadiré más cuando queden pocas. Apágala con `/stop` o desde el panel.",
-        "body_one": "Añadí 1 canción a {channel}. Añadiré más cuando queden pocas. Apágala con `/stop` o desde el panel."
+        "body": "Agregué {count} canciones a {channel}. Agregaré más cuando queden pocas. Apágala con `/stop` o desde el panel.",
+        "body_one": "Agregué 1 canción a {channel}. Agregaré más cuando queden pocas. Apágala con `/stop` o desde el panel."
       },
       "failed": {
         "title": "La radio no pudo empezar.",
@@ -239,7 +239,7 @@
       },
       "cancelled": {
         "title": "Radio cancelada.",
-        "body": "No se añadirá nada más a {channel}."
+        "body": "No se agregará nada más a {channel}."
       },
       "stopped": {
         "title": "Radio apagada.",
@@ -265,13 +265,13 @@
       "duration": { "minute": "1 minuto", "minutes": "{n} minutos", "hour": "1 hora", "hours": "{n} horas", "mixed": "{h} h {m} min" }
     },
     "error": {
-      "maintenance": { "title": "Lynx está en mantenimiento.", "body": "Ahora no se pueden añadir canciones nuevas. La música que ya suena sigue sonando." },
+      "maintenance": { "title": "Lynx está en mantenimiento.", "body": "Ahora no se pueden agregar canciones nuevas. La música que ya suena sigue sonando." },
       "generic": { "title": "Algo salió mal.", "body": "Inténtalo de nuevo en un momento." },
       "guild_only": { "title": "Esto solo funciona en un servidor.", "body": "Usa Lynx desde un canal de texto de un servidor." },
       "not_in_voice": { "title": "Primero entra a un canal de voz.", "body": "Pongo música en el canal de voz en el que estás." },
       "no_player": { "title": "No suena nada en tu canal de voz.", "body": "Empieza algo con `/play`." },
       "not_in_channel": { "title": "No estás en ese canal de voz.", "body": "Entra al canal donde suena la música para controlarla." },
-      "dj_only": { "title": "Aquí solo los DJs pueden hacer eso.", "body": "En este servidor los managers decidieron que solo los DJs controlan la música. Aún puedes añadir canciones y quitar las tuyas." },
+      "dj_only": { "title": "Aquí solo los DJs pueden hacer eso.", "body": "En este servidor los managers decidieron que solo los DJs controlan la música. Aún puedes agregar canciones y quitar las tuyas." },
       "manager_only": { "title": "Solo los managers pueden hacer eso.", "body": "" },
       "queue_full": { "title": "La cola está llena.", "body": "Este servidor permite hasta {max} canciones en la cola." },
       "no_results": { "title": "No se encontró nada.", "body": "Prueba otra búsqueda o pega un enlace." },
@@ -280,7 +280,7 @@
       "command_channel": { "title": "Los comandos de Lynx no se pueden usar en este canal.", "body": "Úsalos en {channels}." },
       "voice_channel": { "title": "Lynx no puede reproducir en este canal de voz.", "body": "Un administrador limitó la música a {channels}." },
       "outdated": { "title": "Este mensaje ya no está actualizado.", "body": "Esa canción ya no está sonando." },
-      "expired": { "title": "Estos botones caducaron.", "body": "Usa `/queue` otra vez." },
+      "expired": { "title": "Estos botones expiraron.", "body": "Usa `/queue` otra vez." },
       "invalid_position": { "title": "Esa posición no existe.", "body": "Elige una posición entre 1 y {max}." },
       "restarting": { "title": "Lynx se está reiniciando.", "body": "Inténtalo en un momento." },
       "spotify_disabled": { "title": "Los enlaces de Spotify no están activados.", "body": "Busca la canción por su nombre." },
@@ -289,22 +289,22 @@
       "source": { "title": "No se pudo reproducir.", "body": "{reason}. Prueba otro enlace o busca la canción." },
       "lyrics_not_found": { "title": "No se encontró la letra.", "body": "LRCLIB no tiene la letra de esa canción." },
       "lyrics_nothing": { "title": "No suena nada.", "body": "Usa `/lyrics` con el nombre de una canción." },
-      "no_invite_permission": { "title": "No puedo crear invitaciones aquí.", "body": "Invitar a escuchar necesita el permiso Crear invitación en {channel}." },
+      "no_invite_permission": { "title": "No puedo crear invitaciones aquí.", "body": "Invitar al jam necesita el permiso Crear invitación en {channel}." },
       "radio_unavailable": { "title": "La radio no está disponible.", "body": "La radio con IA está desactivada en este bot." },
       "radio_no_permission": { "title": "No puedes cambiar esta radio.", "body": "Solo quien la inició, los DJs y los administradores pueden hacerlo." },
       "radio_not_active": { "title": "La radio no está encendida.", "body": "Inicia una con `/ai`." },
       "radio_nothing_to_cancel": { "title": "No hay nada que cancelar.", "body": "La radio ya terminó de elegir canciones." },
-      "nothing_to_shuffle": { "title": "No hay nada que mezclar.", "body": "Primero añade más canciones a la cola." },
+      "nothing_to_shuffle": { "title": "No hay nada que mezclar.", "body": "Primero agrega más canciones a la cola." },
       "already_paused": { "title": "La música ya está en pausa.", "body": "Usa `/resume` para continuar." },
       "not_paused": { "title": "La música no está en pausa.", "body": "" },
       "nothing_to_replay": { "title": "Esa cola ya no existe.", "body": "Empieza algo nuevo con `/play`." },
-      "radio_in_jam": { "title": "La radio no funciona en una escucha compartida.", "body": "Sal de la escucha compartida para iniciar una radio en este canal." },
+      "radio_in_jam": { "title": "La radio no funciona en un jam.", "body": "Sal del jam para iniciar una radio en este canal." },
       "jam_host_only": { "title": "Solo el canal anfitrión puede cambiar la música.", "body": "El anfitrión decidió que solo la gente de {channel} edite la cola compartida." },
       "rate_limited": { "title": "Más despacio.", "body": "Estás haciendo eso demasiado seguido. Inténtalo de nuevo en un minuto." },
       "vote_not_eligible": { "title": "Quien está ensordecido no puede votar para saltar.", "body": "Quita el ensordecimiento para votar, o pide a alguien con control que salte la canción." },
       "playlist_none": { "title": "Aún no tienes playlists guardadas.", "body": "Las playlists se guardan solas cuando usas `/play` con el enlace de una playlist o un álbum, o desde la pestaña Playlists del panel." },
       "playlist_not_yours": { "title": "Esta selección no es tuya.", "body": "Usa `/playlist` para elegir una de tus playlists guardadas." },
-      "playlist_expired": { "title": "Esta selección caducó.", "body": "Vuelve a usar `/playlist`." },
+      "playlist_expired": { "title": "Esta selección expiró.", "body": "Vuelve a usar `/playlist`." },
       "playlist_gone": { "title": "Esa playlist ya no está guardada.", "body": "Vuelve a usar `/playlist` para elegir otra." },
       "settings_unavailable": { "title": "Lynx no pudo revisar los ajustes de este servidor.", "body": "Inténtalo de nuevo en un momento." }
     },
