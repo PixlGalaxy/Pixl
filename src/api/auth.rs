@@ -1,5 +1,6 @@
-//! `GET /api/public`, `POST /api/auth`, the session extractors and the per-request permission
-//! check (manager through Discord, DJ from the store, voice channel from the main bot's cache).
+//! `GET /api/public`, `POST /api/auth` (sign-in), `DELETE /api/auth` (sign-out), the session
+//! extractors and the per-request permission check (manager through Discord, DJ from the store, voice
+//! channel from the main bot's cache).
 
 use std::{
     net::{IpAddr, SocketAddr},
@@ -8,7 +9,7 @@ use std::{
 
 use axum::{
     extract::{ConnectInfo, FromRequestParts, State},
-    http::{request::Parts, HeaderMap},
+    http::{request::Parts, HeaderMap, StatusCode},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -201,6 +202,23 @@ pub async fn login(
     }))
 }
 
+/// `DELETE /api/auth`: sign this session out (its sockets close too). Other sessions of the user stay.
+pub async fn logout(State(st): State<ApiState>, Auth(s): Auth, headers: HeaderMap) -> ApiResult<StatusCode> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .ok_or_else(ApiError::unauthorized)?;
+    st.sessions
+        .revoke(token)
+        .await
+        .map_err(|e| ApiError::internal("could not sign out", e))?;
+    st.sockets.close(s.user_id, Some(&super::session::hash_token(token)));
+    info!(user = s.user_id, "panel sign-out");
+    Ok(StatusCode::NO_CONTENT)
+}
+
 impl ApiState {
     /// Membership and manager status, re-checked through Discord at most every `MEMBER_TTL`.
     pub async fn member_status(&self, guild_id: u64, user_id: u64) -> ApiResult<MemberStatus> {
@@ -249,7 +267,12 @@ impl ApiState {
 
     pub async fn permissions(&self, guild_id: u64, user_id: u64, channel: Option<u64>) -> ApiResult<Permissions> {
         let actor = self.actor(guild_id, user_id, channel, false).await?;
-        let settings = self.app.store.guild_settings(guild_id).await.unwrap_or_default();
+        let settings = self
+            .app
+            .store
+            .guild_settings(guild_id)
+            .await
+            .map_err(|e| ApiError::internal("could not read the guild settings", e))?;
         Ok(Permissions::of(&actor, &settings))
     }
 

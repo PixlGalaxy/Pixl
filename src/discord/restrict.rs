@@ -44,6 +44,24 @@ pub fn blocked(rules: &ChannelRules, channel: u64, command: Option<&str>, manage
     }
 }
 
+/// The channel rules, failing closed: when they can't be read the interaction is refused with a
+/// generic error key (never the defaults, which allow every channel). `Ok(None)`: a command that
+/// works anywhere, no rules needed.
+fn rules_or_refuse(
+    rules: anyhow::Result<ChannelRules>,
+    guild: u64,
+    command: Option<&str>,
+) -> Result<Option<ChannelRules>, &'static str> {
+    match rules {
+        Ok(r) => Ok(Some(r)),
+        Err(_) if command.is_some_and(|c| ANYWHERE.contains(&c)) => Ok(None),
+        Err(e) => {
+            tracing::warn!(guild, error = %e, "could not read the channel rules; refusing");
+            Err("settings_unavailable")
+        }
+    }
+}
+
 /// Answer a slash command or button used outside the allowed text channels. Returns true when the
 /// interaction was blocked (and answered).
 pub async fn reject(lynx: &Lynx, http: &Http, interaction: &Interaction) -> bool {
@@ -71,7 +89,15 @@ pub async fn reject(lynx: &Lynx, http: &Http, interaction: &Interaction) -> bool
     let Some(guild) = guild.map(|g| g.get()) else {
         return false;
     };
-    let rules = lynx.store.channel_rules(guild).await.unwrap_or_default();
+    let rules = match rules_or_refuse(lynx.store.channel_rules(guild).await, guild, command) {
+        Ok(Some(r)) => r,
+        Ok(None) => return false,
+        Err(key) => {
+            let msg = cards::error_key(key, &[], &lynx.i18n);
+            respond::respond(http, id, token, &msg.to_callback(callback::MESSAGE)).await;
+            return true;
+        }
+    };
     let Some(allowed) = blocked(&rules, channel, command, false) else {
         return false;
     };
@@ -155,5 +181,22 @@ mod tests {
                 "/invite still works anywhere"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn unreadable_rules_refuse_instead_of_allowing_everything() {
+        let store = crate::store::Store::open_in_memory().await.unwrap();
+        store.close().await;
+        let rules = store.channel_rules(1).await;
+        assert!(rules.is_err(), "a closed store fails");
+        assert_eq!(rules_or_refuse(rules, 1, Some("play")), Err("settings_unavailable"));
+        let rules = store.channel_rules(1).await;
+        assert_eq!(rules_or_refuse(rules, 1, None), Err("settings_unavailable"), "buttons too");
+        let rules = store.channel_rules(1).await;
+        assert_eq!(rules_or_refuse(rules, 1, Some("invite")), Ok(None), "/invite works anywhere");
+        assert_eq!(
+            rules_or_refuse(Ok(ChannelRules::default()), 1, Some("play")),
+            Ok(Some(ChannelRules::default()))
+        );
     }
 }

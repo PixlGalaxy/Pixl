@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, BACKEND, getSession } from './api'
 import { onBackendRecovered, reportBackendTrouble } from './health'
+import { authMessage, closeAction } from './socket'
 import { useLayoutMode } from './layout'
 import { acceptState, anchorFrom as anchorAt, freshFetch, shouldPoll, type PositionAnchor } from './sync'
 import type { AiState, ChannelRef, GuildSettings, Permissions, PlayerState, ServerMessage } from './types'
@@ -9,6 +10,8 @@ export type { PositionAnchor } from './sync'
 
 const PING_MS = 25_000
 const POLL_MS = 5_000
+/** A socket closed because the user opened too many panels waits this long before trying again. */
+const REPLACED_RETRY_MS = 60_000
 
 /** Anchor from a server sample, taken now (see `sync.anchorFrom`). */
 export function anchorFrom(positionMs: number, positionAt: number, serverNow?: number): PositionAnchor {
@@ -87,22 +90,26 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
       const session = getSession()
       if (!session || closed) return
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const params = new URLSearchParams({ session })
+      // Signed in once the server sent its first message (it answers the `auth` message).
       let opened = false
       try {
-        ws = new WebSocket(`${proto}://${location.host}${BACKEND}/ws?${params}`)
+        // The session goes in the first message, never in the URL (proxies log URLs).
+        ws = new WebSocket(`${proto}://${location.host}${BACKEND}/ws`)
       } catch {
         schedule()
         return
       }
       ws.onopen = () => {
-        opened = true
-        attempts = 0
-        socketOpenRef.current = true
-        setSocketOpen(true)
+        ws?.send(authMessage(session))
         ping = setInterval(() => ws?.readyState === WebSocket.OPEN && ws.send('{"type":"ping"}'), PING_MS)
       }
       ws.onmessage = (event) => {
+        if (!opened) {
+          opened = true
+          attempts = 0
+          socketOpenRef.current = true
+          setSocketOpen(true)
+        }
         let msg: ServerMessage
         try {
           msg = JSON.parse(String(event.data)) as ServerMessage
@@ -138,22 +145,24 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
             break
         }
       }
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         socketOpenRef.current = false
         setSocketOpen(false)
         clearInterval(ping)
+        const action = closeAction(event.code, opened)
         // Not closed by us: maybe the backend went away (the health check decides).
-        reportBackendTrouble()
-        // The handshake failed (the browser hides the status): a plain request finds out whether the
-        // session was refused and renews it, so the next attempt carries the new one.
-        if (!opened) void refresh()
-        schedule()
+        if (action !== 'replaced') reportBackendTrouble()
+        // The session was refused (or the socket never got going): a plain request finds out and
+        // renews the session, so the next attempt carries the new one.
+        if (action === 'renew') void refresh()
+        // Too many panels of this user are open: this one stays on polling for a while.
+        schedule(action === 'replaced' ? REPLACED_RETRY_MS : undefined)
       }
     }
-    const schedule = () => {
+    const schedule = (delayMs?: number) => {
       if (closed) return
       attempts += 1
-      retry = setTimeout(open, Math.min(30_000, 1_000 * 2 ** Math.min(attempts, 5)))
+      retry = setTimeout(open, delayMs ?? Math.min(30_000, 1_000 * 2 ** Math.min(attempts, 5)))
     }
 
     open()

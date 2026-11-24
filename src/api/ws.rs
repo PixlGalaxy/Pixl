@@ -1,32 +1,41 @@
-//! `GET /ws?session=`: live player state of the voice channel the user is in.
+//! `GET /ws`: live player state of the voice channel the user is in.
 //!
-//! On connect `channel` (the followed voice channel, null when the user is not in voice) and the full
-//! `state` go out (null when nothing plays; the socket then waits for a player to appear). When the
+//! The session token never goes in the URL (proxies log URLs): the client opens the socket and sends
+//! `{"type":"auth","session":"..."}` as its first message, within [`AUTH_TIMEOUT`]. A refused session
+//! closes the socket with code [`CLOSE_UNAUTHORIZED`] (the panel renews it and reconnects); a user has
+//! at most [`MAX_SOCKETS_PER_USER`] sockets, opening another closes the oldest ([`CLOSE_REPLACED`]).
+//!
+//! Once signed in, `channel` (the followed voice channel, null when the user is not in voice) and the
+//! full `state` go out (null when nothing plays; the socket then waits for a player to appear). When the
 //! user joins, leaves or moves between voice channels a new `channel` message is pushed and the socket
 //! switches to that channel's player (its `state` follows). Player events become `state` / `position`
 //! messages, guild settings changes become `settings`, and permission changes `permissions`. Writes go
 //! through a small bounded queue; a client that can't keep up, stops pinging, or whose session expired
-//! is disconnected.
+//! or was revoked is disconnected.
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        atomic::{AtomicU16, AtomicU64, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
 use axum::{
     extract::{
-        ws::{rejection::WebSocketUpgradeRejection, Message, WebSocket},
+        ws::{rejection::WebSocketUpgradeRejection, CloseFrame, Message, WebSocket},
         State, WebSocketUpgrade,
     },
     response::{IntoResponse, Response},
 };
+use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
+use tokio_util::sync::CancellationToken;
 
-use super::{
-    error::{ApiError, Params},
-    settings::settings_message,
-    ApiState, GuildEvent,
-};
+use super::{session::hash_token, settings::settings_message, ApiState, GuildEvent};
 use crate::{
     perms::Permissions,
     player::{state::epoch_ms, PlayerEvent, PlayerHandle},
@@ -39,39 +48,161 @@ const OUT_QUEUE: usize = 32;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_IN_MESSAGE: usize = 4 * 1024;
 const MAX_WRITE_BUFFER: usize = 8 * 1024 * 1024;
+/// The `auth` message must arrive this soon after the upgrade.
+pub const AUTH_TIMEOUT: Duration = Duration::from_secs(5);
+pub const MAX_SOCKETS_PER_USER: usize = 5;
+/// Close codes (application range 4000-4999).
+pub const CLOSE_UNAUTHORIZED: u16 = 4401;
+pub const CLOSE_FORBIDDEN: u16 = 4403;
+pub const CLOSE_AUTH_TIMEOUT: u16 = 4408;
+pub const CLOSE_REPLACED: u16 = 4429;
 
-/// A `channelId` sent by older panels is ignored: the server follows the user's voice channel.
-#[derive(Deserialize)]
-pub struct WsQuery {
-    session: String,
+/// Open sockets per user, so a user can't hold an unbounded number of them and a revoked session
+/// (sign-out, data wipe) closes its sockets right away.
+#[derive(Default)]
+pub struct Sockets {
+    next: AtomicU64,
+    by_user: DashMap<u64, Vec<Slot>>,
 }
 
-pub async fn upgrade(
-    State(st): State<ApiState>,
-    Params(q): Params<WsQuery>,
-    ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
-) -> Response {
-    // Authenticate before looking at the upgrade, so a bad session never gets a socket.
-    let Some(session) = st.sessions.get(&q.session).await else {
-        return ApiError::unauthorized().into_response();
-    };
-    let Some(guild) = session.guild_id else {
-        return ApiError::invalid("Open the panel from a server").into_response();
-    };
-    match st.member_status(guild, session.user_id).await {
-        Ok(s) if s.member => {}
-        Ok(_) => return ApiError::no_permission().into_response(),
-        Err(e) => return e.into_response(),
+struct Slot {
+    id: u64,
+    token_hash: String,
+    close: Closer,
+}
+
+/// Asks one socket to close with a code.
+#[derive(Clone, Default)]
+pub struct Closer(Arc<(CancellationToken, AtomicU16)>);
+
+impl Closer {
+    fn close(&self, code: u16) {
+        // The first reason wins.
+        let _ = self.0 .1.compare_exchange(0, code, Ordering::Relaxed, Ordering::Relaxed);
+        self.0 .0.cancel();
     }
+
+    /// Resolves with the close code once asked to close.
+    pub async fn closed(&self) -> u16 {
+        self.0 .0.cancelled().await;
+        self.0 .1.load(Ordering::Relaxed)
+    }
+}
+
+/// Unregisters its socket when dropped.
+pub struct SocketGuard<'a> {
+    sockets: &'a Sockets,
+    user: u64,
+    id: u64,
+    pub close: Closer,
+}
+
+impl Drop for SocketGuard<'_> {
+    fn drop(&mut self) {
+        let id = self.id;
+        self.sockets.by_user.remove_if_mut(&self.user, |_, v| {
+            v.retain(|s| s.id != id);
+            v.is_empty()
+        });
+    }
+}
+
+impl Sockets {
+    /// Register a new socket of `user`; the oldest ones are closed past [`MAX_SOCKETS_PER_USER`].
+    pub fn register(&self, user: u64, token_hash: String) -> SocketGuard<'_> {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let close = Closer::default();
+        let mut slots = self.by_user.entry(user).or_default();
+        while slots.len() >= MAX_SOCKETS_PER_USER {
+            slots.remove(0).close.close(CLOSE_REPLACED);
+        }
+        slots.push(Slot {
+            id,
+            token_hash,
+            close: close.clone(),
+        });
+        drop(slots);
+        SocketGuard {
+            sockets: self,
+            user,
+            id,
+            close,
+        }
+    }
+
+    /// Close every socket of a user, or only those of one session.
+    pub fn close(&self, user: u64, token_hash: Option<&str>) {
+        if let Some(slots) = self.by_user.get(&user) {
+            for s in slots.iter().filter(|s| token_hash.is_none_or(|h| h == s.token_hash)) {
+                s.close.close(CLOSE_UNAUTHORIZED);
+            }
+        }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn count(&self, user: u64) -> usize {
+        self.by_user.get(&user).map_or(0, |v| v.len())
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum ClientHello {
+    Auth { session: String },
+}
+
+/// Query parameters are ignored: older panels sent `channelId` (the server follows the user's voice
+/// channel) and `session` (now refused there, it must come in the `auth` message).
+pub async fn upgrade(State(st): State<ApiState>, ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>) -> Response {
     let ws = match ws {
         Ok(ws) => ws,
         Err(e) => return e.into_response(),
     };
-    let token = q.session;
     ws.max_message_size(MAX_IN_MESSAGE)
         .max_frame_size(MAX_IN_MESSAGE)
         .max_write_buffer_size(MAX_WRITE_BUFFER)
-        .on_upgrade(move |socket| run(st, token, session.user_id, guild, socket))
+        .on_upgrade(move |socket| authenticate(st, socket))
+}
+
+async fn close_with(mut socket: WebSocket, code: u16, reason: &'static str) {
+    let frame = CloseFrame {
+        code,
+        reason: reason.into(),
+    };
+    let _ = tokio::time::timeout(WRITE_TIMEOUT, socket.send(Message::Close(Some(frame)))).await;
+}
+
+/// Wait for the `auth` message, check the session like the REST routes do, then run the socket.
+async fn authenticate(st: ApiState, mut socket: WebSocket) {
+    let first = tokio::select! {
+        m = tokio::time::timeout(AUTH_TIMEOUT, socket.recv()) => m,
+        _ = st.app.shutdown.cancelled() => return,
+    };
+    let token = match first {
+        Err(_) => return close_with(socket, CLOSE_AUTH_TIMEOUT, "auth timeout").await,
+        Ok(Some(Ok(Message::Text(text)))) => match serde_json::from_str::<ClientHello>(&text) {
+            Ok(ClientHello::Auth { session }) => session,
+            Err(_) => return close_with(socket, CLOSE_UNAUTHORIZED, "auth expected").await,
+        },
+        Ok(Some(Ok(_))) => return close_with(socket, CLOSE_UNAUTHORIZED, "auth expected").await,
+        Ok(_) => return,
+    };
+    let Some(session) = st.sessions.get(&token).await else {
+        return close_with(socket, CLOSE_UNAUTHORIZED, "unauthorized").await;
+    };
+    let Some(guild) = session.guild_id else {
+        return close_with(socket, CLOSE_FORBIDDEN, "open the panel from a server").await;
+    };
+    match st.member_status(guild, session.user_id).await {
+        Ok(s) if s.member => {}
+        Ok(_) => return close_with(socket, CLOSE_FORBIDDEN, "no permission").await,
+        // Discord hiccup: a plain close, the panel retries with backoff.
+        Err(_) => return close_with(socket, 1011, "try again").await,
+    }
+    let guard = st.sockets.register(session.user_id, hash_token(&token));
+    let close = guard.close.clone();
+    run(st.clone(), token, session.user_id, guild, socket, close).await;
+    drop(guard);
 }
 
 type Attached = Option<(PlayerHandle, broadcast::Receiver<PlayerEvent>)>;
@@ -92,7 +223,7 @@ fn attach(st: &ApiState, guild: u64, channel: Option<u64>) -> Attached {
 
 struct Conn {
     st: ApiState,
-    out: mpsc::Sender<String>,
+    out: mpsc::Sender<Message>,
     user: u64,
     guild: u64,
     /// Followed voice channel: the user's current one.
@@ -105,7 +236,7 @@ struct Conn {
 impl Conn {
     /// Queue a message; false when the client is too slow (queue full) or gone.
     fn push(&self, v: Value) -> bool {
-        self.out.try_send(v.to_string()).is_ok()
+        self.out.try_send(Message::Text(v.to_string().into())).is_ok()
     }
 
     /// Full state, then a `jam` message when the channel's jam changed (joined, left, edited).
@@ -167,12 +298,12 @@ impl Conn {
     }
 }
 
-async fn run(st: ApiState, token: String, user: u64, guild: u64, socket: WebSocket) {
+async fn run(st: ApiState, token: String, user: u64, guild: u64, socket: WebSocket, closer: Closer) {
     let (mut sink, mut stream) = socket.split();
-    let (out, mut out_rx) = mpsc::channel::<String>(OUT_QUEUE);
+    let (out, mut out_rx) = mpsc::channel::<Message>(OUT_QUEUE);
     let writer = tokio::spawn(async move {
-        while let Some(text) = out_rx.recv().await {
-            match tokio::time::timeout(WRITE_TIMEOUT, sink.send(Message::Text(text.into()))).await {
+        while let Some(msg) = out_rx.recv().await {
+            match tokio::time::timeout(WRITE_TIMEOUT, sink.send(msg)).await {
                 Ok(Ok(())) => {}
                 _ => return,
             }
@@ -259,10 +390,18 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, socket: WebSock
             },
             _ = tick.tick() => {
                 // Also re-resolves the channel, in case a voice update was missed.
-                open = st.sessions.get(&token).await.is_some()
-                    && last_seen.elapsed() < IDLE_TIMEOUT
+                if st.sessions.get(&token).await.is_none() {
+                    closer.close(CLOSE_UNAUTHORIZED);
+                    continue;
+                }
+                open = last_seen.elapsed() < IDLE_TIMEOUT
                     && conn.follow(&mut player, &mut last_generation).await
                     && conn.permissions().await;
+            },
+            code = closer.closed() => {
+                let frame = CloseFrame { code, reason: "".into() };
+                let _ = conn.out.try_send(Message::Close(Some(frame)));
+                open = false;
             },
             _ = st.app.shutdown.cancelled() => open = false,
         }

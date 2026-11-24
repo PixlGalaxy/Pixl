@@ -160,6 +160,19 @@ impl BotInfo {
         Some(guild.user_permissions_in(channel, me))
     }
 
+    /// Permissions of a member (from an interaction, roles included) in a guild channel, from this
+    /// bot's cache. None when the guild or the channel is not cached.
+    pub fn member_permissions_in(
+        &self,
+        guild_id: u64,
+        channel_id: u64,
+        member: &serenity::all::Member,
+    ) -> Option<Permissions> {
+        let guild = self.cache.guild(GuildId::new(guild_id))?;
+        let channel = guild.channels.get(&ChannelId::new(channel_id))?;
+        Some(guild.user_permissions_in(channel, member))
+    }
+
     /// Can join and speak in the voice channel.
     pub fn can_play_in(&self, guild_id: u64, channel_id: u64) -> bool {
         self.channel_permissions(guild_id, channel_id)

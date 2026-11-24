@@ -671,6 +671,12 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
     for (const ws of sockets.keys()) ws.close()
     return { epoch: sessionEpoch }
   }
+  if (method === 'DELETE' && path === '/auth') {
+    // Sign-out: the mock has one shared session epoch, so this signs every mock session out.
+    sessionEpoch += 1
+    for (const ws of sockets.keys()) ws.close(4401, 'unauthorized')
+    return undefined
+  }
   if (path === '/auth') {
     if (!voiceInitialized) {
       s.voice = f.voice
@@ -777,7 +783,7 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
   if (method === 'GET' && jamMatch) {
     const id = jamMatch[1]!.replace(/^jam-/, '')
     const j = jams.get(id)
-    if (!/^[a-z0-9]{10}$/.test(id)) throw new HttpError(400, 'invalid')
+    if (!/^[a-z0-9]{10,16}$/.test(id)) throw new HttpError(400, 'invalid')
     if (!j) throw new HttpError(404, 'jam_ended')
     const code = !s.voice
       ? 'not_in_channel'
@@ -807,6 +813,8 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       return changed()
     case 'POST /player/skip':
       if (!permissionsFor(f).canControl && !s.settings.voteSkip.enabled) throw new HttpError(403, 'no_permission')
+      // Like the backend: a skip for a track that already ended does nothing (double click).
+      if (typeof body.expectedUid === 'string' && body.expectedUid !== s.current?.uid) return undefined
       advance()
       return changed()
     case 'POST /player/previous': {
@@ -979,6 +987,9 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
     case 'DELETE /me/data':
       tasteHistory = []
       savedPlaylists = []
+      // Like the backend: every session of the user is revoked (the panel signs in again silently).
+      sessionEpoch += 1
+      for (const ws of sockets.keys()) ws.close(4401, 'unauthorized')
       return undefined
     case 'POST /playlists/save': {
       initPlaylists(new URL(req.headers.referer ?? 'http://x/').search)
@@ -1183,24 +1194,37 @@ export function mockApi(): Plugin {
       server.httpServer?.on('upgrade', (req, socket, head) => {
         const url = new URL(req.url ?? '/', 'http://localhost')
         if (url.pathname !== '/backend/ws') return
-        const session = url.searchParams.get('session')
         if (backendOffline) {
           socket.write('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n')
           socket.destroy()
           return
         }
-        if (!sessionValid(session)) {
-          socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
-          socket.destroy()
-          return
-        }
+        // Like the backend: the session comes in the first message (`auth`), within 5 s.
         wss.handleUpgrade(req, socket, head, (ws) => {
-          const flags = decodeFlags(session)
-          sockets.set(ws, flags)
-          send(ws, { type: 'channel', channel: channelRef(s.voice) })
-          send(ws, { type: 'state', state: snapshot(flags) })
-          send(ws, { type: 'permissions', permissions: permissionsFor(flags) })
-          ws.on('close', () => sockets.delete(ws))
+          const timer = setTimeout(() => ws.close(4408, 'auth timeout'), 5_000)
+          ws.once('message', (data) => {
+            clearTimeout(timer)
+            let session: string | null = null
+            try {
+              const hello = JSON.parse(String(data)) as { type?: string; session?: string }
+              if (hello.type === 'auth' && typeof hello.session === 'string') session = hello.session
+            } catch {
+              session = null
+            }
+            if (!sessionValid(session)) {
+              ws.close(4401, 'unauthorized')
+              return
+            }
+            const flags = decodeFlags(session)
+            sockets.set(ws, flags)
+            send(ws, { type: 'channel', channel: channelRef(s.voice) })
+            send(ws, { type: 'state', state: snapshot(flags) })
+            send(ws, { type: 'permissions', permissions: permissionsFor(flags) })
+          })
+          ws.on('close', () => {
+            clearTimeout(timer)
+            sockets.delete(ws)
+          })
         })
       })
     },

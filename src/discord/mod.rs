@@ -59,6 +59,8 @@ pub struct Lynx {
     pub bots: Arc<BotRegistry>,
     pub players: PlayerManager,
     pub jam: JamInvites,
+    /// Per-user rate limits (shared with the panel API).
+    pub limits: Arc<crate::limits::UserLimits>,
     /// yt-dlp version shown by `/about`.
     pub ytdlp_version: Arc<about::YtdlpVersion>,
     /// Startup finished (guilds loaded, nodes reconciled, sessions resumed).
@@ -294,7 +296,14 @@ impl EventHandler for Handler {
         }
         let old_channel = old.as_ref().and_then(|o| o.channel_id).map(|c| c.get());
         if old.is_some() && old_channel == new_channel {
-            return; // mute / deafen / stream change
+            // Mute / deafen / stream change. Deafened people don't vote to skip: tell the player
+            // so it rechecks the votes (the cache already has the new state).
+            if deafen_changed(old.as_ref(), &new) {
+                if let Some(p) = new_channel.and_then(|c| lynx.players.get(g, c)) {
+                    let _ = p.listeners_changed().await;
+                }
+            }
+            return;
         }
         lynx.bots.voice_moved(g, user);
         let targets = if old.is_none() {
@@ -320,6 +329,11 @@ impl EventHandler for Handler {
             interactions::handle_node(lynx, ctx.http.clone(), interaction).await;
         }
     }
+}
+
+/// Whether a voice state update in the same channel changed server or self deafen.
+fn deafen_changed(old: Option<&VoiceState>, new: &VoiceState) -> bool {
+    old.is_some_and(|o| (o.deaf, o.self_deaf) != (new.deaf, new.self_deaf))
 }
 
 /// A Lynx bot's own voice state changed: kicked, moved, or (re)joined.

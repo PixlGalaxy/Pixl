@@ -3,11 +3,13 @@ mod api;
 mod config;
 mod discord;
 mod i18n;
+mod limits;
 mod perms;
 mod player;
 mod procs;
 mod sources;
 mod store;
+mod text;
 
 use std::{sync::Arc, time::Duration};
 
@@ -45,6 +47,8 @@ pub struct AppState {
     pub ai: AiEngine,
     /// Cached yt-dlp version (`/about` and the health endpoint).
     pub ytdlp_version: Arc<YtdlpVersion>,
+    /// Per-user rate limits shared by the panel and the Discord commands.
+    pub limits: Arc<limits::UserLimits>,
     pub shutdown: CancellationToken,
 }
 
@@ -107,6 +111,7 @@ async fn main() -> Result<()> {
     tokio::spawn(stream_limit_task(sources.clone(), players.clone(), shutdown.clone()));
 
     let ytdlp_version = Arc::new(YtdlpVersion::default());
+    let limits = Arc::new(limits::UserLimits::default());
     let state = AppState {
         config: config.clone(),
         store: store.clone(),
@@ -117,9 +122,11 @@ async fn main() -> Result<()> {
         players: players.clone(),
         ai: ai.clone(),
         ytdlp_version: ytdlp_version.clone(),
+        limits: limits.clone(),
         shutdown: shutdown.clone(),
     };
     let lynx = Arc::new(Lynx {
+        limits: limits.clone(),
         config: config.clone(),
         i18n,
         store: store.clone(),

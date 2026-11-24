@@ -342,6 +342,9 @@ pub struct JamCore {
     next_join: u64,
     rev: u64,
     tracks: (u64, Arc<Vec<Entry>>),
+    /// `max_queue_length` of the host's guild (last reported): enqueues from members of other
+    /// servers follow it, not their own server's limit.
+    host_max_queue: Option<usize>,
 }
 
 impl JamCore {
@@ -366,6 +369,7 @@ impl JamCore {
             next_join: 1,
             rev: 0,
             tracks: (0, Arc::new(Vec::new())),
+            host_max_queue: None,
         };
         match host_position {
             Some(p) if queue.current().is_some() => {
@@ -583,6 +587,8 @@ impl JamCore {
             match self.members.iter().filter(|m| m.has_humans).min_by_key(|m| m.joined) {
                 Some(next) => {
                     self.host = next.key;
+                    // The new host's guild limit is learned from its next report / enqueue.
+                    self.host_max_queue = None;
                     out.host_changed = true;
                 }
                 None => {
@@ -726,8 +732,13 @@ impl JamCore {
             Command::Resume { reply } => {
                 let _ = reply.send(self.resume(now_ms));
             }
-            Command::Skip { reply, .. } => {
-                let _ = reply.send(self.skip(now_ms));
+            Command::Skip { reply, expected, .. } => {
+                let outcome = match (expected, self.queue.current()) {
+                    // Another member skipped first (or a double click): don't skip the next one.
+                    (Some(uid), Some(e)) if e.uid != uid => SkipOutcome::Outdated,
+                    _ => self.skip(now_ms),
+                };
+                let _ = reply.send(outcome);
             }
             Command::Previous { reply } => {
                 let _ = reply.send(self.previous(now_ms));
@@ -790,11 +801,42 @@ impl JamCore {
         true
     }
 
-    /// An edit from a channel that may not edit: answered with "nothing changed".
+    /// The limit an enqueue from `from` follows: the host's server's (its own enqueues report it),
+    /// also for members of other servers. Unknown yet: the sender's own.
+    fn queue_limit(&mut self, from: SessionKey, sender_max: usize) -> usize {
+        if from.guild_id == self.host.guild_id {
+            self.host_max_queue = Some(sender_max);
+            sender_max
+        } else {
+            self.host_max_queue.unwrap_or(sender_max)
+        }
+    }
+
+    /// An edit from a member that may edit: enqueues follow the host server's queue limit.
+    fn edit_from(&mut self, from: SessionKey, cmd: Command, rng: &mut fastrand::Rng, now_ms: i64) -> bool {
+        let cmd = match cmd {
+            Command::Enqueue {
+                entries,
+                max,
+                text_channel,
+                reply,
+            } => Command::Enqueue {
+                entries,
+                max: self.queue_limit(from, max),
+                text_channel,
+                reply,
+            },
+            cmd => cmd,
+        };
+        self.edit(cmd, rng, now_ms)
+    }
+
+    /// An edit from a channel that may not edit: answered with "nothing changed" (an enqueue with
+    /// "not allowed", so the user learns why).
     fn refuse(cmd: Command) {
         match cmd {
             Command::Enqueue { reply, .. } => {
-                let _ = reply.send(Err(PushError::Full { max: 0 }));
+                let _ = reply.send(Err(PushError::NotAllowed));
             }
             Command::Pause { reply } | Command::Resume { reply } => {
                 let _ = reply.send(false);
@@ -876,6 +918,11 @@ pub enum JamCmd {
     Kick {
         key: SessionKey,
         reply: oneshot::Sender<bool>,
+    },
+    /// The host server's `max_queue_length` (on create and when its settings change).
+    HostLimit {
+        key: SessionKey,
+        max: usize,
     },
     End,
 }
@@ -1027,18 +1074,28 @@ impl Jams {
     }
 }
 
+/// Length of a new jam id: 14 characters of a 32-letter alphabet (70 bits from the OS random source),
+/// so ids can't be guessed or enumerated.
+pub const ID_LEN: usize = 14;
+const ID_ALPHABET: &[u8; 32] = b"abcdefghijkmnpqrstuvwxyz23456789";
+
 fn new_id() -> String {
-    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
-    let mut rng = fastrand::Rng::new();
-    (0..10).map(|_| ALPHABET[rng.usize(..ALPHABET.len())] as char).collect()
+    let mut buf = [0u8; ID_LEN];
+    getrandom::fill(&mut buf).expect("OS random source");
+    id_from_bytes(&buf)
 }
 
-/// Jam ids in links and API bodies: the 10 characters of [`new_id`], optionally with the
-/// `custom_id` prefix.
+/// 256 is a multiple of 32, so the low 5 bits of a uniform byte are uniform.
+fn id_from_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| ID_ALPHABET[(*b & 31) as usize] as char).collect()
+}
+
+/// Jam ids in links and API bodies: [`new_id`] (jams made before used 10 characters), optionally with
+/// the `custom_id` prefix.
 pub fn parse_id(raw: &str) -> Option<&str> {
     let id = raw.trim();
     let id = id.strip_prefix(CUSTOM_ID_PREFIX).unwrap_or(id);
-    (id.len() == 10 && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())).then_some(id)
+    ((10..=16).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())).then_some(id)
 }
 
 async fn until_ms(deadline_ms: Option<i64>) {
@@ -1106,7 +1163,7 @@ fn handle(core: &mut JamCore, cmd: JamCmd, rng: &mut fastrand::Rng) -> bool {
         JamCmd::Humans { key, has } => core.set_humans(key, has),
         JamCmd::Edit { from, cmd } => {
             if core.may_edit(from) {
-                core.edit(cmd, rng, now)
+                core.edit_from(from, cmd, rng, now)
             } else {
                 JamCore::refuse(cmd);
                 false
@@ -1132,6 +1189,13 @@ fn handle(core: &mut JamCore, cmd: JamCmd, rng: &mut fastrand::Rng) -> bool {
             let done = core.kick(key, now);
             let _ = reply.send(done);
             done
+        }
+        JamCmd::HostLimit { key, max } => {
+            // Only from the current host channel's player (the limit of its server).
+            if key == core.host {
+                core.host_max_queue = Some(max);
+            }
+            false
         }
         JamCmd::End => {
             core.end();
@@ -1292,6 +1356,93 @@ mod tests {
     }
 
     #[test]
+    fn enqueues_follow_the_host_servers_limit_and_refusals_say_why() {
+        let now = 1_000_000;
+        let mut core = playing_jam(now);
+        core.settings.allow_servers = true;
+        core.join(member(G2, 20), now).unwrap();
+        let mut rng = fastrand::Rng::with_seed(1);
+        let mut enqueue = |core: &mut JamCore, from: SessionKey, ids: &[&str], max: usize| {
+            let (tx, mut rx) = oneshot::channel();
+            let cmd = Command::Enqueue {
+                entries: entries(ids),
+                max,
+                text_channel: None,
+                reply: tx,
+            };
+            core.edit_from(from, cmd, &mut rng, now);
+            rx.try_recv().unwrap()
+        };
+        // The host server allows 3 upcoming songs (b, c already there); it reports that limit.
+        handle(
+            &mut core,
+            JamCmd::HostLimit {
+                key: key(G1, 10),
+                max: 3,
+            },
+            &mut fastrand::Rng::with_seed(2),
+        );
+        // A member of another server with a 100-song limit still hits the host's 3.
+        let r = enqueue(&mut core, key(G2, 20), &["d", "e", "f"], 100).unwrap();
+        assert_eq!(r.added, 1, "{r:?}");
+        assert_eq!(
+            enqueue(&mut core, key(G2, 20), &["g"], 100),
+            Err(PushError::Full { max: 3 })
+        );
+        // Only the host channel reports the limit.
+        handle(
+            &mut core,
+            JamCmd::HostLimit {
+                key: key(G2, 20),
+                max: 100,
+            },
+            &mut fastrand::Rng::with_seed(2),
+        );
+        assert_eq!(core.host_max_queue, Some(3));
+
+        // A refused enqueue says "not allowed", not "the queue is full (0)".
+        let (tx, mut rx) = oneshot::channel();
+        JamCore::refuse(Command::Enqueue {
+            entries: entries(&["x"]),
+            max: 100,
+            text_channel: None,
+            reply: tx,
+        });
+        assert_eq!(rx.try_recv().unwrap(), Err(PushError::NotAllowed));
+    }
+
+    #[test]
+    fn a_shared_skip_for_another_track_is_outdated() {
+        let now = 1_000_000;
+        let mut core = playing_jam(now);
+        let mut rng = fastrand::Rng::with_seed(1);
+        let skip = |expected| {
+            let (tx, rx) = oneshot::channel();
+            let cmd = Command::Skip {
+                user: 1,
+                force: true,
+                rule: Default::default(),
+                expected,
+                reply: tx,
+            };
+            (cmd, rx)
+        };
+        let a = core.queue.current().unwrap().uid;
+        let (cmd, mut rx) = skip(Some(uuid::Uuid::new_v4()));
+        core.edit(cmd, &mut rng, now);
+        assert!(matches!(rx.try_recv(), Ok(SkipOutcome::Outdated)));
+        assert_eq!(core.queue.current().unwrap().uid, a);
+        // The right track: skipped once; the same click again is outdated.
+        for expect_skip in [true, false] {
+            let (cmd, mut rx) = skip(Some(a));
+            core.edit(cmd, &mut rng, now);
+            let out = rx.try_recv().unwrap();
+            assert_eq!(matches!(out, SkipOutcome::Skipped { .. }), expect_skip, "{out:?}");
+        }
+        assert_eq!(core.queue.current().unwrap().info.youtube_id.as_deref(), Some("b"));
+    }
+
+    #[test]
     fn members_start_together_after_everyone_is_ready() {
         let now = 50_000;
         let mut core = playing_jam(0);
@@ -1411,10 +1562,18 @@ mod tests {
     #[test]
     fn ids() {
         let id = new_id();
+        assert_eq!(id.len(), ID_LEN);
+        assert!(id.bytes().all(|b| ID_ALPHABET.contains(&b)));
         assert_eq!(parse_id(&id), Some(id.as_str()));
         assert_eq!(parse_id(&format!("jam-{id}")), Some(id.as_str()));
+        assert_eq!(parse_id("jam-partyroom1"), Some("partyroom1"), "older 10-character ids");
         assert_eq!(parse_id("jam-short"), None);
         assert_eq!(parse_id("ABCDEFGHIJ"), None);
+        assert_ne!(new_id(), new_id());
+        // Every byte maps into the alphabet and all 32 letters are reachable.
+        let all: Vec<u8> = (0..=255).collect();
+        let letters: std::collections::HashSet<char> = id_from_bytes(&all).chars().collect();
+        assert_eq!(letters.len(), 32);
     }
 
     #[tokio::test]

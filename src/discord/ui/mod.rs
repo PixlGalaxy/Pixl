@@ -8,6 +8,8 @@ pub mod cards;
 
 use serde_json::{json, Value};
 
+use crate::text::sanitize_text;
+
 pub use super::emojis::Icon;
 
 /// Looks up the id of an application emoji by name (`emojis::emoji_id` outside tests).
@@ -298,16 +300,33 @@ pub fn escape(s: &str) -> String {
     out
 }
 
+/// One line of multi-line text (lyrics) as plain text: [`sanitize_text`], [`escape`], and line-start
+/// markdown (`- ` / `+ ` lists, `1. ` numbered lists, `-#` subtext) neutralised; `#` headings and `>`
+/// quotes are already escaped by [`escape`].
+pub fn escape_line(line: &str) -> String {
+    let mut out = escape(&sanitize_text(line));
+    if out.starts_with('-') || out.starts_with('+') {
+        out.insert(0, '\\');
+    } else if let Some(dot) = out.find('.').filter(|i| *i > 0 && out[..*i].bytes().all(|b| b.is_ascii_digit())) {
+        out.insert(dot, '\\');
+    }
+    out
+}
+
 /// Make text safe inside a masked link label `[label](url)` without backslashes: Discord shows
 /// backslash escapes literally there. Brackets become parentheses (parentheses are fine inside a
 /// label), markdown characters become look-alikes, and `@` gets a zero-width space so `@everyone`
-/// never reads as a mention.
+/// never reads as a mention. Angle brackets become look-alikes (no `<@id>` / `<#id>` / `<t:..>`
+/// tokens) and newlines / control characters spaces (one line, see [`sanitize_text`]).
 pub fn link_label(s: &str) -> String {
+    let s = sanitize_text(s);
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
             '[' => out.push('('),
             ']' => out.push(')'),
+            '<' => out.push('\u{2039}'), // single left-pointing angle quotation mark
+            '>' => out.push('\u{203A}'), // single right-pointing angle quotation mark
             '\\' => out.push('\u{29F5}'), // reverse solidus operator
             '*' => out.push('\u{2217}'),  // asterisk operator
             '_' => out.push('\u{02CD}'),  // modifier letter low macron
@@ -323,12 +342,28 @@ pub fn link_label(s: &str) -> String {
 
 /// `[title](<url>)` with a safe label; plain escaped title when the URL is not http(s).
 pub fn link(title: &str, url: &str) -> String {
-    let title = truncate(title, 200);
+    let title = truncate(&sanitize_text(title), 200);
     if url.starts_with("https://") || url.starts_with("http://") {
-        format!("[{}](<{}>)", link_label(&title), url.replace('>', "%3E"))
+        format!("[{}](<{}>)", link_label(&title), link_target(url))
     } else {
         escape(&title)
     }
+}
+
+/// A URL that can't end the `(<...>)` target early or break the line.
+fn link_target(url: &str) -> String {
+    let mut out = String::with_capacity(url.len());
+    for c in url.chars() {
+        match c {
+            '>' => out.push_str("%3E"),
+            '<' => out.push_str("%3C"),
+            ')' => out.push_str("%29"),
+            c if c.is_whitespace() => out.push_str("%20"),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// `3:07`, `1:02:03`.
@@ -498,5 +533,43 @@ mod tests {
             let label = &out[1..out.rfind("](<").unwrap()];
             assert!(!label.contains('[') && !label.contains(']'), "{out}");
         }
+    }
+
+    #[test]
+    fn labels_are_one_line_without_discord_tokens() {
+        let url = "https://youtu.be/x";
+        let out = link("Hi <@123> <#456> <t:1:R>\n# Big\r\nline", url);
+        assert!(!out.contains('\n') && !out.contains('\r'), "{out}");
+        let label = &out[1..out.rfind("](<").unwrap()];
+        assert_eq!(
+            label,
+            "Hi \u{2039}@\u{200B}123\u{203A} \u{2039}#456\u{203A} \u{2039}t:1:R\u{203A} # Big line"
+        );
+        // The target can't be closed early or broken over lines.
+        assert_eq!(
+            link("T", "https://e.com/a>b) c\nd"),
+            "[T](<https://e.com/a%3Eb%29%20c%20d>)"
+        );
+        // Plain text (no link) is one line too.
+        assert_eq!(link("a\nb <@1>", "ftp://y"), r"a b \<\@1\>");
+    }
+
+    #[test]
+    fn lyric_lines_are_plain_text() {
+        assert_eq!(escape_line("# Chorus"), r"\# Chorus");
+        assert_eq!(escape_line("-# small"), r"\-\# small");
+        assert_eq!(escape_line("- item"), r"\- item");
+        assert_eq!(escape_line("+ item"), r"\+ item");
+        assert_eq!(escape_line("> quote"), r"\> quote");
+        assert_eq!(escape_line("* bullet"), r"\* bullet");
+        assert_eq!(escape_line("1. first"), r"1\. first");
+        assert_eq!(
+            escape_line("[click](https://evil.example)"),
+            r"\[click\]\(https://evil.example\)"
+        );
+        assert_eq!(escape_line("<@&42> @everyone"), r"\<\@&42\> \@everyone");
+        assert_eq!(escape_line("one - two"), "one - two");
+        assert_eq!(escape_line("3.14 is pi"), r"3\.14 is pi");
+        assert_eq!(escape_line(""), "");
     }
 }

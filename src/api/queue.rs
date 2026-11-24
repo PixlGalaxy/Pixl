@@ -64,6 +64,8 @@ pub fn play_error(e: PlayError) -> ApiError {
             format!("The queue is full ({max} tracks)"),
         ),
         PlayError::Gone => ApiError::not_found("The player ended"),
+        PlayError::SettingsUnavailable => ApiError::bot_unavailable("Could not read the server settings, try again"),
+        PlayError::JamHostOnly { .. } => ApiError::jam_host_only(),
     }
 }
 

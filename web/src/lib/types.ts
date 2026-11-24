@@ -217,6 +217,7 @@ export type ErrorCode =
   | 'queue_full'
   | 'no_results'
   | 'rate_limited'
+  | 'not_eligible'
   | 'bot_unavailable'
   | 'invalid'
   | 'history_disabled'

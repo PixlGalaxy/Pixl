@@ -233,5 +233,11 @@ pub async fn delete_data(State(st): State<ApiState>, Auth(s): Auth) -> ApiResult
         "user data deleted from the panel"
     );
     let _ = st.events.send(super::GuildEvent::User(s.user_id));
+    // Every panel session of the user goes too (this one included): the panel signs in again.
+    match st.sessions.revoke_user(s.user_id).await {
+        Ok(n) => tracing::info!(user = s.user_id, sessions = n, "panel sessions revoked"),
+        Err(e) => tracing::warn!(user = s.user_id, error = %e, "could not revoke the panel sessions"),
+    }
+    st.sockets.close(s.user_id, None);
     Ok(StatusCode::NO_CONTENT)
 }
