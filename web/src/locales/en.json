@@ -36,6 +36,7 @@
   "login": {
     "title": "Connecting to Lynx",
     "subtitle": "This only takes a moment.",
+    "hostedBy": "Hosted by",
     "failedTitle": "Could not connect",
     "failedHint": "The step marked below failed.",
     "steps": {

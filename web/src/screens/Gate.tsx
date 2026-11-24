@@ -1,6 +1,7 @@
 import { Check, Circle, CircleAlert, MonitorSmartphone, RefreshCw } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import hostedGif from '../assets/itzgalaxy-hosted.gif'
 import { LynxMark } from '../components/Logo'
 import { StatusLink } from '../components/StatusLink'
 import { Button, Spinner } from '../components/ui'
@@ -95,7 +96,24 @@ export function ConnectingScreen({ step, error }: { step: LoginStep | null; erro
           </div>
         )}
       </section>
+      <HostedBy />
     </GateLayout>
+  )
+}
+
+/**
+ * "Hosted by ItzGalaxy Web Services" under the sign-in card. The GIF plays once (no loop) and
+ * stays on its last frame. Its logo is light on transparent, so the light theme gets a dark plate.
+ */
+function HostedBy() {
+  const { t } = useTranslation()
+  return (
+    <div className="mt-6 flex flex-col items-center gap-2">
+      <span className="text-[10px] font-medium tracking-[.12em] text-muted uppercase">{t('login.hostedBy')}</span>
+      <span className="rounded-xl bg-neutral-900 px-4 py-2 dark:bg-transparent dark:p-0">
+        <img src={hostedGif} alt="ItzGalaxy Web Services" width={220} height={52} className="h-auto w-[220px]" />
+      </span>
+    </div>
   )
 }
 

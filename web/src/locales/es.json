@@ -36,6 +36,7 @@
   "login": {
     "title": "Conectando con Lynx",
     "subtitle": "Solo tarda un momento.",
+    "hostedBy": "Alojado por",
     "failedTitle": "No se pudo conectar",
     "failedHint": "Falló el paso marcado abajo.",
     "steps": {
