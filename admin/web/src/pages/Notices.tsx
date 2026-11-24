@@ -6,6 +6,7 @@ import { useErrorText } from '../lib/errors'
 import { formatDateTime, fromLocalInput, noticeState, toLocalInput } from '../lib/time'
 import type { Notice, NoticeInput, NoticeKind } from '../lib/types'
 import { Banner, Button, Card, Field, inputCls, Pill, Spinner, Toggle } from '../components/ui'
+import { AutoUpdateCard } from './AutoUpdate'
 
 const MAX_TITLE = 100
 const MAX_MESSAGE = 500
@@ -215,6 +216,8 @@ export function NoticesPage() {
     }
   }, [errorText])
 
+  const reload = useCallback(() => void load(), [load])
+
   useEffect(() => {
     void load()
     const id = setInterval(() => setNow(Date.now()), 30_000)
@@ -277,17 +280,24 @@ export function NoticesPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Pill tone={STATE_TONE[state]}>{t(`notices.states.${state}`)}</Pill>
                   <span className="text-xs font-medium text-muted">{t(`notices.kinds.${n.kind}`)}</span>
+                  {n.auto && (
+                    <span title={t('notices.automaticHint')}>
+                      <Pill tone="neutral">{t('notices.automatic')}</Pill>
+                    </span>
+                  )}
                   <div className="ml-auto flex gap-1">
-                    <Button
-                      variant="ghost"
-                      icon={<Pencil size={14} />}
-                      onClick={() => {
-                        setInfo(null)
-                        setForm({ id: n.id, draft: draftOf(n) })
-                      }}
-                    >
-                      {t('notices.edit')}
-                    </Button>
+                    {!n.auto && (
+                      <Button
+                        variant="ghost"
+                        icon={<Pencil size={14} />}
+                        onClick={() => {
+                          setInfo(null)
+                          setForm({ id: n.id, draft: draftOf(n) })
+                        }}
+                      >
+                        {t('notices.edit')}
+                      </Button>
+                    )}
                     <Button variant="danger" icon={<Trash2 size={14} />} onClick={() => void remove(n)}>
                       {t('notices.delete')}
                     </Button>
@@ -295,6 +305,7 @@ export function NoticesPage() {
                 </div>
                 {n.title && <h3 className="mt-2 text-sm font-semibold break-words">{n.title}</h3>}
                 {n.message && <p className="mt-1 text-sm break-words whitespace-pre-line text-fg/90">{n.message}</p>}
+                {n.auto && <p className="mt-1 text-xs text-muted">{t('notices.automaticHint')}</p>}
                 <p className="mt-2 text-xs text-muted">
                   {t('notices.until', { start: formatDateTime(n.startsAt, locale), end: formatDateTime(n.endsAt, locale) })}
                   <span className="px-1.5">·</span>
@@ -305,6 +316,7 @@ export function NoticesPage() {
           })}
         </ul>
       )}
+      <AutoUpdateCard onChange={reload} />
     </div>
   )
 }

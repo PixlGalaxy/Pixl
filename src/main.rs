@@ -16,6 +16,7 @@ mod sources;
 mod stats;
 mod store;
 mod text;
+mod updates;
 
 use std::{sync::Arc, time::Duration};
 
@@ -33,6 +34,7 @@ use crate::{
     procs::ProcessRegistry,
     sources::Sources,
     store::{SessionWriter, Store},
+    updates::UpdateChecker,
 };
 
 /// How often orphaned child processes are looked for, and the oldest a child may get.
@@ -56,6 +58,8 @@ pub struct AppState {
     pub ytdlp_version: Arc<YtdlpVersion>,
     /// Operator notices and runtime flags (admin panel).
     pub notices: NoticeBoard,
+    /// Automatic "scheduled update" notices (admin panel > Notices).
+    pub updates: UpdateChecker,
     /// Per-user rate limits shared by the panel and the Discord commands.
     pub limits: Arc<limits::UserLimits>,
     pub shutdown: CancellationToken,
@@ -97,6 +101,14 @@ async fn main() -> Result<()> {
     sources.ytdlp().set_updates_paused(notices.flags().ytdlp_updates_paused);
     notices::install(notices.clone(), i18n.clone());
     let notice_task = notices.spawn_ticker(store.clone(), shutdown.clone());
+    let updates = UpdateChecker::load(&store).await;
+    let update_task = updates.spawn(
+        store.clone(),
+        notices.clone(),
+        config.bot_locale.clone(),
+        config::optional("GHCR_TOKEN"),
+        shutdown.clone(),
+    );
     let admin_config = admin::AdminConfig::from_env()?;
 
     // Background housekeeping.
@@ -146,6 +158,7 @@ async fn main() -> Result<()> {
         ai: ai.clone(),
         ytdlp_version: ytdlp_version.clone(),
         notices: notices.clone(),
+        updates: updates.clone(),
         limits: limits.clone(),
         shutdown: shutdown.clone(),
     };
@@ -204,6 +217,7 @@ async fn main() -> Result<()> {
             let _ = tokio::task::spawn_blocking(move || admin.join()).await;
         }
         let _ = notice_task.await;
+        let _ = update_task.await;
         let _ = maintenance.await;
         for t in ai_tasks {
             let _ = t.await;

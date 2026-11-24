@@ -1,6 +1,17 @@
 // Admin API client (same origin, /api). The session is an HttpOnly cookie the page never sees.
 // Every mutating request carries `X-Lynx-Admin: 1`, which the server requires (CSRF guard).
-import type { Activity, HealthReport, LogLine, Notice, NoticeInput, Overview, Tweaks, TweaksInput } from './types'
+import type {
+  Activity,
+  AutoUpdate,
+  AutoUpdateSettings,
+  HealthReport,
+  LogLine,
+  Notice,
+  NoticeInput,
+  Overview,
+  Tweaks,
+  TweaksInput,
+} from './types'
 
 export class AdminError extends Error {
   constructor(
@@ -65,6 +76,9 @@ export const adminApi = {
   updateNotice: (id: number, n: NoticeInput) =>
     request<{ notices: Notice[]; serverNow: number }>(`/notices/${id}`, 'PUT', n),
   deleteNotice: (id: number) => request<{ notices: Notice[]; serverNow: number }>(`/notices/${id}`, 'DELETE'),
+  autoUpdate: () => request<AutoUpdate>('/auto-update'),
+  setAutoUpdate: (s: AutoUpdateSettings) => request<AutoUpdate>('/auto-update', 'PUT', s),
+  checkAutoUpdate: () => request<AutoUpdate>('/auto-update/check', 'POST'),
   tweaks: () => request<Tweaks>('/tweaks'),
   setTweaks: (t: TweaksInput) => request<Tweaks>('/tweaks', 'PUT', t),
   ytdlpUpdate: () => request<Tweaks>('/actions/ytdlp-update', 'POST'),
