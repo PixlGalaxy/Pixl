@@ -240,12 +240,14 @@ impl<K: Eq + Hash + Clone> RateLimiter<K> {
         }
     }
 
-    /// Count a hit; false when the key is over its limit.
+    /// Count a hit; false when the key is over its limit. When the map is full of keys still in
+    /// their window, a new key is refused (until windows expire) rather than wiping every count:
+    /// clearing would let a flood of new keys reset the limits of the keys already over them.
     pub fn allow(&self, key: K) -> bool {
         if self.map.len() >= self.max_keys && !self.map.contains_key(&key) {
             self.sweep();
             if self.map.len() >= self.max_keys {
-                self.map.clear();
+                return false;
             }
         }
         let mut e = self.map.entry(key).or_insert((Instant::now(), 0));
@@ -312,6 +314,10 @@ mod tests {
         let l = RateLimiter::new(2, Duration::from_secs(60), 2);
         assert!(l.allow(1));
         assert!(l.allow(1));
+        assert!(!l.allow(1));
+        assert!(l.allow(2));
+        // Full of live keys: a new key is refused and the counts already there survive.
+        assert!(!l.allow(3));
         assert!(!l.allow(1));
         assert!(l.allow(2));
         let c = TtlCache::new(Duration::from_secs(60), 2);

@@ -41,6 +41,8 @@ WORKDIR /app
 COPY --from=bot /app/target/release/lynx /app/lynx
 COPY --from=web /web/dist /app/web
 COPY nginx.conf /etc/nginx/nginx.conf
+COPY docker/nginx-headers.conf /etc/nginx/lynx-headers.conf
+COPY docker/nginx-backend-headers.conf /etc/nginx/lynx-backend-headers.conf
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 # nginx listens on 8080 (panel at /, backend at /backend/); the bot's HTTP server stays internal.
