@@ -13,7 +13,7 @@ import {
   ThumbsUp,
   Timer,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AddBox } from '../components/AddBox'
 import { AiProgress } from '../components/AiProgress'
@@ -21,11 +21,13 @@ import { JamCard, JamJoinPrompt } from '../components/JamCard'
 import { NowPlayingSource, SourceDot } from '../components/ListSource'
 import { AiChip, AiTag, TrackReasonLine } from '../components/TrackBits'
 import { InfoPopover } from '../components/InfoPopover'
+import { useToast } from '../components/Toasts'
 import { Artwork, Avatar, Button, Card, Chip, ConfirmButton, HelpTitle, IconButton, Notice, Slider, Tag } from '../components/ui'
 import { api } from '../lib/api'
 import { cx, fmtTime } from '../lib/format'
 import { localAnchor, useNow, usePosition } from '../lib/live'
 import { useLynx } from '../lib/lynx'
+import { holdVerdict, lockedBy, releasedByTimeout } from '../lib/sync'
 import type { Feedback, LoopMode, PlayerState, Track } from '../lib/types'
 
 const ORIGIN_LABEL: Record<Track['origin'], string> = {
@@ -58,15 +60,54 @@ function EmptyChannelBanner({ deadline }: { deadline: number | null }) {
   )
 }
 
+/**
+ * Progress bar. Dragging it takes the channel's seek-bar hold (`seek_hold` on the socket) so the
+ * others see it disabled with "<name> is moving the bar"; the release seeks and frees it. The
+ * server ends a hold after 5 s: the drag is then cancelled (the bar snaps back to the live
+ * position) with a short notice.
+ */
 function SeekBar({ state }: { state: PlayerState }) {
   const { t } = useTranslation()
-  const { anchor, setAnchor, channelId, permissions, run, refresh } = useLynx()
+  const { anchor, setAnchor, channelId, permissions, run, refresh, user, sendSocket, onSeekHold } = useLynx()
+  const toast = useToast()
   const position = usePosition(state, anchor)
   const [drag, setDrag] = useState<number | null>(null)
+  // The drag in progress: whether the server granted the hold, and when.
+  const dragging = useRef<{ granted: boolean; grantedAt: number | null } | null>(null)
   const duration = state.current?.durationMs ?? null
+  const lockedByOther = lockedBy(state.seekHold, user.id, performance.now())
+
+  const endDrag = useCallback(() => {
+    if (!dragging.current) return
+    dragging.current = null
+    setDrag(null)
+    sendSocket({ type: 'seek_release' })
+  }, [sendSocket])
+
   // A drag of the previous track never shows on the next one.
   const uid = state.current?.uid
-  useEffect(() => setDrag(null), [uid])
+  useEffect(() => endDrag(), [uid, endDrag])
+  // Leaving the screen mid-drag frees the bar for the others.
+  useEffect(() => () => endDrag(), [endDrag])
+
+  useEffect(
+    () =>
+      onSeekHold((msg) => {
+        const d = dragging.current
+        if (!d) return
+        const verdict = holdVerdict(msg, user.id, d.granted)
+        if (verdict === 'granted') {
+          if (!d.granted) dragging.current = { granted: true, grantedAt: performance.now() }
+          return
+        }
+        if (verdict === 'wait') return
+        const timedOut = d.granted && !msg.holder && releasedByTimeout(d.grantedAt, performance.now())
+        endDrag()
+        if (timedOut) toast.push('info', t('player.seekReleased'))
+        else if (msg.denied && !msg.holder) toast.push('info', t('player.seekWait'))
+      }),
+    [onSeekHold, user.id, endDrag, toast, t],
+  )
 
   if (duration == null) {
     return (
@@ -78,28 +119,52 @@ function SeekBar({ state }: { state: PlayerState }) {
   }
 
   const shown = drag ?? position
+  const lockText = lockedByOther ? t('player.seekLocked', { name: lockedByOther.name }) : null
   return (
-    <div className="flex items-center gap-3">
-      <span className="w-11 text-right font-mono text-[11px] text-muted tabular-nums">{fmtTime(shown)}</span>
-      <Slider
-        value={shown}
-        max={Math.max(duration, 1)}
-        step={1000}
-        label={t('player.seek')}
-        disabled={!permissions.canControl || !channelId}
-        onInput={setDrag}
-        onCommit={(ms) => {
-          setDrag(null)
-          if (!channelId) return
-          // Bound to this track: if it changes before the server confirms, the new one is not moved.
-          setAnchor(localAnchor(ms, state.current?.uid))
-          // A refused seek (past the real end, seeking unsupported) puts the bar back where it is.
-          void run(() => api.seek(channelId, ms)).then((done) => {
-            if (done === null) void refresh()
-          })
-        }}
-      />
-      <span className="w-11 font-mono text-[11px] text-muted tabular-nums">{fmtTime(duration)}</span>
+    <div>
+      <div className="flex items-center gap-3">
+        <span className="w-11 text-right font-mono text-[11px] text-muted tabular-nums">{fmtTime(shown)}</span>
+        <Slider
+          value={shown}
+          max={Math.max(duration, 1)}
+          step={1000}
+          label={t('player.seek')}
+          title={lockText ?? undefined}
+          disabled={!permissions.canControl || !channelId || lockedByOther != null}
+          onStart={() => {
+            if (dragging.current) return
+            dragging.current = { granted: false, grantedAt: null }
+            sendSocket({ type: 'seek_hold' })
+          }}
+          onCancel={endDrag}
+          onInput={(ms) => {
+            // After the hold ended (5 s limit) the pointer may still move: the bar stays live.
+            if (dragging.current) setDrag(ms)
+          }}
+          onCommit={(ms) => {
+            if (!dragging.current) {
+              setDrag(null)
+              return
+            }
+            // Released first, so the hold is gone even if the seek arrives before it was granted.
+            endDrag()
+            if (!channelId) return
+            // Bound to this track: if it changes before the server confirms, the new one is not moved.
+            setAnchor(localAnchor(ms, state.current?.uid))
+            // A refused seek (past the real end, seeking unsupported, someone else holding the bar)
+            // puts the bar back where it is.
+            void run(() => api.seek(channelId, ms)).then((done) => {
+              if (done === null) void refresh()
+            })
+          }}
+        />
+        <span className="w-11 font-mono text-[11px] text-muted tabular-nums">{fmtTime(duration)}</span>
+      </div>
+      {lockText && (
+        <p role="status" className="mt-1 text-center text-[11px] text-muted">
+          {lockText}
+        </p>
+      )}
     </div>
   )
 }

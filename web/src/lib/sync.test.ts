@@ -5,6 +5,10 @@ import {
   acceptState,
   anchorFrom,
   freshFetch,
+  HOLD_STALE_MS,
+  holdVerdict,
+  lockedBy,
+  releasedByTimeout,
   needsResync,
   positionApplies,
   RESYNC_AFTER_MS,
@@ -98,4 +102,41 @@ test('a quiet panel fetches a fresh position while it plays and is visible', () 
   assert.equal(needsResync(true, true, 0, RESYNC_AFTER_MS), true)
   assert.equal(needsResync(true, false, 0, 10 * RESYNC_AFTER_MS), false, 'hidden: done when it becomes visible')
   assert.equal(needsResync(false, true, 0, 10 * RESYNC_AFTER_MS), false, 'paused: nothing moves')
+})
+
+const marta = { id: '2', name: 'Marta' }
+const me = { id: '1', name: 'Pixl' }
+
+test('the seek bar is locked by someone else, never by yourself', () => {
+  assert.deepEqual(lockedBy({ holder: marta, until: 5_000, at: 100 }, '1', 200), marta)
+  assert.equal(lockedBy({ holder: me, until: 5_000, at: 100 }, '1', 200), null)
+  assert.equal(lockedBy({ holder: null, until: null }, '1', 200), null)
+  assert.equal(lockedBy(null, '1', 200), null)
+  assert.equal(lockedBy(undefined, '1', 200), null)
+  // A hold without a receive time (straight from a state) still locks.
+  assert.deepEqual(lockedBy({ holder: marta, until: 5_000 }, '1', 1e9), marta)
+})
+
+test('a hold whose release never arrived stops locking', () => {
+  assert.deepEqual(lockedBy({ holder: marta, until: 0, at: 0 }, '1', HOLD_STALE_MS - 1), marta)
+  assert.equal(lockedBy({ holder: marta, until: 0, at: 0 }, '1', HOLD_STALE_MS), null)
+})
+
+test('a drag keeps going only while the hold is ours', () => {
+  // Pending request: an unrelated "free" update changes nothing; ours grants it.
+  assert.equal(holdVerdict({ holder: null }, '1', false), 'wait')
+  assert.equal(holdVerdict({ holder: me }, '1', false), 'granted')
+  assert.equal(holdVerdict({ holder: me }, '1', true), 'granted', 'a repeat keeps it')
+  // Someone else got there first, or the server refused (cooldown, permission).
+  assert.equal(holdVerdict({ holder: marta }, '1', false), 'cancel')
+  assert.equal(holdVerdict({ holder: null, denied: true }, '1', false), 'cancel')
+  // Ours ended (5 s limit, new track): the drag is cancelled.
+  assert.equal(holdVerdict({ holder: null }, '1', true), 'cancel')
+  assert.equal(holdVerdict({ holder: marta }, '1', true), 'cancel')
+})
+
+test('the timeout notice shows only after about 5 seconds of holding', () => {
+  assert.equal(releasedByTimeout(1_000, 6_000), true)
+  assert.equal(releasedByTimeout(1_000, 2_000), false, 'a new track ended it early')
+  assert.equal(releasedByTimeout(null, 9_000), false, 'never granted')
 })

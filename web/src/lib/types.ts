@@ -103,6 +103,9 @@ export type AiJob = { id: string; phase: AiPhase; startedAt: number; canCancel: 
 export type AiState = { active: boolean; ownerId: string; job: AiJob | null }
 
 export type LoopMode = 'off' | 'track' | 'queue'
+
+/** Where `POST /api/queue/add` puts the tracks: at the end, or right after the current one. */
+export type AddPosition = 'end' | 'next'
 export type PlayerStatus = 'playing' | 'paused' | 'loading' | 'idle'
 
 export type PlayerState = {
@@ -127,8 +130,21 @@ export type PlayerState = {
   voteSkipEnabled?: boolean
   /** The jam this channel is in, as the viewer sees it. */
   jam?: Jam | null
+  /** Who is dragging the progress bar right now (the player's channel, or its whole jam). */
+  seekHold?: SeekHold | null
   /** Server clock (epoch ms) when the state was sent. */
   serverNow?: number
+}
+
+/**
+ * The seek-bar lock: `holder` is dragging the bar (until `until`, epoch ms; the server ends a hold
+ * after 5 s). `at`: when the panel received it (`performance.now()`), so a lost release can't lock
+ * the bar forever.
+ */
+export type SeekHold = {
+  holder: { id: string; name: string } | null
+  until: number | null
+  at?: number
 }
 
 /** Who may edit the shared queue of a jam. */
@@ -312,3 +328,5 @@ export type ServerMessage =
   | { type: 'jam'; jam: Jam | null }
   /** Operator notices changed (sent to every open panel). */
   | { type: 'notices'; notices: PublicNotice[]; maintenance: boolean }
+  /** The seek-bar hold changed; `denied`: the answer to this panel's refused `seek_hold`. */
+  | { type: 'seek_hold'; holder: SeekHold['holder']; until: number | null; denied?: boolean }

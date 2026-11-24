@@ -209,6 +209,34 @@ impl Queue {
         })
     }
 
+    /// [`push`](Self::push) at the end, or (`next`) right after the current track, before the
+    /// other upcoming ones, in their order ("Play next"). On an ended queue `next` tracks are the
+    /// first to start. The same `max` limit applies.
+    pub fn push_at(&mut self, entries: Vec<Entry>, max: usize, next: bool) -> Result<PushResult, PushError> {
+        if !next {
+            return self.push(entries, max);
+        }
+        let room = max.saturating_sub(self.upcoming().len());
+        if room == 0 {
+            return Err(PushError::Full { max });
+        }
+        let truncated = entries.len() > room;
+        let added = entries.len().min(room);
+        // After the current track; on an idle queue after its cursor track (a restored queue shows
+        // it as the current one), or at the end of an ended queue.
+        let at = if self.active || self.pos < self.tracks.len() {
+            self.pos + 1
+        } else {
+            self.tracks.len()
+        };
+        self.tracks.splice(at..at, entries.into_iter().take(room));
+        Ok(PushResult {
+            added,
+            first_position: at - self.pos.min(at),
+            truncated,
+        })
+    }
+
     /// Start the cursor track when idle. Returns the new current track.
     pub fn start(&mut self) -> Option<Entry> {
         if self.active {
@@ -440,6 +468,69 @@ mod tests {
         assert_eq!(r.first_position, 0);
         assert_eq!(q.start().unwrap().info.youtube_id.as_deref(), Some("t0"));
         assert_eq!(q.history(10).len(), 4);
+    }
+
+    fn named(names: &[&str]) -> Vec<Entry> {
+        names
+            .iter()
+            .map(|n| Arc::new(QueueEntry::new(track(n), Requester::id_only(1))))
+            .collect()
+    }
+
+    #[test]
+    fn push_next_goes_right_after_the_current_track_in_order() {
+        let mut q = Queue::new();
+        q.push(named(&["a", "b", "c"]), 10).unwrap();
+        q.start();
+        // One track: right after the current one.
+        let r = q.push_at(named(&["x"]), 10, true).unwrap();
+        assert_eq!(
+            r,
+            PushResult {
+                added: 1,
+                first_position: 1,
+                truncated: false
+            }
+        );
+        assert_eq!(titles(q.upcoming()), vec!["x", "b", "c"]);
+        // A list: the whole list, in its order, before what was already next.
+        q.push_at(named(&["p1", "p2", "p3"]), 10, true).unwrap();
+        assert_eq!(titles(q.upcoming()), vec!["p1", "p2", "p3", "x", "b", "c"]);
+        assert_eq!(cur(&q), "a", "the current track keeps playing");
+        // "End" is the plain push.
+        q.push_at(named(&["z"]), 10, false).unwrap();
+        assert_eq!(titles(q.upcoming()).last().unwrap(), "z");
+        q.advance(false);
+        assert_eq!(cur(&q), "p1");
+        assert_eq!(titles(&q.history(5)), vec!["a"], "history is untouched");
+    }
+
+    #[test]
+    fn push_next_respects_the_limit_and_idle_queues() {
+        let mut q = Queue::new();
+        q.push(named(&["a", "b", "c"]), 3).unwrap();
+        q.start();
+        // current + 2 upcoming, limit 3: only the first of the list fits, still in front.
+        let r = q.push_at(named(&["p1", "p2"]), 3, true).unwrap();
+        assert_eq!((r.added, r.first_position, r.truncated), (1, 1, true));
+        assert_eq!(titles(q.upcoming()), vec!["p1", "b", "c"]);
+        assert_eq!(q.push_at(named(&["y"]), 3, true), Err(PushError::Full { max: 3 }));
+
+        // An ended queue: "next" tracks are the next to start.
+        let mut q = Queue::new();
+        q.push(named(&["a"]), 10).unwrap();
+        q.start();
+        assert!(q.advance(false).is_none());
+        let r = q.push_at(named(&["n"]), 10, true).unwrap();
+        assert_eq!(r.first_position, 0);
+        assert_eq!(q.start().unwrap().info.youtube_id.as_deref(), Some("n"));
+
+        // A restored queue waiting for people shows its cursor track as the current one: after it.
+        let mut q = Queue::restore(named(&["a", "b", "c"]), 1, LoopMode::Off);
+        let r = q.push_at(named(&["n"]), 10, true).unwrap();
+        assert_eq!(r.first_position, 1);
+        assert_eq!(titles(q.upcoming()), vec!["b", "n", "c"]);
+        assert_eq!(q.start().unwrap().info.youtube_id.as_deref(), Some("b"));
     }
 
     fn cur_after(q: &mut Queue) -> String {

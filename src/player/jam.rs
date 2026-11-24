@@ -613,8 +613,9 @@ impl JamCore {
 
     // ---- shared queue and playback (the same results as a player) ---------------------------
 
-    pub fn push(&mut self, entries: Vec<Entry>, max: usize, now_ms: i64) -> Result<PushResult, PushError> {
-        let res = self.queue.push(entries, max)?;
+    /// Add to the shared queue: at the end, or (`next`) right after the shared current track.
+    pub fn push(&mut self, entries: Vec<Entry>, max: usize, next: bool, now_ms: i64) -> Result<PushResult, PushError> {
+        let res = self.queue.push_at(entries, max, next)?;
         self.queue_changed();
         self.start_if_stopped(now_ms);
         Ok(res)
@@ -722,9 +723,13 @@ impl JamCore {
     fn edit(&mut self, cmd: Command, rng: &mut fastrand::Rng, now_ms: i64) -> bool {
         match cmd {
             Command::Enqueue {
-                entries, max, reply, ..
+                entries,
+                max,
+                next,
+                reply,
+                ..
             } => {
-                let _ = reply.send(self.push(entries, max, now_ms));
+                let _ = reply.send(self.push(entries, max, next, now_ms));
             }
             Command::Pause { reply } => {
                 let _ = reply.send(self.pause(now_ms));
@@ -743,7 +748,7 @@ impl JamCore {
             Command::Previous { reply } => {
                 let _ = reply.send(self.previous(now_ms));
             }
-            Command::Seek { position_ms, reply } => {
+            Command::Seek { position_ms, reply, .. } => {
                 let _ = reply.send(self.seek(position_ms, now_ms));
             }
             Command::Loop { mode, reply } => {
@@ -818,11 +823,13 @@ impl JamCore {
             Command::Enqueue {
                 entries,
                 max,
+                next,
                 text_channel,
                 reply,
             } => Command::Enqueue {
                 entries,
                 max: self.queue_limit(from, max),
+                next,
                 text_channel,
                 reply,
             },
@@ -1268,8 +1275,65 @@ mod tests {
         // Empty queue: stopped until something is added.
         let mut core = JamCore::new("abcdefghij", member(G1, 10), Queue::new(), None, now);
         assert_eq!(core.phase, Phase::Stopped);
-        core.push(entries(&["x"]), 100, now).unwrap();
+        core.push(entries(&["x"]), 100, false, now).unwrap();
         assert!(matches!(core.phase, Phase::Preparing { .. }));
+    }
+
+    /// "Play next" from any member goes right after the shared current track, the timeline of the
+    /// playing track is untouched, and the host server's limit still applies.
+    #[test]
+    fn play_next_goes_after_the_shared_current_track() {
+        let now = 1_000_000;
+        let mut core = playing_jam(now);
+        core.settings.allow_servers = true;
+        core.join(member(G2, 20), now).unwrap();
+        let mut rng = fastrand::Rng::with_seed(1);
+        let mut enqueue = |core: &mut JamCore, from: SessionKey, ids: &[&str], max: usize, next: bool| {
+            let (tx, mut rx) = oneshot::channel();
+            let cmd = Command::Enqueue {
+                entries: entries(ids),
+                max,
+                next,
+                text_channel: None,
+                reply: tx,
+            };
+            core.edit_from(from, cmd, &mut rng, now);
+            rx.try_recv().unwrap()
+        };
+        let upcoming = |core: &JamCore| -> Vec<String> {
+            core.queue
+                .upcoming()
+                .iter()
+                .map(|e| e.info.youtube_id.clone().unwrap())
+                .collect()
+        };
+        let (seq, phase, version) = (core.seq, core.phase, core.queue_version);
+        let r = enqueue(&mut core, key(G2, 20), &["x"], 100, true).unwrap();
+        assert_eq!(r.first_position, 1);
+        assert_eq!(upcoming(&core), vec!["x", "b", "c"]);
+        enqueue(&mut core, key(G1, 10), &["p1", "p2"], 100, true).unwrap();
+        assert_eq!(upcoming(&core), vec!["p1", "p2", "x", "b", "c"]);
+        enqueue(&mut core, key(G1, 10), &["z"], 100, false).unwrap();
+        assert_eq!(upcoming(&core).last().unwrap(), "z");
+        assert_eq!(core.queue.current().unwrap().info.youtube_id.as_deref(), Some("a"));
+        assert_eq!((core.seq, core.phase), (seq, phase), "the playing track goes on");
+        assert!(core.queue_version > version, "members see the new order");
+        // The host server's limit (reported with its own enqueues: 100 above) applies to "next" too.
+        handle(
+            &mut core,
+            JamCmd::HostLimit {
+                key: key(G1, 10),
+                max: 7,
+            },
+            &mut fastrand::Rng::with_seed(2),
+        );
+        let r = enqueue(&mut core, key(G2, 20), &["n1", "n2", "n3"], 100, true).unwrap();
+        assert_eq!((r.added, r.truncated), (1, true));
+        assert_eq!(upcoming(&core)[0], "n1");
+        assert_eq!(
+            enqueue(&mut core, key(G2, 20), &["n4"], 100, true),
+            Err(PushError::Full { max: 7 })
+        );
     }
 
     #[test]
@@ -1367,6 +1431,7 @@ mod tests {
             let cmd = Command::Enqueue {
                 entries: entries(ids),
                 max,
+                next: false,
                 text_channel: None,
                 reply: tx,
             };
@@ -1405,6 +1470,7 @@ mod tests {
         JamCore::refuse(Command::Enqueue {
             entries: entries(&["x"]),
             max: 100,
+            next: false,
             text_channel: None,
             reply: tx,
         });
@@ -1541,7 +1607,7 @@ mod tests {
         let b = core.view();
         assert!(Arc::ptr_eq(&a.tracks, &b.tracks), "pause does not copy the queue");
         assert!(b.rev > a.rev);
-        core.push(entries(&["d"]), 100, 0).unwrap();
+        core.push(entries(&["d"]), 100, false, 0).unwrap();
         let c = core.view();
         assert_eq!(c.tracks.len(), 4);
         assert!(c.queue_version > b.queue_version);
@@ -1607,6 +1673,7 @@ mod tests {
             cmd: Command::Enqueue {
                 entries: entries(&["c"]),
                 max: 100,
+                next: false,
                 text_channel: None,
                 reply: tx,
             },

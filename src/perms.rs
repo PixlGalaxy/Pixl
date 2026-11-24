@@ -3,6 +3,8 @@
 //! - Manager: guild owner, Administrator or Manage Server.
 //! - `control_mode = everyone`: anyone in the player's voice channel controls it.
 //! - `control_mode = dj`: only DJs and managers control; others may add tracks and remove their own.
+//! - "Play next" (add right after the current track) adds and reorders: it needs the Add rule and,
+//!   in DJ mode, the Control rule too (a listener can't jump ahead of everyone else's songs).
 //! - Vote skip (when enabled): DJs, managers and the requester of the current track skip directly;
 //!   everyone else votes.
 
@@ -16,6 +18,9 @@ pub enum Action {
     View,
     /// Add tracks (`/play`, panel search).
     Add,
+    /// Add tracks right after the current one (`/play next:true`, the panel's "Add next"): in the
+    /// channel, and allowed to control (DJ mode: DJs and managers only).
+    AddNext,
     /// Pause, resume, stop, seek, volume, loop, shuffle, move, skipto, clear, previous.
     Control,
     Skip,
@@ -82,6 +87,8 @@ pub fn can(actor: &Actor, action: Action, settings: &GuildSettings) -> Decision 
         Action::Add | Action::Feedback if actor.in_channel => Decision::Allow,
         Action::Add | Action::Feedback => Decision::Deny(Deny::NotInChannel),
         Action::Control => control(),
+        Action::AddNext if !actor.in_channel => Decision::Deny(Deny::NotInChannel),
+        Action::AddNext => control(),
         Action::Remove { own: true } if actor.in_channel => Decision::Allow,
         Action::Remove { .. } => control(),
         Action::Skip => {
@@ -242,6 +249,35 @@ mod tests {
         };
         assert_eq!(can(&manager, Action::Control, &s), Decision::Allow);
         assert_eq!(can(&manager, Action::ManageSettings, &s), Decision::Allow);
+    }
+
+    #[test]
+    fn add_next_needs_control_in_dj_mode() {
+        let everyone = settings(ControlMode::Everyone, false);
+        let dj = settings(ControlMode::Dj, false);
+        assert_eq!(can(&LISTENER, Action::AddNext, &everyone), Decision::Allow);
+        assert_eq!(can(&LISTENER, Action::AddNext, &dj), Decision::Deny(Deny::DjOnly));
+        assert_eq!(can(&LISTENER, Action::Add, &dj), Decision::Allow, "adding at the end stays open");
+        let a_dj = Actor {
+            is_dj: true,
+            ..LISTENER
+        };
+        assert_eq!(can(&a_dj, Action::AddNext, &dj), Decision::Allow);
+        // Like adding, it needs the user in the channel, managers included.
+        let manager_outside = Actor {
+            is_manager: true,
+            in_channel: false,
+            ..LISTENER
+        };
+        assert_eq!(
+            can(&manager_outside, Action::AddNext, &dj),
+            Decision::Deny(Deny::NotInChannel)
+        );
+        let manager = Actor {
+            is_manager: true,
+            ..LISTENER
+        };
+        assert_eq!(can(&manager, Action::AddNext, &dj), Decision::Allow);
     }
 
     #[test]

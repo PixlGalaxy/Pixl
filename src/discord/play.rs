@@ -81,6 +81,9 @@ pub struct PlayRequest<'a> {
     /// Text channel for the player's messages. `None` keeps the player's current one; a new player
     /// then posts in the voice channel's own chat.
     pub text_channel: Option<u64>,
+    /// "Play next": right after the current track (a whole list in its order) instead of at the
+    /// end. Callers check [`Action::AddNext`] first; in a jam it is the shared current track.
+    pub next: bool,
 }
 
 pub struct Played {
@@ -356,7 +359,7 @@ async fn enqueue(
         .map(|(t, src)| Arc::new(QueueEntry::new(t.clone(), req.requester.clone()).with_source(src)))
         .collect();
     let push = match player
-        .enqueue(entries.clone(), settings.max_queue_length as usize, req.text_channel)
+        .enqueue(entries.clone(), settings.max_queue_length as usize, req.next, req.text_channel)
         .await
     {
         Ok(Ok(r)) => r,

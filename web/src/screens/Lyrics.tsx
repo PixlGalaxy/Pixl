@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Card, Empty, PageSpinner, TileArtwork } from '../components/ui'
 import { api } from '../lib/api'
 import { cx } from '../lib/format'
-import { localAnchor, usePosition } from '../lib/live'
+import { usePosition } from '../lib/live'
 import { activeLine } from '../lib/lyrics'
 import { useLynx } from '../lib/lynx'
 import type { LyricLine, Lyrics } from '../lib/types'
@@ -15,8 +15,7 @@ type Load = { uid: string; lyrics: Lyrics | null } | { uid: string; error: true 
 const MANUAL_SCROLL_PAUSE_MS = 4000
 
 function SyncedLyrics({ lines }: { lines: LyricLine[] }) {
-  const { t } = useTranslation()
-  const { state, anchor, setAnchor, channelId, permissions, run } = useLynx()
+  const { state, anchor } = useLynx()
   const position = usePosition(state, anchor)
   const box = useRef<HTMLDivElement>(null)
   const manualUntil = useRef(0)
@@ -63,11 +62,12 @@ function SyncedLyrics({ lines }: { lines: LyricLine[] }) {
       center(currentRef.current, true)
     }, MANUAL_SCROLL_PAUSE_MS)
   }
-  const canSeek = permissions.canControl && !!channelId
 
   return (
     <div
       ref={box}
+      // Lines are plain text: the box itself takes focus so the keyboard can scroll it.
+      tabIndex={0}
       onWheel={pauseAuto}
       onTouchMove={pauseAuto}
       onKeyDown={(e) => ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key) && pauseAuto()}
@@ -75,27 +75,16 @@ function SyncedLyrics({ lines }: { lines: LyricLine[] }) {
     >
       <ol className="space-y-1">
         {lines.map((l, i) => (
-          <li key={`${l.timeMs}-${i}`} data-line={i}>
-            <button
-              type="button"
-              disabled={!canSeek}
-              aria-current={i === current ? 'true' : undefined}
-              title={canSeek ? t('lyrics.jump') : undefined}
-              onClick={() => {
-                if (!channelId) return
-                manualUntil.current = 0
-                clearTimeout(resume.current)
-                setAnchor(localAnchor(l.timeMs))
-                void run(() => api.seek(channelId, l.timeMs))
-              }}
-              className={cx(
-                '-mx-2 block w-[calc(100%+1rem)] rounded-lg px-2 py-1 text-left text-lg leading-snug font-semibold tracking-tight transition-colors disabled:cursor-default',
-                i === current ? 'text-fg' : i < current ? 'text-muted/60' : 'text-muted',
-                canSeek && 'hover:bg-surface-2',
-              )}
-            >
-              {l.line || <span className={i === current ? undefined : 'text-muted/50'}>···</span>}
-            </button>
+          <li
+            key={`${l.timeMs}-${i}`}
+            data-line={i}
+            aria-current={i === current ? 'true' : undefined}
+            className={cx(
+              'py-1 text-lg leading-snug font-semibold tracking-tight transition-colors',
+              i === current ? 'text-fg' : i < current ? 'text-muted/60' : 'text-muted',
+            )}
+          >
+            {l.line || <span className={i === current ? undefined : 'text-muted/50'}>···</span>}
           </li>
         ))}
       </ol>

@@ -162,6 +162,7 @@ impl ApiState {
                 .unwrap_or_else(|_| HashMap::new());
         }
         let mut state = snap.to_api(&ctx);
+        state.seek_hold = Some(self.hold_json_of(guild, snap.channel_id));
         if let Some(view) = &snap.jam {
             let jam = self.api_jam(viewer, guild, Some(snap.channel_id), view).await;
             state.jam = serde_json::to_value(jam).ok();
@@ -266,13 +267,24 @@ pub struct SeekBody {
     position_ms: u64,
 }
 
+/// The Control rule (DJ mode, the jam's edit rule), then the seek-bar lock: while someone else
+/// drags the bar (`seek_hold`) the seek is refused with 409 `seek_held`; the holder's own seek goes
+/// through and ends the hold.
 pub async fn seek(State(st): State<ApiState>, m: Member, Body(b): Body<SeekBody>) -> ApiResult<StatusCode> {
-    match control(&st, &m, &b.channel_id)
-        .await?
-        .seek(b.position_ms)
-        .await
-        .map_err(gone)?
+    let channel = st.own_channel(&m, &b.channel_id)?;
+    let player = st.allowed(&m, channel, |_| Action::Control).await?.player;
+    let scope = st.hold_scope(m.guild_id, channel);
+    if let Err(hold) = st
+        .seek_holds
+        .check_seek(&scope, m.user_id(), tokio::time::Instant::now())
     {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "seek_held",
+            format!("{} is moving the bar", hold.name),
+        ));
+    }
+    match player.seek(b.position_ms).await.map_err(gone)? {
         SeekOutcome::Done => Ok(StatusCode::NO_CONTENT),
         SeekOutcome::NothingPlaying => Err(ApiError::not_found("Nothing is playing")),
         SeekOutcome::OutOfRange => Err(ApiError::invalid("That position is past the end of the track")),

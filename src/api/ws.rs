@@ -9,7 +9,13 @@
 //! full `state` go out (null when nothing plays; the socket then waits for a player to appear). When the
 //! user joins, leaves or moves between voice channels a new `channel` message is pushed and the socket
 //! switches to that channel's player (its `state` follows). Player events become `state` / `position`
-//! messages, guild settings changes become `settings`, and permission changes `permissions`. Writes go
+//! messages, guild settings changes become `settings`, and permission changes `permissions`.
+//!
+//! After `auth` the client may send `seek_hold` (a drag of the progress bar starts) and
+//! `seek_release` (it ended); see `seek_hold`. Every change of the hold of the followed channel (or its
+//! jam) goes out as `{"type":"seek_hold","holder":{"id","name"}|null,"until":ms|null}`; a refused
+//! `seek_hold` gets that message with `"denied":true` (someone else holds it, the cooldown, or no
+//! permission). Other client messages (`ping`) only count as activity. Writes go
 //! through a small bounded queue; a client that can't keep up, stops pinging, or whose session expired
 //! or was revoked is disconnected.
 
@@ -35,7 +41,13 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use super::{session::hash_token, settings::settings_message, ApiState, GuildEvent};
+use super::{
+    auth::Member,
+    seek_hold::{hold_json, Acquire, HoldScope},
+    session::{hash_token, Session},
+    settings::settings_message,
+    ApiState, GuildEvent,
+};
 use crate::{
     perms::Permissions,
     player::{state::epoch_ms, PlayerEvent, PlayerHandle},
@@ -63,6 +75,17 @@ pub const CLOSE_REPLACED: u16 = 4429;
 pub struct Sockets {
     next: AtomicU64,
     by_user: DashMap<u64, Vec<Slot>>,
+}
+
+/// Messages a signed-in client sends.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ClientMsg {
+    SeekHold,
+    SeekRelease,
+    /// `ping` and anything unknown: activity only.
+    #[serde(other)]
+    Other,
 }
 
 struct Slot {
@@ -95,6 +118,13 @@ pub struct SocketGuard<'a> {
     user: u64,
     id: u64,
     pub close: Closer,
+}
+
+impl SocketGuard<'_> {
+    /// Unique id of the socket (owner of its seek-bar holds).
+    pub fn id(&self) -> u64 {
+        self.id
+    }
 }
 
 impl Drop for SocketGuard<'_> {
@@ -201,7 +231,10 @@ async fn authenticate(st: ApiState, mut socket: WebSocket) {
     }
     let guard = st.sockets.register(session.user_id, hash_token(&token));
     let close = guard.close.clone();
-    run(st.clone(), token, session.user_id, guild, socket, close).await;
+    let id = guard.id();
+    run(st.clone(), token, session, guild, socket, close, id).await;
+    // Its seek-bar hold (if any) ends with it.
+    st.seek_holds.release_socket(id);
     drop(guard);
 }
 
@@ -225,6 +258,9 @@ struct Conn {
     st: ApiState,
     out: mpsc::Sender<Message>,
     user: u64,
+    session: Arc<Session>,
+    /// This socket's id (`Sockets`), owner of its seek-bar holds.
+    socket: u64,
     guild: u64,
     /// Followed voice channel: the user's current one.
     channel: Option<u64>,
@@ -274,10 +310,62 @@ impl Conn {
             return true;
         }
         self.channel = now;
+        // A drag in the channel the user left is over.
+        self.st.seek_holds.release_socket(self.socket);
         *player = attach(&self.st, self.guild, now);
         *last_generation = None;
         self.permissions = None; // always resend them: channel, state, permissions
         self.channel_message() && self.state(player.as_ref().map(|p| &p.0)).await && self.permissions().await
+    }
+
+    fn hold_scope(&self) -> Option<HoldScope> {
+        Some(self.st.hold_scope(self.guild, self.channel?))
+    }
+
+    /// The hold of the followed channel as a `seek_hold` message (`denied`: the answer to a refused
+    /// `seek_hold`).
+    fn hold_message(&self, denied: bool) -> bool {
+        let Some(scope) = self.hold_scope() else {
+            return true;
+        };
+        let hold = self.st.seek_holds.current(&scope, tokio::time::Instant::now());
+        let mut msg = hold_json(hold.as_ref());
+        msg["type"] = json!("seek_hold");
+        if denied {
+            msg["denied"] = json!(true);
+        }
+        self.push(msg)
+    }
+
+    /// A hold changed somewhere: tell the client when it is its channel's (or jam's).
+    fn hold_changed(&self, scope: &HoldScope) -> bool {
+        if self.hold_scope().as_ref() != Some(scope) {
+            return true;
+        }
+        self.hold_message(false)
+    }
+
+    /// The client started dragging the bar. A granted hold reaches it through the broadcast; a
+    /// refusal is answered here.
+    async fn seek_hold(&self) -> bool {
+        let Some(channel) = self.channel else {
+            return true;
+        };
+        let status = match self.st.member_status(self.guild, self.user).await {
+            Ok(s) if s.member => s,
+            Ok(_) => return false,
+            Err(_) => return self.hold_message(true),
+        };
+        let member = Member {
+            session: self.session.clone(),
+            guild_id: self.guild,
+            status,
+        };
+        match self.st.try_hold(&member, channel, self.socket).await {
+            Ok(Acquire::Granted(_)) => true,
+            Ok(Acquire::Kept(_)) => self.hold_message(false),
+            Ok(Acquire::Busy(_) | Acquire::Cooldown) | Err(_) => self.hold_message(true),
+        }
     }
 
     /// Recompute permissions; send them when they changed. False when the socket should close.
@@ -298,7 +386,16 @@ impl Conn {
     }
 }
 
-async fn run(st: ApiState, token: String, user: u64, guild: u64, socket: WebSocket, closer: Closer) {
+async fn run(
+    st: ApiState,
+    token: String,
+    session: Arc<Session>,
+    guild: u64,
+    socket: WebSocket,
+    closer: Closer,
+    socket_id: u64,
+) {
+    let user = session.user_id;
     let (mut sink, mut stream) = socket.split();
     let (out, mut out_rx) = mpsc::channel::<Message>(OUT_QUEUE);
     let writer = tokio::spawn(async move {
@@ -318,12 +415,15 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, socket: WebSock
         st: st.clone(),
         out,
         user,
+        session,
+        socket: socket_id,
         guild,
         channel,
         permissions: None,
         jam: None,
     };
     let mut guild_events = st.events.subscribe();
+    let mut holds = st.seek_holds.subscribe();
     let mut player = attach(&st, guild, channel);
     let mut last_generation = None;
     let mut last_seen = Instant::now();
@@ -336,7 +436,26 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, socket: WebSock
         tokio::select! {
             msg = stream.next() => match msg {
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => open = false,
+                Some(Ok(Message::Text(text))) => {
+                    last_seen = Instant::now();
+                    open = match serde_json::from_str::<ClientMsg>(&text) {
+                        Ok(ClientMsg::SeekHold) => conn.seek_hold().await,
+                        Ok(ClientMsg::SeekRelease) => {
+                            st.seek_holds.release_socket(conn.socket);
+                            true
+                        }
+                        Ok(ClientMsg::Other) | Err(_) => true,
+                    };
+                }
                 Some(Ok(_)) => last_seen = Instant::now(),
+            },
+            ev = holds.recv() => {
+                open = match ev {
+                    Ok(scope) => conn.hold_changed(&scope),
+                    // Missed changes: send the current hold.
+                    Err(broadcast::error::RecvError::Lagged(_)) => conn.hold_message(false),
+                    Err(broadcast::error::RecvError::Closed) => true,
+                };
             },
             ev = next_event(&mut player) => {
                 open = match ev {

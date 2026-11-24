@@ -44,6 +44,7 @@ pub fn definitions(i18n: &I18n, entry_point: bool, ai: bool) -> Value {
     let mut play_query = opt(STRING, "query", d("bot.cmd.play.query"), true);
     play_query["autocomplete"] = json!(true);
     play_query["max_length"] = json!(300);
+    let play_next = opt(BOOLEAN, "next", d("bot.cmd.play.next"), false);
     let mut playlist_name = opt(STRING, "name", d("bot.cmd.playlist.name"), false);
     playlist_name["autocomplete"] = json!(true);
     playlist_name["max_length"] = json!(100);
@@ -64,7 +65,7 @@ pub fn definitions(i18n: &I18n, entry_point: bool, ai: bool) -> Value {
     lyrics_query["max_length"] = json!(200);
 
     let mut list = vec![
-        cmd("play", i18n, vec![play_query]),
+        cmd("play", i18n, vec![play_query, play_next]),
         cmd("playlist", i18n, vec![playlist_name]),
         cmd("pause", i18n, vec![]),
         cmd("resume", i18n, vec![]),

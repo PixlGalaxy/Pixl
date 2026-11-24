@@ -615,6 +615,13 @@ impl Player {
     }
 
     async fn handle(&mut self, cmd: Command) {
+        // Rapid seeks (a dragged bar, repeated clicks) coalesce: only the latest one runs.
+        if matches!(&cmd, Command::Seek { ticket: Some(t), .. } if t.superseded()) {
+            if let Command::Seek { reply, .. } = cmd {
+                let _ = reply.send(SeekOutcome::Done);
+            }
+            return;
+        }
         let cmd = if self.jam.is_some() {
             match self.jam_intercept(cmd) {
                 Some(cmd) => cmd,
@@ -627,13 +634,14 @@ impl Player {
             Command::Enqueue {
                 entries,
                 max,
+                next,
                 text_channel,
                 reply,
             } => {
                 if let Some(c) = text_channel {
                     self.set_text_channel(c);
                 }
-                let res = self.push_entries(entries, max).await;
+                let res = self.push_entries(entries, max, next).await;
                 let _ = reply.send(res);
             }
             Command::Pause { reply } => {
@@ -677,7 +685,7 @@ impl Player {
                 let _ = reply.send(prev);
             }
             Command::Stop { by, announce } => self.ending = Some(EndReason::Stopped { by, announce }),
-            Command::Seek { position_ms, reply } => {
+            Command::Seek { position_ms, reply, .. } => {
                 let outcome = self.user_seek(position_ms).await;
                 let _ = reply.send(outcome);
             }
@@ -859,8 +867,10 @@ impl Player {
     }
 
     /// Append entries (respecting `max` upcoming) and start playing when idle.
-    async fn push_entries(&mut self, entries: Vec<Entry>, max: usize) -> Result<PushResult, PushError> {
-        let res = self.queue.push(entries, max);
+    /// Queue tracks at the end, or (`next`) right after the current track. Radio refills always go
+    /// at the end.
+    async fn push_entries(&mut self, entries: Vec<Entry>, max: usize, next: bool) -> Result<PushResult, PushError> {
+        let res = self.queue.push_at(entries, max, next);
         if res.is_ok() {
             self.persist(true);
             if self.playing.is_none() && self.loading.is_none() && !self.waiting_start && !self.queue.is_active() {
@@ -970,7 +980,7 @@ impl Player {
         }
         let count = picks.len();
         let max = self.max_queue();
-        let (added, truncated) = match self.push_entries(radio::pick_entries(picks, &owner), max).await {
+        let (added, truncated) = match self.push_entries(radio::pick_entries(picks, &owner), max, false).await {
             Ok(r) => (r.added, r.truncated),
             Err(PushError::Full { .. } | PushError::NotAllowed) => (0, true),
         };
@@ -1933,15 +1943,18 @@ impl Player {
             Command::Enqueue {
                 entries,
                 max,
+                next,
                 text_channel,
                 reply,
             } => {
                 if let Some(c) = text_channel {
                     self.set_text_channel(c);
                 }
+                // "Next" means after the jam's current track (the shared timeline).
                 let cmd = Command::Enqueue {
                     entries,
                     max,
+                    next,
                     text_channel: None,
                     reply,
                 };
@@ -3213,6 +3226,7 @@ mod tests {
         let (tx, _slot) = idle_actor().await;
         let outcome = ask(&tx, |reply| Command::Seek {
             position_ms: 1_000,
+            ticket: None,
             reply,
         })
         .await;
@@ -3242,6 +3256,7 @@ mod tests {
         let (r, seek_rx) = oneshot::channel();
         tx.send(Command::Seek {
             position_ms: 60_000,
+            ticket: None,
             reply: r,
         })
         .await
@@ -3276,6 +3291,118 @@ mod tests {
         assert!(shown, "the loading snapshot shows the requested position");
         assert!(position, "the position event carries the requested position");
         tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
+    }
+
+    /// Seeks asked faster than the player applies them coalesce: the queued older ones answer
+    /// `Done` without seeking and only the latest target is applied.
+    #[tokio::test]
+    async fn rapid_seeks_coalesce_to_the_latest_target() {
+        let (manager, bot) = test_manager().await;
+        let req = StartRequest {
+            guild_id: GUILD,
+            voice_channel_id: VOICE,
+            bot_index: 0,
+            text_channel_id: None,
+            started_by: 1,
+            humans: HashSet::from([1]),
+            settings: GuildSettings::default(),
+            restore: Some(restore_of(&["a", "b"])),
+        };
+        let (tx, rx) = mpsc::channel(64);
+        let (events, mut ev) = broadcast::channel(64);
+        let snapshot = Arc::new(RwLock::new(Arc::new(initial_snapshot(&req, 0))));
+        let call = Arc::new(Mutex::new(Call::standalone(GuildId::new(GUILD), UserId::new(99))));
+        let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let mut replies = Vec::new();
+        for target in [30_000, 60_000, 90_000] {
+            let (r, rx) = oneshot::channel();
+            tx.send(Command::Seek {
+                position_ms: target,
+                ticket: Some(super::super::SeekTicket::next(&counter)),
+                reply: r,
+            })
+            .await
+            .unwrap();
+            replies.push(rx);
+        }
+        tokio::spawn(run(Spawn {
+            manager,
+            req,
+            call,
+            bot,
+            generation: 1,
+            tx: tx.clone(),
+            rx,
+            events,
+            snapshot: snapshot.clone(),
+        }));
+        for r in replies {
+            let outcome = tokio::time::timeout(Duration::from_secs(5), r).await.unwrap().unwrap();
+            assert_eq!(outcome, SeekOutcome::Done);
+        }
+        let mut seen = Vec::new();
+        while let Ok(e) = ev.try_recv() {
+            if let PlayerEvent::Position { position_ms, .. } = e {
+                seen.push(position_ms);
+            }
+        }
+        assert!(seen.contains(&90_000), "{seen:?}");
+        assert!(
+            !seen.contains(&30_000) && !seen.contains(&60_000),
+            "superseded seeks are never applied: {seen:?}"
+        );
+        let shown = snapshot.read().unwrap().position_ms;
+        assert_eq!(shown, 90_000);
+        tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
+    }
+
+    /// "Play next" through the player: right after the shown current track, a list in order, the
+    /// limit applies; plain adds still go at the end.
+    #[tokio::test]
+    async fn enqueue_next_goes_after_the_current_track() {
+        let (manager, bot) = test_manager().await;
+        let (tx, slot) = spawn_on(&manager, &bot, VOICE, Some(restore_of(&["a", "b"])));
+        until_snap(&slot, |s| s.current.is_some()).await;
+        let named = |ids: &[&str]| -> Vec<Entry> {
+            ids.iter()
+                .map(|id| Arc::new(QueueEntry::new(track(id), Requester::id_only(2))))
+                .collect()
+        };
+        let add = |entries: Vec<Entry>, max: usize, next: bool| {
+            let tx = tx.clone();
+            async move {
+                ask(&tx, |reply| Command::Enqueue {
+                    entries,
+                    max,
+                    next,
+                    text_channel: None,
+                    reply,
+                })
+                .await
+            }
+        };
+        let r = add(named(&["x"]), 100, true).await.unwrap();
+        assert_eq!(r.first_position, 1);
+        add(named(&["p1", "p2"]), 100, true).await.unwrap();
+        add(named(&["z"]), 100, false).await.unwrap();
+        until_snap(&slot, |s| s.upcoming.len() == 5).await;
+        assert_eq!(uids(&slot.read().unwrap()), vec!["a", "p1", "p2", "x", "b", "z"]);
+        assert_eq!(
+            add(named(&["y"]), 5, true).await,
+            Err(PushError::Full { max: 5 }),
+            "the queue limit counts the upcoming tracks"
+        );
+        tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
+    }
+
+    #[test]
+    fn a_seek_ticket_is_superseded_by_a_newer_one() {
+        let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let a = super::super::SeekTicket::next(&counter);
+        assert!(!a.superseded());
+        let b = super::super::SeekTicket::next(&counter);
+        assert!(a.superseded());
+        assert!(!b.superseded());
     }
 
     #[tokio::test]
@@ -3421,6 +3548,7 @@ mod tests {
         until_snap(&slot, |s| s.current.as_ref().is_some_and(|e| e.uid == a.uid) && s.status == Status::Loading).await;
         let seek = ask(&tx, |reply| Command::Seek {
             position_ms: 178_500,
+            ticket: None,
             reply,
         })
         .await;

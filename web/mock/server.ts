@@ -18,6 +18,8 @@
 //   ?ai_track=1      the current song was picked by the AI radio (AI chip, "Selected by AI")
 //   ?radio=off|on|job  fixed radio state: off / on (no job) / a job finding songs (default: demo job cycling)
 //   ?playlists=none|full  no saved playlists / every saved playlist pinned (Playlists tab)
+//   ?seek_hold=other|cycle  another listener (Marta) holds the progress bar: all the time, or 4 s
+//                    out of every 9 s (the bar is disabled for you meanwhile)
 // Keys in the browser (mock SDK): `v` moves you 100 -> 101 -> no voice -> 100 (socket `channel`
 // message + new state), `x` expires every session (the panel signs in again silently), `o` takes
 // the backend offline and back (/healthz and /api answer 502, sockets are dropped and refused).
@@ -52,6 +54,7 @@ type Flags = {
   jam: 'host' | 'member' | null
   aiTrack: boolean
   radio: 'off' | 'on' | 'job' | null
+  seekHold: 'other' | 'cycle' | null
 }
 
 function parseFlags(search: string): Flags {
@@ -69,6 +72,7 @@ function parseFlags(search: string): Flags {
     jam: p.get('jam') === 'host' || p.get('jam') === 'member' ? (p.get('jam') as 'host' | 'member') : null,
     aiTrack: p.get('ai_track') === '1',
     radio: ['off', 'on', 'job'].includes(p.get('radio') ?? '') ? (p.get('radio') as 'off' | 'on' | 'job') : null,
+    seekHold: p.get('seek_hold') === 'other' || p.get('seek_hold') === 'cycle' ? (p.get('seek_hold') as 'other' | 'cycle') : null,
   }
 }
 // Sessions are `mock.<epoch>.<flags>`; `x` bumps the epoch so every older session gets 401.
@@ -329,9 +333,78 @@ function snapshot(f: Flags): PlayerState | null {
     voteSkipEnabled: s.settings.voteSkip.enabled,
     version: ++mockVersion,
     jam: jamView(f),
+    seekHold: seekHoldFor(f),
     serverNow: Date.now(),
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Seek-bar hold (same rules as src/api/seek_hold.rs: first come wins, 5 s at most, 1 s cooldown)
+
+const HOLD_MAX_MS = 5_000
+const HOLD_COOLDOWN_MS = 1_000
+const CYCLE_MS = 9_000
+const CYCLE_HELD_MS = 4_000
+/** The panel user's own hold. */
+let myHold: { until: number; ws: WebSocket; timer: ReturnType<typeof setTimeout> } | null = null
+let myCooldownUntil = 0
+
+/** Marta's simulated hold (`?seek_hold`): until when, or null when the bar is free of her. */
+function otherHoldUntil(f: Flags, now = Date.now()): number | null {
+  if (f.seekHold === 'other') return now + HOLD_MAX_MS
+  if (f.seekHold === 'cycle') {
+    const phase = now % CYCLE_MS
+    return phase < CYCLE_HELD_MS ? now - phase + CYCLE_HELD_MS : null
+  }
+  return null
+}
+
+function seekHoldFor(f: Flags): PlayerState['seekHold'] {
+  const other = otherHoldUntil(f)
+  if (other != null) return { holder: { id: USERS[1]!.id, name: USERS[1]!.name }, until: other }
+  if (myHold) return { holder: { id: ME.id, name: ME.name }, until: myHold.until }
+  return { holder: null, until: null }
+}
+
+function broadcastHold() {
+  for (const [ws, f] of sockets) send(ws, { type: 'seek_hold', ...seekHoldFor(f) })
+}
+
+function releaseMyHold(expired = false) {
+  if (!myHold) return
+  clearTimeout(myHold.timer)
+  myHold = null
+  if (expired) myCooldownUntil = Date.now() + HOLD_COOLDOWN_MS
+  broadcastHold()
+}
+
+function onSocketMessage(ws: WebSocket, f: Flags, data: unknown) {
+  let msg: { type?: string }
+  try {
+    msg = JSON.parse(String(data)) as { type?: string }
+  } catch {
+    return
+  }
+  if (msg.type === 'seek_hold') {
+    const refused = !permissionsFor(f).canControl || otherHoldUntil(f) != null || Date.now() < myCooldownUntil
+    if (refused) return send(ws, { type: 'seek_hold', ...seekHoldFor(f), denied: true })
+    if (myHold) return send(ws, { type: 'seek_hold', ...seekHoldFor(f) })
+    const until = Date.now() + HOLD_MAX_MS
+    myHold = { until, ws, timer: setTimeout(() => releaseMyHold(true), HOLD_MAX_MS) }
+    broadcastHold()
+  } else if (msg.type === 'seek_release') {
+    if (myHold?.ws === ws) releaseMyHold()
+  }
+}
+
+// The cycling hold changes on its own: tell the sockets when it starts and ends.
+let lastCycleHeld = false
+setInterval(() => {
+  const held = Date.now() % CYCLE_MS < CYCLE_HELD_MS
+  if (held === lastCycleHeld) return
+  lastCycleHeld = held
+  for (const [ws, f] of sockets) if (f.seekHold === 'cycle') send(ws, { type: 'seek_hold', ...seekHoldFor(f) })
+}, 200)
 
 // ---------------------------------------------------------------------------------------------
 // Jam (same shape as src/api/jam.rs). Ids are 10 lowercase letters or digits.
@@ -830,6 +903,8 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
     }
     case 'POST /player/seek':
       requireControl(f)
+      if (otherHoldUntil(f) != null) throw new HttpError(409, 'seek_held')
+      releaseMyHold()
       setPosition(Number(body.positionMs) || 0)
       return changed()
     case 'POST /player/volume':
@@ -858,6 +933,9 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       if (!(permissionsFor(f).isManager && s.settings.managersExempt) && voice.length > 0 && !voice.includes('100')) {
         throw new HttpError(403, 'channel_not_allowed')
       }
+      // "Play next" reorders the queue: the control rule (DJ mode) applies, like moving a song.
+      const next = body.position === 'next'
+      if (next) requireControl(f)
       if (s.upcoming.length >= s.settings.maxQueueLength) throw new HttpError(409, 'queue_full')
       const match = /mock(\d+)/.exec(query)
       const seed = (match && CATALOG[Number(match[1])]) || CATALOG[Math.floor(Math.random() * CATALOG.length)]!
@@ -865,9 +943,11 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       if (query.includes('playlist')) savePlaylist(query)
       const list: MockList | null =
         added > 1 ? { name: 'Pasted playlist', imageUrl: `/mock/art/${uidCounter % CATALOG.length}.svg`, platform: 'spotify', url: query, total: added } : null
-      for (let i = 0; i < added; i++) {
-        s.upcoming.push(makeTrack(i === 0 ? seed : CATALOG[(i * 3) % CATALOG.length]!, ME, null, list && fromList(list, i + 1)))
-      }
+      const tracks = Array.from({ length: added }, (_, i) =>
+        makeTrack(i === 0 ? seed : CATALOG[(i * 3) % CATALOG.length]!, ME, null, list && fromList(list, i + 1)),
+      )
+      if (next) s.upcoming.unshift(...tracks)
+      else s.upcoming.push(...tracks)
       if (!s.current) {
         advance()
         s.status = 'playing'
@@ -1222,10 +1302,12 @@ export function mockApi(): Plugin {
             send(ws, { type: 'channel', channel: channelRef(s.voice) })
             send(ws, { type: 'state', state: snapshot(flags) })
             send(ws, { type: 'permissions', permissions: permissionsFor(flags) })
+            ws.on('message', (next) => onSocketMessage(ws, flags, next))
           })
           ws.on('close', () => {
             clearTimeout(timer)
             sockets.delete(ws)
+            if (myHold?.ws === ws) releaseMyHold()
           })
         })
       })

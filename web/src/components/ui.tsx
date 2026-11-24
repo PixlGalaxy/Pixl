@@ -321,6 +321,9 @@ export function Notice({ tone, icon, children }: { tone: Exclude<Tone, 'neutral'
 /** Thumb width of `.lynx-range` (index.css, WebKit/Chromium, which Discord uses). */
 const THUMB_PX = 14
 
+/** Keys that move a native range. */
+const MOVE_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'])
+
 /** Native range with the accent fill track. */
 export function Slider({
   value,
@@ -331,6 +334,9 @@ export function Slider({
   disabled,
   onInput,
   onCommit,
+  onStart,
+  onCancel,
+  title,
   className = '',
 }: {
   value: number
@@ -341,6 +347,12 @@ export function Slider({
   disabled?: boolean
   onInput: (v: number) => void
   onCommit?: (v: number) => void
+  /** A drag (pointer down) or a key press that moves the value starts. */
+  onStart?: () => void
+  /** The drag was abandoned without a commit (pointer cancelled). */
+  onCancel?: () => void
+  /** Tooltip (defaults to the label). */
+  title?: string
   className?: string
 }) {
   const pct = max > min ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0
@@ -357,7 +369,10 @@ export function Slider({
       value={value}
       disabled={disabled}
       aria-label={label}
-      title={label}
+      title={title ?? label}
+      onPointerDown={() => onStart?.()}
+      onKeyDown={(e) => MOVE_KEYS.has(e.key) && onStart?.()}
+      onPointerCancel={() => onCancel?.()}
       onChange={(e) => onInput(Number(e.target.value))}
       onPointerUp={commit}
       onKeyUp={commit}

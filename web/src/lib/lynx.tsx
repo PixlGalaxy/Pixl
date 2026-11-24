@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useToast } from '../components/Toasts'
 import { ApiError, api } from './api'
 import type { Connection } from './discord'
-import { useLivePlayer, type PositionAnchor } from './live'
+import { useLivePlayer, type ClientMessage, type PositionAnchor, type SeekHoldMessage } from './live'
 import type { GuildSettings, NoticesInfo, Permissions, PlayerState, PublicConfig, User } from './types'
 
 /** Notices are also polled (the socket may be down; a reopened panel catches up on focus). */
@@ -42,6 +42,10 @@ type LynxContext = {
   errorText: (error: unknown) => string
   /** Operator notices (scheduled downtime...) and maintenance mode. */
   notices: NoticesInfo
+  /** Send on the live socket (false while it is down). */
+  sendSocket: (msg: ClientMessage) => boolean
+  /** Listen to `seek_hold` socket messages (seek-bar lock); returns the unsubscribe function. */
+  onSeekHold: (listener: (msg: SeekHoldMessage) => void) => () => void
 }
 
 const Ctx = createContext<LynxContext | null>(null)
@@ -148,6 +152,8 @@ export function LynxProvider({ conn, children }: { conn: Connection; children: R
       run,
       errorText,
       notices,
+      sendSocket: live.sendSocket,
+      onSeekHold: live.onSeekHold,
     }),
     [conn, shared, permissions, pendingJamId, clearPendingJam, settings, live, run, errorText, notices],
   )

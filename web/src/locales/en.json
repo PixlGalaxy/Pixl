@@ -35,7 +35,8 @@
     "jam_other": "Your channel is in another jam. Leave it first.",
     "refresh_blocked": "Too many refreshes. Please wait 5 minutes.",
     "playlists_full": "Every saved playlist is pinned. Unpin or remove one in the Playlists tab first.",
-    "saving_off": "Saving playlists is turned off on this bot."
+    "saving_off": "Saving playlists is turned off on this bot.",
+    "seek_held": "Someone else is moving the bar. Try again in a moment."
   },
   "login": {
     "title": "Connecting to Lynx",
@@ -86,6 +87,9 @@
     "emptyChannelBody": "Music resumes when someone joins.",
     "live": "Live",
     "seek": "Seek",
+    "seekLocked": "{{name}} is moving the bar",
+    "seekReleased": "Released after 5 seconds",
+    "seekWait": "Wait a moment before moving the bar again.",
     "like": "Like",
     "liked": "Liked",
     "dislike": "Dislike",
@@ -146,11 +150,18 @@
     "emptyUpcoming": "Nothing queued after this song.",
     "added_one": "Added {{count}} track to the queue.",
     "added_other": "Added {{count}} tracks to the queue.",
+    "addedNext_one": "{{count}} track will play next.",
+    "addedNext_other": "{{count}} tracks will play next, in order.",
     "addTitle": "Add to queue",
     "addHint": "Paste a YouTube or Spotify link, or search for a song.",
     "addPlaceholder": "Link or song name",
     "add": "Add",
     "addThis": "Add {{title}}",
+    "addThisNext": "Play {{title}} next",
+    "addWhere": "Where to add",
+    "addEnd": "At the end",
+    "addNext": "Play next",
+    "addNextDjOnly": "Only DJs can add songs to play next.",
     "searching": "Searching",
     "noResults": "No results.",
     "dragHandle": "Drag to reorder {{title}}",
@@ -265,7 +276,6 @@
     "nothingPlaying": "Lyrics show up here when a song is playing.",
     "source": "from {{source}}",
     "synced": "Synced",
-    "jump": "Jump to this line",
     "error": "Could not load lyrics.",
     "none": "No lyrics found for this song."
   },
@@ -419,7 +429,7 @@
       },
       "lyrics": {
         "title": "Lyrics",
-        "body": "Lyrics come from LRCLIB. Synced lyrics highlight the current line and follow the song; tap a line to jump to it. Some songs only have plain lyrics, and some have none."
+        "body": "Lyrics come from LRCLIB. Synced lyrics highlight the current line and follow the song. Some songs only have plain lyrics, and some have none."
       },
       "radio": {
         "title": "Radio",
@@ -442,7 +452,7 @@
         "body": "Invite to jam (in the panel or on the Now playing message) shares a link. Whoever opens it gets the panel in their own voice channel and can join: every channel plays the same queue at the same position, and the volume stays per channel. The host channel decides who may join (other channels of the server, other servers), who edits the shared queue, closes the jam, removes channels or ends it. Joining saves your channel's own queue; it comes back when you leave or the jam ends. If the host channel empties, the host role passes to the channel that joined first. Jams are not kept across a Lynx restart: each channel resumes its own queue."
       }
     },
-    "seekNote": "Moving to a point in the song is only possible here, with the slider. There is no seek command.",
+    "seekNote": "Moving to a point in the song is only possible here, with the slider. There is no seek command. While someone drags it, the others see it locked for up to 5 seconds.",
     "feedbackNote": "Like and Dislike tune your radio: a dislike keeps that song out of your mixes.",
     "commandsTitle": "Slash commands",
     "commandsHint": "Type them in any text channel of the server while you are in a voice channel.",
@@ -454,7 +464,7 @@
     },
     "commands": {
       "play": {
-        "description": "Joins your voice channel and plays a link (YouTube, YouTube Music, Spotify track, album or playlist) or the best match for a search.",
+        "description": "Joins your voice channel and plays a link (YouTube, YouTube Music, Spotify track, album or playlist) or the best match for a search. With next:True it goes right after the current song instead of at the end (a list keeps its order); in DJ mode only DJs and managers can do that.",
         "example": "/play query:paper lanterns night drive"
       },
       "playlist": {
@@ -786,7 +796,7 @@
     },
     "queue": {
       "add": {
-        "body": "Paste a link or type to search. Playlist, album and artist links add their songs up to the queue limit and are saved to your Playlists tab while your history is on. You need to be in the voice channel.",
+        "body": "Paste a link or type to search. Playlist, album and artist links add their songs up to the queue limit and are saved to your Playlists tab while your history is on. You need to be in the voice channel. At the end adds after everything queued; Play next puts the songs right after the current one, a list in its order (in a jam, after the shared song). In DJ mode only DJs and managers can use Play next.",
         "example": "You paste a Spotify album link. Its songs go to the end of the queue and the album appears in your Playlists tab."
       },
       "upNext": {
@@ -810,8 +820,8 @@
     },
     "lyrics": {
       "card": {
-        "body": "Lyrics come from LRCLIB, matched by artist, title and length. Synced lyrics highlight the current line and follow the song; scrolling by hand pauses that for a few seconds. If you can control playback, clicking a line jumps there. Some songs only have plain lyrics and some have none.",
-        "example": "A synced song is playing. You click the chorus line and the song jumps to it; the rest of the channel hears the jump too."
+        "body": "Lyrics come from LRCLIB, matched by artist, title and length. Synced lyrics highlight the current line and follow the song; scrolling by hand pauses that for a few seconds. The lines are for reading only: to move within the song, use the progress bar. Some songs only have plain lyrics and some have none.",
+        "example": "A synced song is playing. You scroll up to read the first verse again; a few seconds later the lyrics go back to the line being sung."
       }
     },
     "radio": {
