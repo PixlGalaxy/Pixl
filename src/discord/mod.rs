@@ -27,8 +27,8 @@ use std::sync::{
 use anyhow::Result;
 use serenity::{
     all::{
-        Context, EventHandler, GatewayIntents, GuildChannel, Interaction, Ready, ResumedEvent, ShardStageUpdateEvent,
-        UnavailableGuild, VoiceState,
+        ActivityData, Context, EventHandler, GatewayIntents, GuildChannel, Interaction, OnlineStatus, Ready,
+        ResumedEvent, ShardStageUpdateEvent, UnavailableGuild, VoiceState,
     },
     async_trait,
     gateway::ConnectionStage,
@@ -110,6 +110,9 @@ impl Bots {
                     registered: AtomicBool::new(false),
                 })
                 .register_songbird_with(songbird.clone())
+                // Until the startup sequence finished: Do Not Disturb with "Loading...".
+                .status(OnlineStatus::DoNotDisturb)
+                .activity(ActivityData::custom("Loading..."))
                 .await?;
             let info = Arc::new(BotInfo::new(index, client.http.clone(), client.cache.clone(), songbird));
             info.set_shard_manager(client.shard_manager.clone());
@@ -174,6 +177,11 @@ impl EventHandler for Handler {
         let shard = ready.shard.map(|s| s.id.0).unwrap_or(ctx.shard_id.0);
         let guilds: Vec<u64> = ready.guilds.iter().map(|g| g.id.get()).collect();
         info!(bot = self.index, user = %ready.user.name, guilds = guilds.len(), "bot ready");
+        // A shard that (re)connects after startup starts from the builder's "Loading..." presence.
+        if lynx.booted.load(Ordering::Acquire) {
+            let (activity, status) = ready_presence(&lynx.config);
+            ctx.set_presence(activity, status);
+        }
         lynx.bots.on_ready(
             self.index,
             ready.user.id.get(),
@@ -365,4 +373,16 @@ async fn own_voice_state(lynx: &Lynx, index: usize, guild_id: u64, channel: Opti
         }
         Some(_) => {}
     }
+}
+
+/// Presence once Lynx is ready: online, with the activity from `BOT_ACTIVITY` / `BOT_ACTIVITY_TYPE`.
+pub fn ready_presence(config: &crate::config::Config) -> (Option<ActivityData>, OnlineStatus) {
+    let activity = config.bot_activity.as_deref().map(|text| match config.bot_activity_type.as_str() {
+        "playing" => ActivityData::playing(text),
+        "listening" => ActivityData::listening(text),
+        "watching" => ActivityData::watching(text),
+        "competing" => ActivityData::competing(text),
+        _ => ActivityData::custom(text),
+    });
+    (activity, OnlineStatus::Online)
 }

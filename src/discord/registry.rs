@@ -106,6 +106,14 @@ impl BotInfo {
         let _ = self.shards.set(shards);
     }
 
+    /// Change the presence on every shard of this bot (kept by serenity across reconnects).
+    pub async fn set_presence(&self, activity: Option<serenity::all::ActivityData>, status: serenity::all::OnlineStatus) {
+        let Some(shards) = self.shards.get() else { return };
+        for runner in shards.runners.lock().await.values() {
+            runner.runner_tx.set_presence(activity.clone(), status);
+        }
+    }
+
     /// Average heartbeat latency of the bot's shards; None until the first heartbeat is acknowledged.
     pub async fn gateway_latency(&self) -> Option<std::time::Duration> {
         let shards = self.shards.get()?;

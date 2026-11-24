@@ -510,6 +510,8 @@ pub(crate) mod test_util {
             data_dir: dir.clone(),
             appdata_dir: dir,
             bot_locale: "en".into(),
+            bot_activity: None,
+            bot_activity_type: "custom".into(),
             spotify_client_id: None,
             spotify_client_secret: None,
             lastfm_api_key: None,

@@ -26,6 +26,10 @@ pub struct Config {
     /// Heavy data: stream fragments per voice channel, large caches.
     pub data_dir: PathBuf,
     pub bot_locale: String,
+    /// Activity shown on every Lynx bot once startup finished (`BOT_ACTIVITY`, empty: none).
+    pub bot_activity: Option<String>,
+    /// `custom` (default), `playing`, `listening`, `watching` or `competing`.
+    pub bot_activity_type: String,
 
     pub spotify_client_id: Option<String>,
     pub spotify_client_secret: Option<String>,
@@ -90,6 +94,10 @@ impl Config {
             appdata_dir: optional("APPDATA_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("./appdata")),
             data_dir: optional("DATA_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("./data")),
             bot_locale: optional("BOT_LOCALE").unwrap_or_else(|| "en".into()),
+            bot_activity: Some(optional("BOT_ACTIVITY").unwrap_or_else(|| "/play".into())).filter(|a| a != "-"),
+            bot_activity_type: optional("BOT_ACTIVITY_TYPE")
+                .map(|t| t.to_ascii_lowercase())
+                .unwrap_or_else(|| "custom".into()),
 
             spotify_client_id: optional("SPOTIFY_CLIENT_ID"),
             spotify_client_secret: optional("SPOTIFY_CLIENT_SECRET"),
@@ -127,6 +135,12 @@ impl Config {
 
         if cfg.spotify_client_id.is_some() != cfg.spotify_client_secret.is_some() {
             bail!("SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set together");
+        }
+        if !matches!(
+            cfg.bot_activity_type.as_str(),
+            "custom" | "playing" | "listening" | "watching" | "competing"
+        ) {
+            bail!("invalid BOT_ACTIVITY_TYPE={}: expected custom, playing, listening, watching or competing", cfg.bot_activity_type);
         }
         if cfg.ollama_url.is_some() && cfg.ollama_model.is_none() {
             bail!("OLLAMA_MODEL is required when OLLAMA_URL is set");

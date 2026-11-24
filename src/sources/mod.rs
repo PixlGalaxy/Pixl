@@ -1000,6 +1000,8 @@ mod tests {
             appdata_dir: data_dir.clone(),
             data_dir,
             bot_locale: "en".into(),
+            bot_activity: None,
+            bot_activity_type: "custom".into(),
             spotify_client_id: std::env::var("SPOTIFY_CLIENT_ID").ok().filter(|s| !s.is_empty()),
             spotify_client_secret: std::env::var("SPOTIFY_CLIENT_SECRET").ok().filter(|s| !s.is_empty()),
             lastfm_api_key: None,
