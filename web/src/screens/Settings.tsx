@@ -435,7 +435,8 @@ export function SettingsScreen() {
         </SettingRow>
       </Card>
 
-      <DjCard />
+      {/* DJs only matter in "DJs only" mode, or to skip without votes when vote skip is on. */}
+      {(settings.controlMode !== 'everyone' || vs.enabled) && <DjCard />}
 
       <ChannelsCard settings={settings} save={save} />
 
