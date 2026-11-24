@@ -10,7 +10,15 @@ export const MAX_LOCAL_AGE_MS = 5_000
  * monotonic clock that keeps counting while the panel is hidden or in picture-in-picture). The
  * position is always `positionMs + (performance.now() - at)` while playing, never accumulated ticks.
  */
-export type PositionAnchor = { positionMs: number; at: number }
+export type PositionAnchor = {
+  positionMs: number
+  at: number
+  /** The track the sample belongs to; a sample of another track never moves this track's bar. */
+  uid?: string
+}
+
+/** Without any state or position message for this long while playing, the panel fetches one. */
+export const RESYNC_AFTER_MS = 25_000
 
 /**
  * Anchor from a server sample. With `serverNow` (the server's clock when it sent the message) the
@@ -18,10 +26,55 @@ export type PositionAnchor = { positionMs: number; at: number }
  * bar jump back when a state was built from a snapshot published minutes earlier. Without it, the
  * local clock is used and capped.
  */
-export function anchorFrom(positionMs: number, positionAt: number, serverNow: number | undefined, nowPerf: number): PositionAnchor {
+export function anchorFrom(
+  positionMs: number,
+  positionAt: number,
+  serverNow: number | undefined,
+  nowPerf: number,
+  uid?: string,
+): PositionAnchor {
   const age =
     serverNow != null ? Math.max(serverNow - positionAt, 0) : Math.min(Math.max(Date.now() - positionAt, 0), MAX_LOCAL_AGE_MS)
-  return { positionMs: positionMs + age, at: nowPerf }
+  return { positionMs: positionMs + age, at: nowPerf, ...(uid != null ? { uid } : {}) }
+}
+
+/** Pure: the position an anchor stands for at `now` (`performance.now()` time). */
+export function positionAt(anchor: PositionAnchor, playing: boolean, now: number): number {
+  return anchor.positionMs + (playing ? Math.max(0, now - anchor.at) : 0)
+}
+
+/**
+ * Position shown for `state`'s current track at `now`: extrapolated from the anchor only while
+ * it plays, clamped to the track (0 to its duration). An anchor of another track (a seek or a
+ * position message of the previous one) shows 0 until the new track's own sample arrives.
+ */
+export function shownPosition(
+  anchor: PositionAnchor,
+  current: { uid: string; durationMs: number | null } | null,
+  playing: boolean,
+  now: number,
+): number {
+  if (!current) return 0
+  if (anchor.uid != null && anchor.uid !== current.uid) return 0
+  const pos = Math.max(0, positionAt(anchor, playing, now))
+  return current.durationMs != null && current.durationMs > 0 ? Math.min(pos, current.durationMs) : pos
+}
+
+/**
+ * Whether a socket `position` message applies to the state shown: one sent for another track
+ * (it raced the track change) is dropped. Messages without a uid (older servers) apply.
+ */
+export function positionApplies(shownUid: string | null | undefined, messageUid: string | undefined): boolean {
+  return messageUid == null || messageUid === shownUid
+}
+
+/**
+ * Whether the panel should fetch a fresh state: it is visible, the track plays, and no state or
+ * position arrived for `RESYNC_AFTER_MS` (the server sends a position every 10 s while playing,
+ * so a quiet socket means messages were lost or the panel was throttled).
+ */
+export function needsResync(playing: boolean, visible: boolean, lastSyncAt: number, now: number): boolean {
+  return playing && visible && now - lastSyncAt >= RESYNC_AFTER_MS
 }
 
 /**

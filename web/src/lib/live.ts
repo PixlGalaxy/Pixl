@@ -3,24 +3,36 @@ import { api, BACKEND, getSession } from './api'
 import { onBackendRecovered, reportBackendTrouble } from './health'
 import { authMessage, closeAction } from './socket'
 import { useLayoutMode } from './layout'
-import { acceptState, anchorFrom as anchorAt, freshFetch, shouldPoll, type PositionAnchor } from './sync'
+import {
+  acceptState,
+  anchorFrom as anchorAt,
+  freshFetch,
+  needsResync,
+  positionApplies,
+  shouldPoll,
+  shownPosition,
+  type PositionAnchor,
+} from './sync'
 import type { AiState, ChannelRef, GuildSettings, Permissions, PlayerState, ServerMessage } from './types'
 
 export type { PositionAnchor } from './sync'
+export { positionAt } from './sync'
 
 const PING_MS = 25_000
 const POLL_MS = 5_000
+/** How often a playing, visible panel checks that its position is still fresh (`needsResync`). */
+const RESYNC_CHECK_MS = 5_000
 /** A socket closed because the user opened too many panels waits this long before trying again. */
 const REPLACED_RETRY_MS = 60_000
 
-/** Anchor from a server sample, taken now (see `sync.anchorFrom`). */
-export function anchorFrom(positionMs: number, positionAt: number, serverNow?: number): PositionAnchor {
-  return anchorAt(positionMs, positionAt, serverNow, performance.now())
+/** Anchor from a server sample of track `uid`, taken now (see `sync.anchorFrom`). */
+export function anchorFrom(positionMs: number, positionAt: number, serverNow?: number, uid?: string): PositionAnchor {
+  return anchorAt(positionMs, positionAt, serverNow, performance.now(), uid)
 }
 
-/** Anchor for a position the user just picked (seek), before the server confirms it. */
-export function localAnchor(positionMs: number): PositionAnchor {
-  return { positionMs, at: performance.now() }
+/** Anchor for a position the user just picked (seek) on track `uid`, before the server confirms it. */
+export function localAnchor(positionMs: number, uid?: string): PositionAnchor {
+  return { positionMs, at: performance.now(), ...(uid != null ? { uid } : {}) }
 }
 
 type Handlers = {
@@ -48,13 +60,16 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
   const shownRef = useRef<PlayerState | null>(null)
   const socketOpenRef = useRef(false)
   const socketStatesRef = useRef(0)
+  // When the last state or position arrived (`performance.now()`), for the resync check.
+  const lastSyncRef = useRef(performance.now())
 
   const applyState = useCallback((next: PlayerState | null, serverNow?: number) => {
     setLoaded(true)
     if (!acceptState(shownRef.current, next)) return
     shownRef.current = next
+    lastSyncRef.current = performance.now()
     setState(next)
-    if (next) setAnchor(anchorFrom(next.positionMs, next.positionAt, serverNow ?? next.serverNow))
+    if (next) setAnchor(anchorFrom(next.positionMs, next.positionAt, serverNow ?? next.serverNow, next.current?.uid))
   }, [])
 
   const applyChannel = useCallback((next: ChannelRef | null) => {
@@ -127,10 +142,15 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
             if (msg.state && shownRef.current && msg.state.channelId !== shownRef.current.channelId) shownRef.current = null
             applyState(msg.state, msg.serverNow)
             break
-          case 'position':
-            setAnchor(anchorFrom(msg.positionMs, msg.positionAt, msg.serverNow))
+          case 'position': {
+            // A position of the previous track that raced the track change must not move the new one.
+            const shownUid = shownRef.current?.current?.uid
+            if (!positionApplies(shownUid, msg.uid)) break
+            lastSyncRef.current = performance.now()
+            setAnchor(anchorFrom(msg.positionMs, msg.positionAt, msg.serverNow, msg.uid ?? shownUid))
             setState((s) => (s ? { ...s, positionMs: msg.positionMs, positionAt: msg.positionAt } : s))
             break
+          }
           case 'jam':
             setState((s) => (s ? { ...s, jam: msg.jam } : s))
             break
@@ -203,6 +223,19 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [refresh])
+  // A playing, visible panel that heard nothing for a while (lost messages, a throttled timer, a
+  // socket that stays open but quiet) fetches a fresh position instead of extrapolating forever.
+  const playing = state?.status === 'playing'
+  useEffect(() => {
+    if (!playing) return
+    const id = setInterval(() => {
+      if (needsResync(true, document.visibilityState === 'visible', lastSyncRef.current, performance.now())) {
+        lastSyncRef.current = performance.now()
+        void refresh()
+      }
+    }, RESYNC_CHECK_MS)
+    return () => clearInterval(id)
+  }, [playing, refresh])
   // Polling fallback while the socket is down and the panel is visible.
   useEffect(() => {
     if (socketOpen) return
@@ -213,11 +246,6 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
   }, [socketOpen, refresh])
 
   return { state, setState, channel, anchor, setAnchor, loaded, socketOpen, refresh }
-}
-
-/** Pure: the position an anchor stands for at `now` (`performance.now()` time). */
-export function positionAt(anchor: PositionAnchor, playing: boolean, now: number): number {
-  return anchor.positionMs + (playing ? Math.max(0, now - anchor.at) : 0)
 }
 
 /**
@@ -246,10 +274,7 @@ export function usePosition(state: PlayerState | null, anchor: PositionAnchor): 
       clearInterval(id)
     }
   }, [playing])
-  if (!state?.current) return 0
-  const pos = positionAt(anchor, playing, performance.now())
-  const dur = state.current.durationMs
-  return dur != null ? Math.min(pos, dur) : pos
+  return shownPosition(anchor, state?.current ?? null, playing, performance.now())
 }
 
 /** Re-renders every second; for countdowns. */
