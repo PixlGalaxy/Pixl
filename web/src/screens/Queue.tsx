@@ -11,20 +11,34 @@ import {
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GripVertical, History, ListMusic, Plus, RotateCcw, Trash2, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AddBox } from '../components/AddBox'
 import { AiProgress } from '../components/AiProgress'
+import { QueueSourcesCard, SourceDot } from '../components/ListSource'
 import { AiTag, TrackReasonLine } from '../components/TrackBits'
 import { Artwork, Card, ConfirmButton, Empty, IconButton, PageSpinner, Spinner } from '../components/ui'
 import { api } from '../lib/api'
+import { onShowInQueue, takeShowInQueue } from '../lib/events'
 import { cx, fmtTime } from '../lib/format'
 import { useLynx } from '../lib/lynx'
 import type { Track } from '../lib/types'
 
 const revealCls = 'opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
 
-function Row({ track, index, sortable, canRemove }: { track: Track; index: number; sortable: boolean; canRemove: boolean }) {
+function Row({
+  track,
+  index,
+  sortable,
+  canRemove,
+  flash,
+}: {
+  track: Track
+  index: number
+  sortable: boolean
+  canRemove: boolean
+  flash?: boolean
+}) {
   const { t } = useTranslation()
   const { channelId, run, setState } = useLynx()
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
@@ -35,9 +49,11 @@ function Row({ track, index, sortable, canRemove }: { track: Track; index: numbe
   return (
     <li
       ref={setNodeRef}
+      id={`queue-row-${track.uid}`}
       style={style}
       className={cx(
-        'group relative flex items-center gap-3 border-t border-line bg-surface px-3 py-2.5 transition-colors hover:bg-surface-2/60',
+        'group relative flex scroll-mt-32 items-center gap-3 border-t border-line bg-surface px-3 py-2.5 transition-colors duration-500 hover:bg-surface-2/60',
+        flash && '!bg-accent-500/10',
         isDragging && 'z-10 bg-accent-500/5 outline-2 -outline-offset-4 outline-accent-500/50 outline-dashed [&>*]:opacity-30',
       )}
     >
@@ -59,6 +75,7 @@ function Row({ track, index, sortable, canRemove }: { track: Track; index: numbe
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-semibold">{track.title}</div>
         <div className="mt-0.5 truncate text-xs text-muted">
+          <SourceDot source={track.source} />
           {track.artists.join(', ')}
           {track.reason && <AiTag />}
           <span className="px-1">·</span>
@@ -99,6 +116,39 @@ function UpcomingList({ limit }: { limit?: number }) {
   const upcoming = state?.upcoming ?? []
   const shown = limit ? upcoming.slice(0, limit) : upcoming
   const canMove = permissions.canControl && !!channelId
+  const [flash, setFlash] = useState<string | null>(null)
+
+  const upcomingRef = useRef(upcoming)
+  upcomingRef.current = upcoming
+
+  // "Show in queue" of a list: scroll to its first upcoming song (the full list only, not the
+  // side column's preview). Waits a moment for the tab switch, which scrolls to the top.
+  useEffect(() => {
+    if (limit) return
+    const timers: ReturnType<typeof setTimeout>[] = []
+    const show = () => {
+      const url = takeShowInQueue()
+      if (!url) return
+      timers.push(
+        setTimeout(() => {
+          const target = upcomingRef.current.find((x) => x.source?.url === url)
+          if (!target) return
+          const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          document
+            .getElementById(`queue-row-${target.uid}`)
+            ?.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' })
+          setFlash(target.uid)
+          timers.push(setTimeout(() => setFlash(null), 1600))
+        }, 80),
+      )
+    }
+    show()
+    const off = onShowInQueue(show)
+    return () => {
+      off()
+      timers.forEach(clearTimeout)
+    }
+  }, [limit])
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id || !channelId) return
@@ -121,6 +171,7 @@ function UpcomingList({ limit }: { limit?: number }) {
               index={i}
               sortable={canMove}
               canRemove={permissions.canControl || track.requestedBy.id === user.id}
+              flash={flash === track.uid}
             />
           ))}
         </ul>
@@ -189,6 +240,7 @@ function HistoryCard() {
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{track.title}</div>
                 <div className="mt-0.5 truncate text-xs text-muted">
+                  <SourceDot source={track.source} />
                   {track.artists.join(', ')}
                   {track.reason && <AiTag />}
                 </div>
@@ -227,6 +279,7 @@ export function QueueScreen() {
           <AddBox />
         </Card>
       )}
+      <QueueSourcesCard />
       {state?.ai?.job && <AiProgress />}
       <UpcomingCard />
       <HistoryCard />

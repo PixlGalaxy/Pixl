@@ -12,7 +12,7 @@ use tokio::{
 use tracing::warn;
 
 use super::{now_secs, sf, Store};
-use crate::sources::TrackInfo;
+use crate::sources::{ListOrigin, StoredSource, TrackInfo, TrackSource};
 
 /// How often the session writer flushes coalesced changes.
 pub const SESSION_FLUSH_INTERVAL: Duration = Duration::from_secs(2);
@@ -81,6 +81,33 @@ pub struct SessionTrack {
     pub uid: String,
     pub info: TrackInfo,
     pub requested_by: u64,
+    /// The list the entry was added from. Stored inside the `info` JSON (`list_source`), so rows
+    /// saved before it existed still load (as `None`) and no migration is needed.
+    pub source: Option<TrackSource>,
+}
+
+/// `session_tracks.info`: the `TrackInfo` fields plus the optional `list_source`.
+#[derive(Serialize)]
+struct StoredInfoRef<'a> {
+    #[serde(flatten)]
+    info: &'a TrackInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    list_source: Option<StoredSource>,
+}
+
+#[derive(Deserialize)]
+struct StoredInfo {
+    #[serde(flatten)]
+    info: TrackInfo,
+    #[serde(default)]
+    list_source: Option<StoredSource>,
+}
+
+fn encode_info(t: &SessionTrack) -> serde_json::Result<String> {
+    serde_json::to_string(&StoredInfoRef {
+        info: &t.info,
+        list_source: t.source.as_ref().map(StoredSource::from),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -146,7 +173,7 @@ async fn write_session(conn: &mut SqliteConnection, s: &SessionRecord, tracks: O
         .await?;
     // 6 binds per row; 500 rows stay far below SQLite's parameter limit.
     for (chunk_no, chunk) in tracks.chunks(500).enumerate() {
-        let encoded = chunk.iter().map(|t| serde_json::to_string(&t.info)).collect::<Result<Vec<_>, _>>()?;
+        let encoded = chunk.iter().map(encode_info).collect::<Result<Vec<_>, _>>()?;
         let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
             "INSERT INTO session_tracks (guild_id, voice_channel_id, position, uid, info, requested_by) ",
         );
@@ -205,7 +232,9 @@ impl Store {
         .bind(sf(key.voice_channel_id))
         .fetch_all(self.pool())
         .await?;
-        let tracks = rows.into_iter().filter_map(|(uid, info, by)| decode_track(uid, &info, by)).collect();
+        let mut interned = HashMap::new();
+        let tracks =
+            rows.into_iter().filter_map(|(uid, info, by)| decode_track(uid, &info, by, &mut interned)).collect();
         Ok(Some(SavedSession { session: session_from_row(row), tracks }))
     }
 
@@ -225,10 +254,12 @@ impl Store {
         )
         .fetch_all(self.pool())
         .await?;
+        let mut interned = HashMap::new();
         for (guild_id, voice_channel_id, uid, info, by) in tracks {
-            if let (Some(&i), Some(t)) =
-                (index.get(&SessionKey { guild_id, voice_channel_id }), decode_track(uid, &info, by))
-            {
+            if let (Some(&i), Some(t)) = (
+                index.get(&SessionKey { guild_id, voice_channel_id }),
+                decode_track(uid, &info, by, &mut interned),
+            ) {
                 out[i].tracks.push(t);
             }
         }
@@ -236,9 +267,20 @@ impl Store {
     }
 }
 
-fn decode_track(uid: String, info: &str, requested_by: u64) -> Option<SessionTrack> {
-    match serde_json::from_str::<TrackInfo>(info) {
-        Ok(info) => Some(SessionTrack { uid, info, requested_by }),
+/// One saved row. Entries of the same list share one `ListOrigin` through `interned`.
+fn decode_track(
+    uid: String,
+    info: &str,
+    requested_by: u64,
+    interned: &mut HashMap<ListOrigin, std::sync::Arc<ListOrigin>>,
+) -> Option<SessionTrack> {
+    match serde_json::from_str::<StoredInfo>(info) {
+        Ok(StoredInfo { info, list_source }) => Some(SessionTrack {
+            uid,
+            info,
+            requested_by,
+            source: list_source.map(|s| s.into_source(interned)),
+        }),
         Err(e) => {
             warn!(%uid, error = %e, "dropping undecodable saved track");
             None
@@ -421,7 +463,9 @@ mod tests {
     }
 
     fn tracks(n: usize) -> Vec<SessionTrack> {
-        (0..n).map(|i| SessionTrack { uid: format!("u{i}"), info: track(&format!("v{i}")), requested_by: 42 }).collect()
+        (0..n)
+            .map(|i| SessionTrack { uid: format!("u{i}"), info: track(&format!("v{i}")), requested_by: 42, source: None })
+            .collect()
     }
 
     #[tokio::test]
@@ -451,6 +495,70 @@ mod tests {
         assert!(store.get_session(s.key()).await.unwrap().is_none());
         let n: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM session_tracks").fetch_one(store.pool()).await.unwrap();
         assert_eq!(n.0, 2, "cascade removed the deleted session's tracks");
+    }
+
+    #[tokio::test]
+    async fn list_sources_round_trip_and_old_rows_still_load() {
+        use std::sync::Arc;
+
+        use crate::sources::SourcePlatform;
+        let store = Store::open_in_memory().await.unwrap();
+        let list = Arc::new(ListOrigin {
+            name: "Road trip".into(),
+            image: Some("https://i.scdn.co/image/x".into()),
+            platform: SourcePlatform::Spotify,
+            url: "https://open.spotify.com/playlist/abc".into(),
+            total: 64,
+        });
+        let mut ts = tracks(3);
+        ts[0].source = Some(TrackSource {
+            list: list.clone(),
+            index: 17,
+        });
+        ts[1].source = Some(TrackSource {
+            list: list.clone(),
+            index: 18,
+        });
+        let s = record(1, 2, 0);
+        store.save_session_full(&s, &ts).await.unwrap();
+        // A row written before sources existed (plain TrackInfo JSON).
+        let old = serde_json::to_string(&track("old")).unwrap();
+        sqlx::query(
+            "INSERT INTO session_tracks (guild_id, voice_channel_id, position, uid, info, requested_by) \
+             VALUES (?, ?, 3, 'u3', ?, 42)",
+        )
+        .bind(sf(1))
+        .bind(sf(2))
+        .bind(old)
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+        for got in [
+            store.get_session(s.key()).await.unwrap().unwrap(),
+            store.list_sessions().await.unwrap().remove(0),
+        ] {
+            assert_eq!(got.tracks.len(), 4);
+            let a = got.tracks[0].source.as_ref().unwrap();
+            let b = got.tracks[1].source.as_ref().unwrap();
+            assert_eq!((a.index, b.index, a.list.total), (17, 18, 64));
+            assert_eq!(*a.list, *list);
+            assert!(
+                Arc::ptr_eq(&a.list, &b.list),
+                "one shared origin per list after loading"
+            );
+            assert!(got.tracks[2].source.is_none());
+            assert!(got.tracks[3].source.is_none(), "old rows load without a source");
+            assert_eq!(got.tracks[3].info.youtube_id.as_deref(), Some("old"));
+            assert_eq!(got.tracks[0].info.youtube_id.as_deref(), Some("v0"));
+        }
+        // Rows with a source still decode as a plain TrackInfo (an older binary reading them).
+        let (info,): (String,) = sqlx::query_as("SELECT info FROM session_tracks WHERE position = 0")
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+        assert!(serde_json::from_str::<TrackInfo>(&info).is_ok());
+        assert!(info.contains("list_source"));
     }
 
     #[tokio::test]

@@ -31,7 +31,9 @@
     "jam_servers_off": "The host does not let channels of other servers join.",
     "jam_ended": "That jam has ended.",
     "jam_other": "Your channel is in another jam. Leave it first.",
-    "refresh_blocked": "Too many refreshes. Please wait 5 minutes."
+    "refresh_blocked": "Too many refreshes. Please wait 5 minutes.",
+    "playlists_full": "Every saved playlist is pinned. Unpin or remove one in the Playlists tab first.",
+    "saving_off": "Saving playlists is turned off on this bot."
   },
   "login": {
     "title": "Connecting to Lynx",
@@ -774,6 +776,10 @@
       "history": {
         "body": "The last 20 songs that played in this channel during the current session, newest first, including songs that were skipped after they started. Songs jumped over or removed before playing are not listed. It is cleared when the session ends (Stop or Lynx leaving).",
         "example": "You skip a song halfway: it appears at the top of History, and you can add it again from there."
+      },
+      "sources": {
+        "body": "Playlists and albums that have songs playing now or waiting in the queue, stacked like CDs. The list of the current song is always in front; the others wait behind it in queue order. Hover the stack to spread it out, and click a cover to open the list, save it to your playlists or jump to its next song in the queue. Single songs and radio picks are not part of any list.",
+        "example": "Ana adds her Spotify playlist and Leo his YouTube Music album. While Ana's songs play, her playlist is in front; when the first song of Leo's album starts, his album moves to the front."
       }
     },
     "playlists": {
@@ -811,6 +817,36 @@
         "body": "Deletes, right away and for good, everything Lynx stored about your listening: history, Like and Dislike votes, taste and saved playlists. Your panel settings (language, theme, accent and the history switch) are kept.",
         "example": "You delete your data. The Radio tab shows no taste yet, and your Playlists tab is empty until you add a new playlist."
       }
+    }
+  },
+  "source": {
+    "playingFrom": "Playing from",
+    "fromList": "From {{name}}",
+    "position": "{{index}}/{{total}}",
+    "menuLabel": "Playlist: {{name}}",
+    "openOn": "Open on {{platform}}",
+    "openLink": "Open link",
+    "save": "Save to my Lynx playlists",
+    "saved": "Saved to your playlists",
+    "cantSave": "Only Spotify, YouTube, YouTube Music and Apple Music lists can be saved.",
+    "showInQueue": "Show in queue",
+    "notUpcoming": "No upcoming song of this list is in the queue.",
+    "untitled": "Untitled list",
+    "cardTitle": "Playlists in the queue",
+    "cardHint_one": "{{count}} list in what is playing and up next",
+    "cardHint_other": "{{count}} lists in what is playing and up next",
+    "nowPlaying": "Now playing",
+    "upNext": "Up next",
+    "addedBy": "{{platform}} · added by {{name}}",
+    "behind": "Behind: {{names}}",
+    "more": "+{{count}}",
+    "platforms": {
+      "spotify": "Spotify",
+      "youtube": "YouTube",
+      "youtube_music": "YouTube Music",
+      "apple_music": "Apple Music",
+      "soundcloud": "SoundCloud",
+      "other": "Web"
     }
   }
 }

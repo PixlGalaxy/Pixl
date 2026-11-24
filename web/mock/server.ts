@@ -37,6 +37,7 @@ import type {
   SavedPlaylist,
   Track,
   TrackReason,
+  TrackSource,
 } from '../src/lib/types'
 import { ACCENTS } from '../src/lib/appearance'
 
@@ -128,9 +129,10 @@ const COLORS = ['#0ea5e9', '#f59e0b', '#10b981', '#ef4444', '#64748b', '#14b8a6'
 
 let uidCounter = 1
 const startedAt = Date.now()
-function makeTrack(seed: Seed, requester: Member, reason: TrackReason | null = null): Track {
+function makeTrack(seed: Seed, requester: Member, reason: TrackReason | null = null, source: TrackSource | null = null): Track {
   const index = CATALOG.indexOf(seed)
   return {
+    source,
     uid: `t${uidCounter++}`,
     title: seed.title,
     artists: seed.artists,
@@ -222,7 +224,33 @@ const MOCK_REASONS: Record<number, TrackReason> = {
   2: { key: 'because_you_like', params: { name: 'Paper Lanterns' } },
   4: { key: 'similar_listeners', params: {} },
 }
-for (let i = 1; i <= 12; i++) s.upcoming.push(makeTrack(CATALOG[i]!, USERS[i % USERS.length]!, MOCK_REASONS[i] ?? null))
+// Lists the queue came from (Playing from / stacked covers of the Queue tab): the current song and
+// a few upcoming ones come from a Spotify playlist, then an album and a SoundCloud set (no cover).
+type MockList = Omit<TrackSource, 'index'>
+const MOCK_LISTS: MockList[] = [
+  { name: 'Late Night Drive', imageUrl: '/mock/art/14.svg', platform: 'spotify', url: 'https://open.spotify.com/playlist/mocklate', total: 64 },
+  { name: 'Glass Harbor (Deluxe Edition)', imageUrl: '/mock/art/1.svg', platform: 'youtube_music', url: 'https://music.youtube.com/browse/MPREbmockglass', total: 12 },
+  { name: 'Basement Tapes Vol. 2', imageUrl: null, platform: 'soundcloud', url: 'https://soundcloud.com/mock/sets/basement-tapes', total: 9 },
+  { name: 'Focus Flow', imageUrl: '/mock/art/8.svg', platform: 'apple_music', url: 'https://music.apple.com/us/playlist/pl.mockfocus', total: 40 },
+]
+const fromList = (list: MockList, index: number): TrackSource => ({ ...list, index })
+// Upcoming position -> [list, index in the list, requester] (positions 2 and 4 are radio picks).
+const MOCK_SOURCES: Record<number, [number, number, Member]> = {
+  1: [0, 19, ME],
+  3: [0, 20, ME],
+  5: [1, 3, USERS[1]!],
+  6: [1, 4, USERS[1]!],
+  7: [1, 5, USERS[1]!],
+  9: [2, 1, USERS[3]!],
+  10: [2, 2, USERS[3]!],
+  11: [3, 7, USERS[4]!],
+}
+if (s.current) s.current.source = fromList(MOCK_LISTS[0]!, 18)
+for (let i = 1; i <= 12; i++) {
+  const src = MOCK_SOURCES[i]
+  const by = src ? src[2] : USERS[i % USERS.length]!
+  s.upcoming.push(makeTrack(CATALOG[i]!, by, MOCK_REASONS[i] ?? null, src ? fromList(MOCK_LISTS[src[0]]!, src[1]) : null))
+}
 for (let i = 13; i < 18; i++) s.history.unshift(makeTrack(CATALOG[i]!, USERS[(i + 2) % USERS.length]!))
 
 // Listening history behind the taste card: every catalog song, a few played a lot.
@@ -825,7 +853,11 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       const seed = (match && CATALOG[Number(match[1])]) || CATALOG[Math.floor(Math.random() * CATALOG.length)]!
       const added = query.includes('playlist') ? 5 : 1
       if (query.includes('playlist')) savePlaylist(query)
-      for (let i = 0; i < added; i++) s.upcoming.push(makeTrack(i === 0 ? seed : CATALOG[(i * 3) % CATALOG.length]!, ME))
+      const list: MockList | null =
+        added > 1 ? { name: 'Pasted playlist', imageUrl: `/mock/art/${uidCounter % CATALOG.length}.svg`, platform: 'spotify', url: query, total: added } : null
+      for (let i = 0; i < added; i++) {
+        s.upcoming.push(makeTrack(i === 0 ? seed : CATALOG[(i * 3) % CATALOG.length]!, ME, null, list && fromList(list, i + 1)))
+      }
       if (!s.current) {
         advance()
         s.status = 'playing'
@@ -948,6 +980,25 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       tasteHistory = []
       savedPlaylists = []
       return undefined
+    case 'POST /playlists/save': {
+      initPlaylists(new URL(req.headers.referer ?? 'http://x/').search)
+      if (!s.prefs.historyEnabled) throw new HttpError(403, 'history_disabled')
+      const url = String(body.url ?? '')
+      const known = MOCK_LISTS.find((l) => l.url === url)
+      if (!url || known?.platform === 'soundcloud') throw new HttpError(400, 'invalid')
+      const list = savedPlaylists ?? []
+      if (!list.some((p) => p.url === url) && list.length >= MAX_PLAYLISTS && list.every((p) => p.pinned)) {
+        throw new HttpError(409, 'playlists_full')
+      }
+      savePlaylist(url)
+      const saved = (savedPlaylists ?? []).find((p) => p.url === url)!
+      if (known) {
+        saved.name = known.name
+        saved.imageUrl = known.imageUrl
+        if (known.platform !== 'other') saved.platform = known.platform
+      }
+      return { playlist: saved }
+    }
     case 'GET /playlists': {
       initPlaylists(new URL(req.headers.referer ?? 'http://x/').search)
       await delay(150)
@@ -998,9 +1049,10 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
         if (picked.length === 0) throw new HttpError(404, 'not_found')
         const room = Math.max(0, s.settings.maxQueueLength - s.upcoming.length)
         if (room === 0) throw new HttpError(409, 'queue_full')
+        const list: MockList = { name: p.name, imageUrl: p.imageUrl, platform: p.platform, url: p.url, total: all.length }
         for (const t of picked.slice(0, room)) {
           const seed = CATALOG.find((c) => c.title === t.title) ?? CATALOG[0]!
-          s.upcoming.push(makeTrack(seed, ME))
+          s.upcoming.push(makeTrack(seed, ME, null, fromList(list, all.indexOf(t) + 1)))
         }
         if (!s.current) {
           advance()

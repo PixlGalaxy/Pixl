@@ -31,7 +31,9 @@
     "jam_servers_off": "El anfitrión no deja unirse a canales de otros servidores.",
     "jam_ended": "Esa escucha compartida terminó.",
     "jam_other": "Tu canal está en otra escucha compartida. Sal de ella primero.",
-    "refresh_blocked": "Demasiadas actualizaciones. Espera 5 minutos."
+    "refresh_blocked": "Demasiadas actualizaciones. Espera 5 minutos.",
+    "playlists_full": "Todas tus listas guardadas están fijadas. Desfija o quita una en la pestaña Playlists primero.",
+    "saving_off": "Guardar listas está desactivado en este bot."
   },
   "login": {
     "title": "Conectando con Lynx",
@@ -774,6 +776,10 @@
       "history": {
         "body": "Las últimas 20 canciones que sonaron en este canal durante la sesión actual, de la más reciente a la más antigua, incluidas las que se saltaron después de empezar. No aparecen las que se pasaron por alto o se quitaron antes de sonar. Se borra cuando termina la sesión (al parar o cuando Lynx sale).",
         "example": "Saltas una canción a la mitad: aparece arriba del todo en el historial y puedes volver a añadirla desde ahí."
+      },
+      "sources": {
+        "body": "Las listas y álbumes que tienen canciones sonando ahora o esperando en la cola, apilados como CDs. La lista de la canción actual siempre va delante; las demás esperan detrás en el orden de la cola. Pasa el ratón por la pila para abrirla y haz clic en una portada para abrir la lista, guardarla en tus listas o saltar a su siguiente canción en la cola. Las canciones sueltas y las de la radio no forman parte de ninguna lista.",
+        "example": "Ana añade su playlist de Spotify y Leo su álbum de YouTube Music. Mientras suenan las canciones de Ana, su playlist va delante; cuando empieza la primera canción del álbum de Leo, su álbum pasa al frente."
       }
     },
     "playlists": {
@@ -811,6 +817,36 @@
         "body": "Borra al momento y para siempre todo lo que Lynx guardó sobre lo que escuchas: historial, votos de Me gusta y No me gusta, gustos y playlists guardadas. Se mantienen los ajustes del panel (idioma, tema, color y el interruptor del historial).",
         "example": "Borras tus datos. La pestaña Radio todavía no muestra gustos y tu pestaña Playlists queda vacía hasta que añadas una playlist nueva."
       }
+    }
+  },
+  "source": {
+    "playingFrom": "Sonando desde",
+    "fromList": "De {{name}}",
+    "position": "{{index}}/{{total}}",
+    "menuLabel": "Lista: {{name}}",
+    "openOn": "Abrir en {{platform}}",
+    "openLink": "Abrir enlace",
+    "save": "Guardar en mis listas de Lynx",
+    "saved": "Guardada en tus listas",
+    "cantSave": "Solo se pueden guardar listas de Spotify, YouTube, YouTube Music y Apple Music.",
+    "showInQueue": "Ver en la cola",
+    "notUpcoming": "No hay canciones de esta lista por sonar en la cola.",
+    "untitled": "Lista sin nombre",
+    "cardTitle": "Listas en la cola",
+    "cardHint_one": "{{count}} lista entre lo que suena y lo que sigue",
+    "cardHint_other": "{{count}} listas entre lo que suena y lo que sigue",
+    "nowPlaying": "Sonando ahora",
+    "upNext": "A continuación",
+    "addedBy": "{{platform}} · añadida por {{name}}",
+    "behind": "Detrás: {{names}}",
+    "more": "+{{count}}",
+    "platforms": {
+      "spotify": "Spotify",
+      "youtube": "YouTube",
+      "youtube_music": "YouTube Music",
+      "apple_music": "Apple Music",
+      "soundcloud": "SoundCloud",
+      "other": "Web"
     }
   }
 }

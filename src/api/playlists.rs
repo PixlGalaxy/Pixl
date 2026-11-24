@@ -8,6 +8,7 @@
 
 use std::{
     collections::VecDeque,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -29,8 +30,8 @@ use super::{
 use crate::{
     discord::play::{self, PlayError, RESOLVE_TIMEOUT},
     procs::ProcOwner,
-    sources::{CachedList, ListRef, Resolved, TrackInfo},
-    store::SavedPlaylist,
+    sources::{CachedList, ListOrigin, ListRef, Resolved, TrackInfo},
+    store::{NewPlaylist, SaveOutcome, SavedPlaylist},
 };
 
 /// A refresh is honored at most this often per user.
@@ -400,24 +401,38 @@ pub async fn add(
     let (p, list) = st.saved_playlist(user, &id).await?;
     st.add_checks(&m, channel).await?;
     let c = st.list_tracks(&list, false, m.guild_id).await?;
-    let tracks = match b.track_url.as_deref().map(str::trim) {
+    let origin = Arc::new(ListOrigin {
+        name: c
+            .name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| p.name.clone()),
+        image: c.image.clone().or_else(|| p.image_url.clone()),
+        platform: list.platform.into(),
+        url: list.url.clone(),
+        total: u32::try_from(c.tracks.len()).unwrap_or(u32::MAX),
+    });
+    let (tracks, first_index) = match b.track_url.as_deref().map(str::trim) {
         Some(url) => {
-            let t = c
+            let i = c
                 .tracks
                 .iter()
-                .find(|t| t.url == url)
-                .cloned()
+                .position(|t| t.url == url)
                 .ok_or_else(|| ApiError::not_found("That song is no longer in the playlist"))?;
-            vec![t]
+            (vec![c.tracks[i].clone()], i + 1)
         }
-        None => c.tracks,
+        None => (c.tracks, 1),
+    };
+    let spec = play::ListSpec {
+        origin,
+        first_index: u32::try_from(first_index).unwrap_or(u32::MAX),
     };
     let resolved = Resolved {
         tracks,
         playlist_name: c.name,
         image: c.image,
     };
-    let played = play::play_tracks(st.play_ctx(), play_request(&m, channel, ""), resolved)
+    let played = play::play_tracks(st.play_ctx(), play_request(&m, channel, ""), resolved, Some(spec))
         .await
         .map_err(play_error)?;
     if b.track_url.is_none() && st.app.store.history_enabled(user).await.unwrap_or(false) {
@@ -426,6 +441,80 @@ pub async fn add(
     Ok(Json(Added {
         added: played.push.added,
     }))
+}
+
+#[derive(Deserialize)]
+pub struct SaveBody {
+    /// A list link (normally the `source.url` of a queue entry).
+    url: String,
+}
+
+#[derive(Serialize)]
+pub struct SavedResponse {
+    playlist: ApiPlaylist,
+}
+
+/// `POST /api/playlists/save`: save a list (by its link) to the caller's playlists, the same way
+/// queueing it does: not when saving is off or the caller's listening history is off, pinned
+/// lists are never dropped for it and a full list of pinned ones refuses it.
+pub async fn save(
+    State(st): State<ApiState>,
+    Auth(s): Auth,
+    Body(b): Body<SaveBody>,
+) -> ApiResult<Json<SavedResponse>> {
+    let url = b.url.trim();
+    if url.is_empty() || url.len() > 500 {
+        return Err(ApiError::invalid("url must be 1-500 characters"));
+    }
+    let list = ListRef::parse(url).ok_or_else(|| ApiError::invalid("That list can't be saved"))?;
+    let store = &st.app.store;
+    let max = st.app.config.max_stored_playlists;
+    if max == 0 {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "saving_off",
+            "Saving playlists is turned off on this bot",
+        ));
+    }
+    if !store.history_enabled(s.user_id).await.unwrap_or(false) {
+        return Err(ApiError::history_disabled());
+    }
+    // Name and cover from the shared cache (the list is normally queued, so it is there).
+    let c = match st.app.sources.cached_list(&list).await {
+        Some(c) => c,
+        None => {
+            if !st.add_limit.allow(s.user_id) {
+                return Err(ApiError::rate_limited());
+            }
+            st.list_tracks(&list, false, s.guild_id.unwrap_or(0)).await?
+        }
+    };
+    let p = NewPlaylist {
+        url: &list.url,
+        platform: list.platform.as_str(),
+        name: c.name.as_deref().unwrap_or_default(),
+        image_url: c.image.as_deref(),
+    };
+    let id = match store
+        .save_playlist(s.user_id, &p, max)
+        .await
+        .map_err(|e| ApiError::internal("could not save playlist", e))?
+    {
+        SaveOutcome::Saved { id, .. } => id,
+        SaveOutcome::Full => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "playlists_full",
+                "Every saved playlist is pinned. Unpin or remove one first",
+            ))
+        }
+    };
+    let saved = store
+        .playlist(s.user_id, id)
+        .await
+        .map_err(|e| ApiError::internal("could not read playlists", e))?
+        .ok_or_else(gone)?;
+    Ok(Json(SavedResponse { playlist: saved.into() }))
 }
 
 #[cfg(test)]

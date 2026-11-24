@@ -174,6 +174,9 @@ impl ApiState {
         {
             t.artwork_url = rewrite_opt(t.artwork_url.take());
             t.requested_by.avatar_url = t.requested_by.avatar_url.take().map(|u| rewrite(&u));
+            if let Some(src) = t.source.as_mut() {
+                src.image_url = rewrite_opt(src.image_url.take());
+            }
         }
         state
     }

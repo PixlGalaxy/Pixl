@@ -37,6 +37,21 @@ export type TrackReason = { key: ReasonKey; params: Record<string, string> }
 export type Origin = 'youtube' | 'youtube_music' | 'spotify' | 'other'
 export type Feedback = 'like' | 'dislike'
 
+/** Platform of the list a queue entry came from (saved-list platforms plus yt-dlp sets). */
+export type SourcePlatform = 'spotify' | 'youtube' | 'youtube_music' | 'apple_music' | 'soundcloud' | 'other'
+
+/** The playlist / album a queue entry was added from. */
+export type TrackSource = {
+  name: string
+  imageUrl: string | null
+  platform: SourcePlatform
+  /** Canonical list link (the key that identifies the list). */
+  url: string
+  /** 1-based position in the list. */
+  index: number
+  total: number
+}
+
 export type Track = {
   uid: string
   title: string
@@ -49,6 +64,8 @@ export type Track = {
   genres: string[]
   reason: TrackReason | null
   feedback: Feedback | null
+  /** The list it was added from; null for single songs and radio picks. */
+  source?: TrackSource | null
 }
 
 export type AiPhase =

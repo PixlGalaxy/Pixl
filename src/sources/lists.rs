@@ -88,6 +88,119 @@ pub fn list_ref(input: &Input) -> Option<ListRef> {
     Some(ListRef { url, platform })
 }
 
+/// Platform of the list a queue entry came from: the saved lists' platforms plus SoundCloud and
+/// other yt-dlp sets (those cannot be saved).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourcePlatform {
+    Spotify,
+    Youtube,
+    YoutubeMusic,
+    AppleMusic,
+    Soundcloud,
+    Other,
+}
+
+impl From<Platform> for SourcePlatform {
+    fn from(p: Platform) -> Self {
+        match p {
+            Platform::Youtube => Self::Youtube,
+            Platform::YoutubeMusic => Self::YoutubeMusic,
+            Platform::Spotify => Self::Spotify,
+            Platform::AppleMusic => Self::AppleMusic,
+        }
+    }
+}
+
+impl SourcePlatform {
+    /// Platform of a non-canonical list URL (a yt-dlp set).
+    pub fn of_url(url: &str) -> Self {
+        let host = reqwest::Url::parse(url)
+            .ok()
+            .and_then(|u| {
+                u.host_str().map(|h| {
+                    h.trim_start_matches("www.")
+                        .trim_start_matches("m.")
+                        .to_ascii_lowercase()
+                })
+            })
+            .unwrap_or_default();
+        match host.as_str() {
+            "soundcloud.com" | "on.soundcloud.com" => Self::Soundcloud,
+            "music.youtube.com" => Self::YoutubeMusic,
+            "youtube.com" | "youtu.be" => Self::Youtube,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// The list (playlist, album, set) a group of queue entries was added from. Shared by every entry
+/// of that add through an `Arc`, so a 500-track playlist keeps one copy of its name and URL.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ListOrigin {
+    pub name: String,
+    /// Unproxied cover; the API rewrites it through the media proxy.
+    pub image: Option<String>,
+    pub platform: SourcePlatform,
+    /// Canonical list URL (the input URL for yt-dlp sets).
+    pub url: String,
+    /// Tracks in the list.
+    pub total: u32,
+}
+
+/// Where one queue entry came from: its list and 1-based position in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackSource {
+    pub list: Arc<ListOrigin>,
+    pub index: u32,
+}
+
+/// Flat stored form of a [`TrackSource`] (saved sessions).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredSource {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    pub platform: SourcePlatform,
+    pub url: String,
+    pub index: u32,
+    pub total: u32,
+}
+
+impl From<&TrackSource> for StoredSource {
+    fn from(s: &TrackSource) -> Self {
+        Self {
+            name: s.list.name.clone(),
+            image: s.list.image.clone(),
+            platform: s.list.platform,
+            url: s.list.url.clone(),
+            index: s.index,
+            total: s.list.total,
+        }
+    }
+}
+
+impl StoredSource {
+    /// Back to a [`TrackSource`], sharing one `Arc` per distinct list through `interned`.
+    pub fn into_source(self, interned: &mut HashMap<ListOrigin, Arc<ListOrigin>>) -> TrackSource {
+        let origin = ListOrigin {
+            name: self.name,
+            image: self.image,
+            platform: self.platform,
+            url: self.url,
+            total: self.total,
+        };
+        let list = interned
+            .entry(origin.clone())
+            .or_insert_with(|| Arc::new(origin))
+            .clone();
+        TrackSource {
+            list,
+            index: self.index,
+        }
+    }
+}
+
 /// One cached fetch of a list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedList {

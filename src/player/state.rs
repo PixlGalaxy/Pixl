@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use super::{queue::Entry, radio::AiSnapshot};
 use crate::{
-    sources::TrackOrigin,
+    sources::{SourcePlatform, TrackOrigin},
     store::{Feedback, LoopMode},
 };
 
@@ -127,6 +127,20 @@ pub struct ApiTrack {
     pub genres: Vec<String>,
     pub reason: Option<serde_json::Value>,
     pub feedback: Option<Feedback>,
+    /// The playlist / album the track was added from.
+    pub source: Option<ApiTrackSource>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiTrackSource {
+    pub name: String,
+    pub image_url: Option<String>,
+    pub platform: SourcePlatform,
+    pub url: String,
+    /// 1-based position in the list.
+    pub index: u32,
+    pub total: u32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -210,6 +224,14 @@ impl ApiContext {
             genres: self.genres.get(&key).cloned().unwrap_or_default(),
             reason: e.reason.clone(),
             feedback: self.feedback.get(&key).copied(),
+            source: e.source.as_ref().map(|s| ApiTrackSource {
+                name: s.list.name.clone(),
+                image_url: s.list.image.clone(),
+                platform: s.list.platform,
+                url: s.list.url.clone(),
+                index: s.index,
+                total: s.list.total,
+            }),
         }
     }
 }
@@ -285,7 +307,17 @@ mod tests {
                 avatar_url: Some("https://cdn/x.png".into()),
             },
         ));
-        let next = Arc::new(QueueEntry::new(track("b"), Requester::id_only(8)));
+        let list = Arc::new(crate::sources::ListOrigin {
+            name: "Mix".into(),
+            image: Some("https://i.scdn.co/image/x".into()),
+            platform: SourcePlatform::YoutubeMusic,
+            url: "https://music.youtube.com/playlist?list=x".into(),
+            total: 64,
+        });
+        let next = Arc::new(
+            QueueEntry::new(track("b"), Requester::id_only(8))
+                .with_source(Some(crate::sources::TrackSource { list, index: 18 })),
+        );
         let snap = PlayerSnapshot {
             version: 7,
             guild_id: 1,
@@ -333,6 +365,18 @@ mod tests {
         assert_eq!(v["current"]["uid"], cur.uid.to_string());
         assert_eq!(v["upcoming"][0]["requestedBy"]["name"], "Ben");
         assert_eq!(v["upcoming"][0]["feedback"], serde_json::Value::Null);
+        assert_eq!(v["current"]["source"], serde_json::Value::Null);
+        assert_eq!(
+            v["upcoming"][0]["source"],
+            serde_json::json!({
+                "name": "Mix",
+                "imageUrl": "https://i.scdn.co/image/x",
+                "platform": "youtube_music",
+                "url": "https://music.youtube.com/playlist?list=x",
+                "index": 18,
+                "total": 64
+            })
+        );
         assert_eq!(v["skipVotes"], serde_json::json!({"current": 1, "required": 2}));
         assert_eq!(v["voteSkipEnabled"], true);
         assert!(v["serverNow"].as_i64().unwrap() > 1_600_000_000_000);

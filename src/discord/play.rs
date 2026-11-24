@@ -17,7 +17,7 @@ use crate::{
         StartRequest,
     },
     procs::ProcOwner,
-    sources::{ListRef, Resolved, SourceError, Sources, DEFAULT_LIST_LIMIT},
+    sources::{ListOrigin, ListRef, Resolved, SourceError, Sources, TrackSource, DEFAULT_LIST_LIMIT},
     store::{GuildSettings, NewPlaylist, SaveOutcome, Store},
 };
 
@@ -83,6 +83,26 @@ pub struct Played {
     pub entries: Vec<Entry>,
     pub playlist_name: Option<String>,
     pub push: PushResult,
+}
+
+/// The list a batch of resolved tracks comes from: entry `i` gets position `first_index + i`.
+#[derive(Debug, Clone)]
+pub struct ListSpec {
+    pub origin: Arc<ListOrigin>,
+    /// 1-based position of the first track in the list.
+    pub first_index: u32,
+}
+
+/// The source of each entry built from `n` tracks of `spec`.
+pub fn sources_for(spec: Option<&ListSpec>, n: usize) -> Vec<Option<TrackSource>> {
+    (0..n)
+        .map(|i| {
+            spec.map(|s| TrackSource {
+                list: s.origin.clone(),
+                index: s.first_index.saturating_add(u32::try_from(i).unwrap_or(u32::MAX)),
+            })
+        })
+        .collect()
 }
 
 fn busy(ctx: PlayCtx<'_>, guild_id: u64, channel: u64, busy_channel: Option<u64>) -> PlayError {
@@ -172,14 +192,15 @@ pub async fn play(ctx: PlayCtx<'_>, req: PlayRequest<'_>) -> Result<Played, Play
     let settings = ctx.store.guild_settings(req.guild_id).await.unwrap_or_default();
     let owner = ProcOwner::new(req.guild_id, req.voice_channel_id, None);
     let resolving = ctx.sources.resolve_for_play(query, queue_limit(&settings), &owner);
-    let (resolved, list) = match tokio::time::timeout(RESOLVE_TIMEOUT, resolving).await {
-        Ok(Ok((r, list))) if !r.tracks.is_empty() => (r, list),
+    let (resolved, list, origin) = match tokio::time::timeout(RESOLVE_TIMEOUT, resolving).await {
+        Ok(Ok((r, list, origin))) if !r.tracks.is_empty() => (r, list, origin),
         Ok(Ok(_)) | Ok(Err(SourceError::NotFound(_))) => return Err(PlayError::NoResults),
         Ok(Err(e)) => return Err(PlayError::Source(e)),
         Err(_) => return Err(PlayError::Timeout),
     };
     let saved = list.map(|l| (l, resolved.playlist_name.clone(), resolved.image.clone()));
-    let played = enqueue(ctx, &req, &settings, resolved).await?;
+    let spec = origin.map(|origin| ListSpec { origin, first_index: 1 });
+    let played = enqueue(ctx, &req, &settings, resolved, spec).await?;
     if let Some((list, name, image)) = saved {
         remember_list(ctx, req.user_id, &list, name.as_deref(), image.as_deref()).await;
     }
@@ -187,14 +208,19 @@ pub async fn play(ctx: PlayCtx<'_>, req: PlayRequest<'_>) -> Result<Played, Play
 }
 
 /// [`play`] with tracks that are already resolved (a saved playlist, or one of its songs). Same
-/// player assignment and permission checks; nothing is saved.
-pub async fn play_tracks(ctx: PlayCtx<'_>, req: PlayRequest<'_>, mut resolved: Resolved) -> Result<Played, PlayError> {
+/// player assignment and permission checks; nothing is saved. `source`: the list they come from.
+pub async fn play_tracks(
+    ctx: PlayCtx<'_>,
+    req: PlayRequest<'_>,
+    mut resolved: Resolved,
+    source: Option<ListSpec>,
+) -> Result<Played, PlayError> {
     let settings = ctx.store.guild_settings(req.guild_id).await.unwrap_or_default();
     resolved.tracks.truncate(queue_limit(&settings));
     if resolved.tracks.is_empty() {
         return Err(PlayError::NoResults);
     }
-    enqueue(ctx, &req, &settings, resolved).await
+    enqueue(ctx, &req, &settings, resolved, source).await
 }
 
 /// Save a list the user just queued (or move it to the top of their saved playlists). Users who
@@ -221,6 +247,7 @@ async fn enqueue(
     req: &PlayRequest<'_>,
     settings: &GuildSettings,
     resolved: Resolved,
+    source: Option<ListSpec>,
 ) -> Result<Played, PlayError> {
     // A new player plays the first track as soon as the bot has joined: resolve its stream
     // during the voice join instead of after it.
@@ -251,7 +278,8 @@ async fn enqueue(
     let entries: Vec<Entry> = resolved
         .tracks
         .iter()
-        .map(|t| Arc::new(QueueEntry::new(t.clone(), req.requester.clone())))
+        .zip(sources_for(source.as_ref(), resolved.tracks.len()))
+        .map(|(t, src)| Arc::new(QueueEntry::new(t.clone(), req.requester.clone()).with_source(src)))
         .collect();
     let push = match player
         .enqueue(entries.clone(), settings.max_queue_length as usize, req.text_channel)
@@ -267,4 +295,44 @@ async fn enqueue(
         playlist_name: resolved.playlist_name,
         push,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::SourcePlatform;
+
+    #[test]
+    fn list_entries_get_their_position_and_singles_none() {
+        let origin = Arc::new(ListOrigin {
+            name: "Mix".into(),
+            image: None,
+            platform: SourcePlatform::Spotify,
+            url: "https://open.spotify.com/playlist/x".into(),
+            total: 64,
+        });
+        let all = sources_for(
+            Some(&ListSpec {
+                origin: origin.clone(),
+                first_index: 1,
+            }),
+            3,
+        );
+        let idx: Vec<u32> = all.iter().map(|s| s.as_ref().unwrap().index).collect();
+        assert_eq!(idx, [1, 2, 3]);
+        assert!(all
+            .iter()
+            .all(|s| Arc::ptr_eq(&s.as_ref().unwrap().list, &origin) && s.as_ref().unwrap().list.total == 64));
+        // One song of the list keeps its own position.
+        let one = sources_for(
+            Some(&ListSpec {
+                origin,
+                first_index: 18,
+            }),
+            1,
+        );
+        assert_eq!(one[0].as_ref().unwrap().index, 18);
+        // Single tracks (no list) have no source.
+        assert!(sources_for(None, 2).iter().all(Option::is_none));
+    }
 }
