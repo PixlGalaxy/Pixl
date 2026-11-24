@@ -7,17 +7,25 @@
 //! (`bytes=target-(len-1)`; YouTube does not reliably answer open-ended ranges).
 //!
 //! The HTTP source ([`SeekableHttpSource`]) is an async songbird [`AsyncMediaSource`]. symphonia
-//! reads synchronously, so [`ReadAhead`] bridges the two with a bounded read-ahead buffer (64 KiB,
-//! like songbird's `AsyncAdapterStream`, so a track never downloads much faster than it plays).
+//! reads synchronously, so [`ReadAhead`] bridges the two with a bounded read-ahead buffer (256 KiB,
+//! about 13 s of 160 kbps Opus, so a track never downloads much faster than it plays).
 //! songbird's adapter is not used because it is only correct for forward-only sources: after a seek
 //! it still delivers the bytes it had read before the seek, and once it hit the end of the stream
 //! it never reads again.
+//!
+//! Nothing here may block forever: songbird decodes every call of the process on a few shared
+//! mixer threads (one per 16 calls), and `ReadAhead::read` runs on them. A read that never returns
+//! (a range request or body that stalls without closing) freezes every channel on that thread:
+//! no audio, no seek, no new track. So range requests have an answer timeout, a body that sends
+//! nothing for a while is treated as broken (and reopened once at the current byte), and the
+//! synchronous side waits a bounded time for the async side before failing the read or seek.
 
 use std::{
     io::{self, Read, Seek, SeekFrom},
     pin::Pin,
     sync::Mutex,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use bytes::{Buf, Bytes};
@@ -34,13 +42,36 @@ use songbird::input::{AsyncMediaSource, AudioStream, AudioStreamError, Compose, 
 use symphonia::core::io::MediaSource;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, ReadBuf},
+    runtime::Handle,
     sync::{mpsc, oneshot},
 };
 use tracing::{debug, warn};
 
 /// Read-ahead between the HTTP body and symphonia: `READ_AHEAD_CHUNKS` chunks of `CHUNK` bytes.
 const CHUNK: usize = 16 * 1024;
-const READ_AHEAD_CHUNKS: usize = 4;
+const READ_AHEAD_CHUNKS: usize = 16;
+
+/// How long each step may take before it counts as failed.
+#[derive(Clone, Copy, Debug)]
+struct Timeouts {
+    /// Until a range request is answered (status and headers).
+    open: Duration,
+    /// Without a single body byte while reading: the body is dropped and reopened once.
+    stall: Duration,
+    /// The synchronous side waiting for the async side (one read or one seek). Longer than a
+    /// stall plus a reopen, so a stall that the source recovers from never fails a read.
+    wait: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            open: Duration::from_secs(6),
+            stall: Duration::from_secs(4),
+            wait: Duration::from_secs(12),
+        }
+    }
+}
 
 /// Where and how to fetch the stream; every request is a bounded range request.
 #[derive(Clone, Debug)]
@@ -49,14 +80,35 @@ struct RangeRequest {
     url: String,
     headers: HeaderMap,
     len: u64,
+    timeouts: Timeouts,
 }
 
-type Body = BoxStream<'static, reqwest::Result<Bytes>>;
+type Body = BoxStream<'static, io::Result<Bytes>>;
 
 impl RangeRequest {
-    /// `GET` with `Range: bytes=at-(len-1)`. Only a 206 whose `Content-Range` starts at `at` is
-    /// accepted: anything else would put the demuxer at the wrong byte.
+    /// `GET` with `Range: bytes=at-(len-1)`, answered within `timeouts.open`. Only a 206 whose
+    /// `Content-Range` starts at `at` is accepted: anything else would put the demuxer at the
+    /// wrong byte. The body fails when it sends nothing for `timeouts.stall`.
     async fn open(self, at: u64) -> io::Result<Body> {
+        let limit = self.timeouts.open;
+        let len = self.len;
+        let started = std::time::Instant::now();
+        let res = match tokio::time::timeout(limit, self.open_now(at)).await {
+            Ok(res) => res,
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("range request from byte {at} got no answer in {limit:?}"),
+            )),
+        };
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        match &res {
+            Ok(_) => debug!(from = at, len, elapsed_ms, "stream range request answered"),
+            Err(e) => warn!(from = at, len, elapsed_ms, error = %e, "stream range request failed"),
+        }
+        res
+    }
+
+    async fn open_now(self, at: u64) -> io::Result<Body> {
         let last = self.len.saturating_sub(1);
         let resp = self
             .client
@@ -82,8 +134,29 @@ impl RangeRequest {
                 "range request from byte {at} answered the range starting at {start:?}"
             )));
         }
-        Ok(resp.bytes_stream().boxed())
+        Ok(stall_guarded(resp.bytes_stream().boxed(), self.timeouts.stall))
     }
+}
+
+/// `body` as io results, failing with `TimedOut` when no chunk comes for `stall` while it is read
+/// (the timer only runs while someone waits for the next chunk, not while the read-ahead is full).
+fn stall_guarded(body: BoxStream<'static, reqwest::Result<Bytes>>, stall: Duration) -> Body {
+    futures_util::stream::unfold(Some(body), move |state| async move {
+        let mut body = state?;
+        match tokio::time::timeout(stall, body.next()).await {
+            Ok(Some(Ok(bytes))) => Some((Ok(bytes), Some(body))),
+            Ok(Some(Err(e))) => Some((Err(io::Error::other(e)), None)),
+            Ok(None) => None,
+            Err(_) => Some((
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("the stream sent nothing for {stall:?}"),
+                )),
+                None,
+            )),
+        }
+    })
+    .boxed()
 }
 
 /// First byte of a `Content-Range: bytes a-b/len` value.
@@ -189,14 +262,15 @@ impl AsyncRead for SeekableHttpSource {
                     this.retried = false;
                     continue;
                 }
-                Some(Err(e)) => io::Error::other(e),
+                Some(Err(e)) => e,
                 None => io::Error::new(io::ErrorKind::UnexpectedEof, "the stream ended early"),
             };
             this.pending().body = None;
             if this.retried {
+                warn!(error = %err, pos, "stream read failed again after reopening it");
                 return Poll::Ready(Err(err));
             }
-            debug!(error = %err, pos, "stream read failed; retrying from the current position");
+            warn!(error = %err, pos, "stream read failed; reopening it at the current position");
             this.retried = true;
             this.ensure_opening(pos);
         }
@@ -287,19 +361,28 @@ enum Request {
         to: u64,
         current: u64,
         epoch: u64,
-        reply: oneshot::Sender<io::Result<u64>>,
+        reply: oneshot::Sender<SeekReply>,
     },
     Len {
         reply: oneshot::Sender<Option<u64>>,
     },
 }
 
+struct SeekReply {
+    res: io::Result<u64>,
+    /// The seek failed and the source could not go back to the reader's position either: nothing
+    /// more comes for this epoch.
+    lost: bool,
+}
+
 /// Synchronous symphonia source over an [`AsyncMediaSource`], with a bounded read-ahead buffer
 /// filled by a tokio task. Must be created inside a tokio runtime; reads block the calling thread
-/// (songbird parses and decodes on its own blocking pool).
+/// (songbird's mixer and blocking pool), for at most `wait` each.
 pub struct ReadAhead {
     data: Mutex<mpsc::Receiver<Msg>>,
     requests: mpsc::UnboundedSender<Request>,
+    rt: Handle,
+    wait: Duration,
     seekable: bool,
     epoch: u64,
     pos: u64,
@@ -315,7 +398,7 @@ enum Stopped {
 }
 
 impl ReadAhead {
-    pub fn new(source: Box<dyn AsyncMediaSource>) -> Self {
+    fn with_wait(source: Box<dyn AsyncMediaSource>, wait: Duration) -> Self {
         let seekable = source.is_seekable();
         let (data_tx, data_rx) = mpsc::channel(READ_AHEAD_CHUNKS);
         let (req_tx, req_rx) = mpsc::unbounded_channel();
@@ -323,6 +406,8 @@ impl ReadAhead {
         Self {
             data: Mutex::new(data_rx),
             requests: req_tx,
+            rt: Handle::current(),
+            wait,
             seekable,
             epoch: 0,
             pos: 0,
@@ -333,6 +418,16 @@ impl ReadAhead {
 
     fn gone() -> io::Error {
         io::Error::new(io::ErrorKind::UnexpectedEof, "the stream reader stopped")
+    }
+
+    /// Wait for `fut` (driven by the runtime) for at most `wait`.
+    fn wait_for<F: std::future::Future>(rt: &Handle, wait: Duration, fut: F) -> io::Result<F::Output> {
+        rt.block_on(tokio::time::timeout(wait, fut)).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("the stream did not answer in {wait:?}"),
+            )
+        })
     }
 }
 
@@ -409,19 +504,26 @@ async fn serve(src: &mut dyn AsyncMediaSource, req: Request, epoch: &mut u64, st
         } => {
             *epoch = e;
             *stopped = false;
-            let res = match src.seek(SeekFrom::Start(to)).await {
-                Ok(p) => Ok(p),
+            let reply_with = match src.seek(SeekFrom::Start(to)).await {
+                Ok(p) => SeekReply {
+                    res: Ok(p),
+                    lost: false,
+                },
                 Err(e) => {
                     warn!(error = %e, to, current, "stream seek failed");
                     // Keep reading from where the reader is, so playback can go on.
-                    if let Err(back) = src.seek(SeekFrom::Start(current)).await {
-                        warn!(error = %back, current, "could not return to the current position");
-                        *stopped = true;
-                    }
-                    Err(e)
+                    let lost = match src.seek(SeekFrom::Start(current)).await {
+                        Ok(_) => false,
+                        Err(back) => {
+                            warn!(error = %back, current, "could not return to the current position");
+                            *stopped = true;
+                            true
+                        }
+                    };
+                    SeekReply { res: Err(e), lost }
                 }
             };
-            let _ = reply.send(res);
+            let _ = reply.send(reply_with);
         }
     }
 }
@@ -444,12 +546,17 @@ impl Read for ReadAhead {
                 Some(Stopped::Failed(kind)) => return Err(io::Error::new(kind, "the stream failed")),
                 None => {}
             }
-            let msg = self
-                .data
-                .get_mut()
-                .unwrap_or_else(|p| p.into_inner())
-                .blocking_recv()
-                .ok_or_else(Self::gone)?;
+            let rx = self.data.get_mut().unwrap_or_else(|p| p.into_inner());
+            let msg = match Self::wait_for(&self.rt, self.wait, rx.recv()) {
+                Ok(Some(msg)) => msg,
+                Ok(None) => return Err(Self::gone()),
+                Err(e) => {
+                    // Never block the mixer thread for good: this input is done.
+                    warn!(pos = self.pos, error = %e, "stream read timed out");
+                    self.stopped = Some(Stopped::Failed(e.kind()));
+                    return Err(e);
+                }
+            };
             match msg {
                 Msg::Data(e, b) if e == self.epoch => self.chunk = b,
                 Msg::Eof(e) if e == self.epoch => self.stopped = Some(Stopped::Eof),
@@ -494,11 +601,22 @@ impl Seek for ReadAhead {
                 reply,
             })
             .map_err(|_| Self::gone())?;
-        let res = rx.blocking_recv().map_err(|_| Self::gone())?;
-        if let Ok(p) = res {
-            self.pos = p;
+        let reply = match Self::wait_for(&self.rt, self.wait, rx) {
+            Ok(Ok(reply)) => reply,
+            Ok(Err(_)) => return Err(Self::gone()),
+            Err(e) => {
+                // The source may still land anywhere: this input is done.
+                warn!(to = target, error = %e, "stream seek timed out");
+                self.stopped = Some(Stopped::Failed(e.kind()));
+                return Err(e);
+            }
+        };
+        match &reply.res {
+            Ok(p) => self.pos = *p,
+            Err(e) if reply.lost => self.stopped = Some(Stopped::Failed(e.kind())),
+            Err(_) => {}
         }
-        res
+        reply.res
     }
 }
 
@@ -510,7 +628,7 @@ impl MediaSource for ReadAhead {
     fn byte_len(&self) -> Option<u64> {
         let (reply, rx) = oneshot::channel();
         self.requests.send(Request::Len { reply }).ok()?;
-        rx.blocking_recv().ok().flatten()
+        Self::wait_for(&self.rt, self.wait, rx).ok()?.ok().flatten()
     }
 }
 
@@ -528,6 +646,7 @@ impl SeekableHttpRequest {
                 url,
                 headers,
                 len,
+                timeouts: Timeouts::default(),
             },
         }
     }
@@ -548,7 +667,7 @@ impl Compose for SeekableHttpRequest {
     async fn create_async(&mut self) -> Result<AudioStream<Box<dyn MediaSource>>, AudioStreamError> {
         let source = self.source().await.map_err(|e| AudioStreamError::Fail(Box::new(e)))?;
         Ok(AudioStream {
-            input: Box::new(ReadAhead::new(Box::new(source))) as Box<dyn MediaSource>,
+            input: Box::new(ReadAhead::with_wait(Box::new(source), self.req.timeouts.wait)) as Box<dyn MediaSource>,
         })
     }
 
@@ -585,6 +704,10 @@ mod tests {
     struct Server {
         data: Arc<Vec<u8>>,
         ranges: Arc<StdMutex<Vec<String>>>,
+        /// The next answer sends this many bytes, then nothing more without closing.
+        stall_after: Arc<StdMutex<Option<usize>>>,
+        /// Answer 403 (an expired or refused URL) once this many requests were served.
+        refuse_after: Arc<StdMutex<Option<usize>>>,
     }
 
     async fn serve_file(State(s): State<Server>, headers: AxumHeaders) -> Response {
@@ -593,7 +716,14 @@ mod tests {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_owned();
-        s.ranges.lock().unwrap().push(range.clone());
+        let served = {
+            let mut ranges = s.ranges.lock().unwrap();
+            ranges.push(range.clone());
+            ranges.len() - 1
+        };
+        if s.refuse_after.lock().unwrap().is_some_and(|n| served >= n) {
+            return AxumStatus::FORBIDDEN.into_response();
+        }
         let len = s.data.len() as u64;
         let Some((a, b)) = range.strip_prefix("bytes=").and_then(|r| r.split_once('-')) else {
             return (AxumStatus::OK, s.data.to_vec()).into_response();
@@ -606,12 +736,19 @@ mod tests {
             return AxumStatus::RANGE_NOT_SATISFIABLE.into_response();
         }
         let body = s.data[a as usize..=b as usize].to_vec();
-        (
-            AxumStatus::PARTIAL_CONTENT,
-            [("content-range", format!("bytes {a}-{b}/{len}"))],
-            body,
-        )
-            .into_response()
+        let content_range = [("content-range", format!("bytes {a}-{b}/{len}"))];
+        if let Some(n) = s.stall_after.lock().unwrap().take() {
+            let first = Bytes::from(body[..n.min(body.len())].to_vec());
+            let stream = futures_util::stream::once(async move { Ok::<_, io::Error>(first) })
+                .chain(futures_util::stream::pending());
+            return (
+                AxumStatus::PARTIAL_CONTENT,
+                content_range,
+                axum::body::Body::from_stream(stream),
+            )
+                .into_response();
+        }
+        (AxumStatus::PARTIAL_CONTENT, content_range, body).into_response()
     }
 
     async fn start(size: usize) -> (String, Server) {
@@ -619,6 +756,8 @@ mod tests {
         let server = Server {
             data: Arc::new(data),
             ranges: Arc::default(),
+            stall_after: Arc::default(),
+            refuse_after: Arc::default(),
         };
         let app = Router::new().route("/file", get(serve_file)).with_state(server.clone());
         let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
@@ -699,6 +838,7 @@ mod tests {
                 url: url.replace("/file", "/missing"),
                 headers: HeaderMap::new(),
                 len: 1_000,
+                timeouts: Timeouts::default(),
             },
             0,
             None,
@@ -708,6 +848,129 @@ mod tests {
         let mut buf = [0u8; 10];
         src.read_exact(&mut buf).await.unwrap();
         assert_eq!(buf.to_vec(), server.data[..10]);
+    }
+
+    fn quick_timeouts() -> Timeouts {
+        Timeouts {
+            open: Duration::from_millis(300),
+            stall: Duration::from_millis(300),
+            wait: Duration::from_secs(2),
+        }
+    }
+
+    /// A body that stops sending without closing (seen live: the whole call went silent) is
+    /// dropped after the stall timeout and reopened at the byte the reader is at.
+    #[tokio::test]
+    async fn stalled_body_is_reopened_at_the_current_byte() {
+        const SIZE: usize = 50_000;
+        let (url, server) = start(SIZE).await;
+        *server.stall_after.lock().unwrap() = Some(1_000);
+        let mut req = request(&url, SIZE as u64);
+        req.req.timeouts = quick_timeouts();
+        let mut src = req.source().await.unwrap();
+        let mut all = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), src.read_to_end(&mut all))
+            .await
+            .expect("the stall is recovered")
+            .unwrap();
+        assert_eq!(all, *server.data);
+        let last = SIZE - 1;
+        assert_eq!(
+            ranges(&server),
+            vec![format!("bytes=0-{last}"), format!("bytes=1000-{last}")]
+        );
+    }
+
+    /// The body stalls and the reopened range is refused (403): the read fails within the timeouts,
+    /// with the status in the error, instead of hanging (the player then resolves the URL again).
+    #[tokio::test]
+    async fn stall_then_refused_range_fails_the_read() {
+        const SIZE: usize = 50_000;
+        let (url, server) = start(SIZE).await;
+        *server.stall_after.lock().unwrap() = Some(1_000);
+        *server.refuse_after.lock().unwrap() = Some(1);
+        let mut req = request(&url, SIZE as u64);
+        req.req.timeouts = quick_timeouts();
+        let mut src = req.source().await.unwrap();
+        let mut all = Vec::new();
+        let err = tokio::time::timeout(Duration::from_secs(5), src.read_to_end(&mut all))
+            .await
+            .expect("no hang")
+            .unwrap_err();
+        assert!(err.to_string().contains("403"), "{err}");
+        assert_eq!(all, server.data[..1_000]);
+    }
+
+    /// A range request that is never answered fails after the open timeout (a seek there fails
+    /// instead of hanging, and the source stays where it was).
+    #[tokio::test]
+    async fn unanswered_range_request_times_out() {
+        // Accepts connections but never answers.
+        let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+        let mut req = request(&format!("http://{addr}/file"), 1_000);
+        req.req.timeouts = quick_timeouts();
+        let started = std::time::Instant::now();
+        let err = req.source().await.err().expect("no answer");
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    /// An async source that never delivers anything.
+    struct Never;
+
+    impl AsyncRead for Never {
+        fn poll_read(self: Pin<&mut Self>, _: &mut Context<'_>, _: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
+    impl AsyncSeek for Never {
+        fn start_seek(self: Pin<&mut Self>, _: SeekFrom) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn poll_complete(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<u64>> {
+            Poll::Pending
+        }
+    }
+
+    #[serenity::async_trait]
+    impl AsyncMediaSource for Never {
+        fn is_seekable(&self) -> bool {
+            true
+        }
+
+        async fn byte_len(&self) -> Option<u64> {
+            Some(1_000)
+        }
+    }
+
+    /// The synchronous side (songbird's shared mixer thread) never waits for good: a read or a
+    /// seek that gets no answer fails after `wait`, and the input stays failed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn read_ahead_waits_a_bounded_time() {
+        let mut stream = ReadAhead::with_wait(Box::new(Never), Duration::from_millis(200));
+        tokio::task::spawn_blocking(move || {
+            let started = std::time::Instant::now();
+            let mut buf = [0u8; 10];
+            let err = stream.read(&mut buf).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+            assert!(stream.read(&mut buf).is_err(), "a timed out input stays failed");
+            let err = stream.seek(SeekFrom::Start(500)).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+            assert!(started.elapsed() < Duration::from_secs(2));
+        })
+        .await
+        .unwrap();
     }
 
     /// Sync side, as symphonia uses it: reads, forward and backward seeks with a full read-ahead.
@@ -772,7 +1035,7 @@ mod tests {
             inner: src,
             read: counter.clone(),
         };
-        let stream = ReadAhead::new(Box::new(counting));
+        let stream = ReadAhead::with_wait(Box::new(counting), Timeouts::default().wait);
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         let read = counter.load(std::sync::atomic::Ordering::Relaxed);
         assert!(
