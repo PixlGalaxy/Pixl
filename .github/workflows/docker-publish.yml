@@ -48,7 +48,6 @@ jobs:
   web:
     name: Panel typecheck
     runs-on: ubuntu-latest
-    if: hashFiles('web/package.json') != ''
     defaults:
       run:
         working-directory: web
@@ -58,6 +57,9 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
+        with:
+          # The version comes from `packageManager` in web/package.json (no root package.json).
+          package_json_file: web/package.json
 
       - name: Set up Node
         uses: actions/setup-node@v5
