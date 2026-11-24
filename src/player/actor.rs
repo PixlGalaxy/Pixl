@@ -10,7 +10,10 @@ use std::{
 };
 
 use serenity::all::GuildId;
-use songbird::{tracks::TrackHandle, Call, Event};
+use songbird::{
+    tracks::{ControlError, TrackHandle},
+    Call, Event,
+};
 use tokio::{
     sync::{broadcast, mpsc, watch, Mutex},
     time::{sleep_until, Instant},
@@ -50,6 +53,9 @@ const MAX_FAILURES: u32 = 3;
 const POSITION_TICK: Duration = Duration::from_secs(10);
 const VOICE_TIMEOUT: Duration = Duration::from_secs(5);
 const SEEK_TIMEOUT: Duration = Duration::from_secs(10);
+/// A fresh input that is not playable after this long counts as failed (re-resolved once, then
+/// the track fails) instead of leaving the channel silent.
+const PLAYABLE_TIMEOUT: Duration = Duration::from_secs(30);
 const HISTORY_LEN: usize = 20;
 /// A play counts for the history after this much listening (or half the track).
 const PLAY_COUNTS_AFTER: Duration = Duration::from_secs(30);
@@ -250,6 +256,58 @@ struct PendingResume {
     target_ms: u64,
 }
 
+impl PendingResume {
+    fn at(uid: Uuid, target_ms: u64) -> Self {
+        Self {
+            uid,
+            saved_ms: target_ms,
+            target_ms,
+        }
+    }
+}
+
+/// Failed seeks of one track (across its restarts and its re-resolve).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SeekTrouble {
+    uid: Uuid,
+    failures: u32,
+    /// Seeking was given up: the track plays where it is (unsynced in a jam) and seeks are refused.
+    gave_up: bool,
+}
+
+/// What to do after the `failures`-th failed seek of a track. A failed seek ends songbird's
+/// track (or leaves it hanging), so every step starts a fresh input; the steps are bounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeekRecovery {
+    /// Same stream, fresh input, seek to the target once it is playable.
+    Restart,
+    /// Resolve the stream URL again (it may be stale), then seek once it is playable.
+    Reresolve,
+    /// Stop seeking this track: play it from the start on a fresh input.
+    GiveUp,
+}
+
+fn seek_recovery(failures: u32, reresolved: bool) -> SeekRecovery {
+    match failures {
+        0 | 1 => SeekRecovery::Restart,
+        2 if !reresolved => SeekRecovery::Reresolve,
+        _ => SeekRecovery::GiveUp,
+    }
+}
+
+/// songbird drops a seek that arrives while the track is still being readied (or while another
+/// seek runs) with `Dropped` ("request was replaced by another of same type"). The track itself
+/// is fine: the seek just has to be sent again once it is playable.
+fn seek_was_replaced(e: &ControlError) -> bool {
+    matches!(e, ControlError::Dropped)
+}
+
+/// Whether a jam may seek the playing track to line it up: only once songbird can seek it (seeks
+/// sent earlier are dropped) and while seeking it still works.
+fn jam_may_seek(became_playable: bool, gave_up: bool) -> bool {
+    became_playable && !gave_up
+}
+
 struct Player {
     manager: PlayerManager,
     deps: Arc<PlayerDeps>,
@@ -294,6 +352,9 @@ struct Player {
     failures: u32,
     /// Track already re-resolved once after failing before it could play (stale or refused URL).
     stream_retry: Option<Uuid>,
+    seek_trouble: Option<SeekTrouble>,
+    /// The playing input must be playable by then (see `PLAYABLE_TIMEOUT`).
+    playable_deadline: Option<Instant>,
     rng: fastrand::Rng,
     ending: Option<EndReason>,
     radio: Option<Radio>,
@@ -348,6 +409,8 @@ pub async fn run(s: Spawn) {
         votes: Votes::default(),
         failures: 0,
         stream_retry: None,
+        seek_trouble: None,
+        playable_deadline: None,
         rng: fastrand::Rng::new(),
         ending: None,
         radio: None,
@@ -484,6 +547,7 @@ impl Player {
                     self.jam_timing().await;
                 }
                 _ = until(jam_drift) => self.drift_check().await,
+                _ = until(self.playable_deadline) => self.playable_timeout().await,
                 _ = until(tick) => {
                     self.next_tick = Instant::now() + POSITION_TICK;
                     if self.playing.is_some() {
@@ -999,6 +1063,9 @@ impl Player {
         if self.resume_at.as_ref().is_some_and(|r| r.uid != entry.uid) {
             self.resume_at = None;
         }
+        if self.seek_trouble.is_some_and(|t| t.uid != entry.uid) {
+            self.seek_trouble = None;
+        }
         let begun = Instant::now();
         // Taken here so the copy kept for seeks / retries does not hold it.
         let late_music = playable.late_music.take().and_then(|l| l.take());
@@ -1006,6 +1073,7 @@ impl Player {
             Ok(h) => h,
             Err(reason) => return self.failed(entry, &reason).await,
         };
+        self.playable_deadline = Some(Instant::now() + PLAYABLE_TIMEOUT);
         let paused = self.paused();
         let startup = Some((playable.timings.clone(), begun));
         self.playing = Some(Playing {
@@ -1095,6 +1163,9 @@ impl Player {
         if self.paused() {
             let _ = handle.pause();
         }
+        // songbird only readies a lazy input while the track plays: ask for it now, so a track held
+        // paused (jam start, empty channel) is ready to play and to seek when it is released.
+        let _ = handle.make_playable();
         Ok(handle)
     }
 
@@ -1111,6 +1182,7 @@ impl Player {
     fn end_track(&mut self) {
         self.loading = None;
         self.prefetch_at = None;
+        self.playable_deadline = None;
         let Some(p) = self.playing.take() else { return };
         let _ = p.handle.stop();
         self.record_play(&p);
@@ -1183,8 +1255,16 @@ impl Player {
         match signal {
             TrackSignal::Playable => {
                 self.failures = 0;
+                // songbird also reports Playable after every seek; only the first one of an input
+                // starts it (at 0, whatever the clock counted while it loaded).
+                let mut first = false;
                 if let Some(p) = self.playing.as_mut() {
-                    p.became_playable = true;
+                    if !p.became_playable {
+                        first = true;
+                        p.became_playable = true;
+                        p.clock.set_position(0);
+                        self.playable_deadline = None;
+                    }
                     if let Some((timings, begun)) = p.startup.take() {
                         let id = p.playable.played_youtube_id.as_deref().unwrap_or(&p.playable.page_url);
                         info!(
@@ -1197,25 +1277,41 @@ impl Player {
                         );
                     }
                 }
-                self.apply_resume().await;
+                if self.jam.is_some() {
+                    // The jam timeline is the target: line up from the real position (a target kept
+                    // while it loaded is stale by now).
+                    let uid = self.playing.as_ref().map(|p| p.entry.uid);
+                    let pending = self.resume_at.as_ref().is_some_and(|r| Some(r.uid) == uid);
+                    if first || pending {
+                        if pending {
+                            self.resume_at = None;
+                        }
+                        self.jam_timing().await;
+                    }
+                } else {
+                    self.apply_resume().await;
+                }
             }
             TrackSignal::End => self.next_track(false).await,
             TrackSignal::Error => {
-                // The stream URL was refused before any audio (e.g. a 403 on a prefetched URL):
-                // resolve it again once instead of failing the track.
+                // The stream URL was refused (e.g. a 403 on a prefetched URL, or an URL that went
+                // stale mid-track): resolve it again once instead of failing the track, and go on
+                // where it was.
                 let retry = self
                     .playing
                     .as_ref()
-                    .filter(|p| !p.became_playable && self.stream_retry != Some(p.entry.uid))
-                    .map(|p| p.entry.clone());
-                if let Some(entry) = retry {
-                    warn!(guild = self.guild_id, track = %entry.info.url, "stream refused before playing; resolving it again");
-                    self.stream_retry = Some(entry.uid);
-                    self.deps.sources.invalidate_stream(&entry.info);
-                    self.end_track();
-                    self.loading = Some(entry.uid);
-                    self.spawn_prepare(&entry, false);
-                    self.publish();
+                    .filter(|p| self.stream_retry != Some(p.entry.uid))
+                    .map(|p| (p.entry.clone(), p.became_playable.then(|| p.position_ms())));
+                if let Some((entry, at)) = retry {
+                    match at {
+                        None => {
+                            warn!(guild = self.guild_id, track = %entry.info.url, "stream refused before playing; resolving it again")
+                        }
+                        Some(at) => {
+                            warn!(guild = self.guild_id, track = %entry.info.url, position = at, "stream failed mid-track; resolving it again to go on there")
+                        }
+                    }
+                    self.reresolve(&entry, at.filter(|ms| *ms > 0));
                     return;
                 }
                 let entry = self.playing.as_ref().map(|p| p.entry.clone());
@@ -1323,6 +1419,9 @@ impl Player {
         SeekOutcome::Done
     }
 
+    /// Seek the playing track. Before songbird can seek it (still loading, or restarted after a
+    /// failed seek) the target is kept and applied when it becomes playable: songbird drops seeks
+    /// sent earlier. A failed seek starts the bounded recovery of `seek_failed`.
     async fn seek(&mut self, position_ms: u64) -> SeekOutcome {
         let Some(p) = &mut self.playing else {
             return SeekOutcome::NothingPlaying;
@@ -1331,120 +1430,213 @@ impl Player {
             Ok(t) => t,
             Err(outcome) => return outcome,
         };
-        let seeked = match tokio::time::timeout(SEEK_TIMEOUT, p.handle.seek_async(Duration::from_millis(target))).await
-        {
-            Ok(Ok(_)) => true,
-            Ok(Err(e)) => {
-                warn!(guild = self.guild_id, track = %p.entry.info.url, target, error = %e, "seek failed; restarting the track there");
-                false
-            }
-            Err(_) => {
-                warn!(guild = self.guild_id, track = %p.entry.info.url, target, "seek timed out; restarting the track there");
-                false
-            }
-        };
-        if !seeked && !self.restart_at(target).await {
+        let uid = p.entry.uid;
+        if !p.became_playable {
+            debug!(
+                guild = self.guild_id,
+                channel = self.voice_channel_id,
+                target,
+                "seek kept until the track is playable"
+            );
+            return self.seek_later(uid, target);
+        }
+        if self.seek_trouble.is_some_and(|t| t.uid == uid && t.gave_up) {
+            debug!(
+                guild = self.guild_id,
+                channel = self.voice_channel_id,
+                target,
+                "seek refused: seeking does not work on this track"
+            );
             return SeekOutcome::Failed;
         }
-        let Some(p) = &mut self.playing else {
-            return SeekOutcome::Failed;
+        let seeked = tokio::time::timeout(SEEK_TIMEOUT, p.handle.seek_async(Duration::from_millis(target))).await;
+        let reason = match seeked {
+            Ok(Ok(_)) => {
+                p.clock.set_position(target);
+                let pos = p.position_ms();
+                self.schedule_prefetch();
+                self.persist(false);
+                self.publish();
+                let _ = self.events.send(PlayerEvent::Position {
+                    position_ms: pos,
+                    position_at: epoch_ms(),
+                });
+                return SeekOutcome::Done;
+            }
+            Ok(Err(e)) if seek_was_replaced(&e) => {
+                info!(
+                    guild = self.guild_id,
+                    channel = self.voice_channel_id,
+                    target,
+                    "seek replaced while the track was busy; applying it when it is playable"
+                );
+                return self.seek_later(uid, target);
+            }
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => format!("no answer in {SEEK_TIMEOUT:?}"),
         };
-        p.clock.set_position(target);
-        let pos = p.position_ms();
-        self.schedule_prefetch();
+        self.seek_failed(target, &reason).await
+    }
+
+    /// Keep `target` for track `uid` until it is playable (`apply_resume` / the jam line-up).
+    fn seek_later(&mut self, uid: Uuid, target: u64) -> SeekOutcome {
+        self.resume_at = Some(PendingResume::at(uid, target));
+        if let Some(p) = self.playing.as_mut().filter(|p| p.entry.uid == uid) {
+            p.clock.set_position(target);
+        }
         self.persist(false);
         self.publish();
         let _ = self.events.send(PlayerEvent::Position {
-            position_ms: pos,
+            position_ms: target,
             position_at: epoch_ms(),
         });
         SeekOutcome::Done
     }
 
-    /// The restored track is playable: go to its saved position. A failed seek keeps it playing
-    /// from the start instead of skipping it.
+    /// A seek of the playing track failed or timed out: restart it on a fresh input at the target,
+    /// then resolve the stream again, then give up seeking it (play it from the start). Every step
+    /// is logged; none of them loops.
+    async fn seek_failed(&mut self, target: u64, reason: &str) -> SeekOutcome {
+        let Some(p) = &self.playing else {
+            return SeekOutcome::NothingPlaying;
+        };
+        let (entry, uid) = (p.entry.clone(), p.entry.uid);
+        let trouble = match self.seek_trouble.filter(|t| t.uid == uid) {
+            Some(t) => SeekTrouble {
+                failures: t.failures + 1,
+                ..t
+            },
+            None => SeekTrouble {
+                uid,
+                failures: 1,
+                gave_up: false,
+            },
+        };
+        let step = seek_recovery(trouble.failures, self.stream_retry == Some(uid));
+        self.seek_trouble = Some(SeekTrouble {
+            gave_up: step == SeekRecovery::GiveUp,
+            ..trouble
+        });
+        let (guild, channel, failures) = (self.guild_id, self.voice_channel_id, trouble.failures);
+        match step {
+            SeekRecovery::Restart => {
+                warn!(guild, channel, track = %entry.info.url, target, failures, %reason, "seek failed; restarting the track on a fresh input at the target");
+                self.restart_input(Some(target)).await
+            }
+            SeekRecovery::Reresolve => {
+                warn!(guild, channel, track = %entry.info.url, target, failures, %reason, "seek failed again; resolving the stream again");
+                self.reresolve(&entry, Some(target));
+                SeekOutcome::Done
+            }
+            SeekRecovery::GiveUp => {
+                if self.jam.is_some() {
+                    warn!(guild, channel, track = %entry.info.url, target, failures, %reason, "seeking does not work on this track; playing it from the start, out of sync with the jam");
+                } else {
+                    warn!(guild, channel, track = %entry.info.url, target, failures, %reason, "seeking does not work on this track; playing it from the start");
+                }
+                match self.restart_input(None).await {
+                    SeekOutcome::Done => SeekOutcome::Failed,
+                    outcome => outcome,
+                }
+            }
+        }
+    }
+
+    /// Play the current track again on a fresh input built from the same stream (songbird ends or
+    /// abandons a track whose seek failed), going to `target` once it is playable. Events of the
+    /// old handle are ignored from here on (they no longer match the current handle).
+    async fn restart_input(&mut self, target: Option<u64>) -> SeekOutcome {
+        let Some(p) = &self.playing else {
+            return SeekOutcome::NothingPlaying;
+        };
+        let (entry, playable) = (p.entry.clone(), p.playable.clone());
+        let _ = p.handle.stop();
+        let handle = match self.start_input(&entry, &playable).await {
+            Ok(h) => h,
+            Err(reason) => {
+                warn!(guild = self.guild_id, channel = self.voice_channel_id, track = %entry.info.url, %reason, "could not restart the track");
+                self.failed(entry, &reason).await;
+                return SeekOutcome::Failed;
+            }
+        };
+        info!(guild = self.guild_id, channel = self.voice_channel_id, track = %entry.info.url, ?target, "track restarted on a fresh input");
+        self.playable_deadline = Some(Instant::now() + PLAYABLE_TIMEOUT);
+        if let Some(p) = &mut self.playing {
+            p.handle = handle;
+            p.became_playable = false;
+            p.clock.set_position(target.unwrap_or(0));
+        }
+        self.resume_at = target.map(|t| PendingResume::at(entry.uid, t));
+        self.persist(false);
+        self.publish();
+        let _ = self.events.send(PlayerEvent::Position {
+            position_ms: target.unwrap_or(0),
+            position_at: epoch_ms(),
+        });
+        SeekOutcome::Done
+    }
+
+    /// Drop the playing input, resolve the stream of `entry` again (once per track: a second
+    /// failure fails the track) and start it, at `target` once playable.
+    fn reresolve(&mut self, entry: &Entry, target: Option<u64>) {
+        self.stream_retry = Some(entry.uid);
+        self.deps.sources.invalidate_stream(&entry.info);
+        self.end_track();
+        self.loading = Some(entry.uid);
+        // Without a new target, a position still kept for it (restored checkpoint) stays.
+        if let Some(t) = target {
+            self.resume_at = Some(PendingResume::at(entry.uid, t));
+        }
+        self.spawn_prepare(entry, false);
+        self.publish();
+    }
+
+    /// The playing input did not become playable in time: handle it like a stream error.
+    async fn playable_timeout(&mut self) {
+        self.playable_deadline = None;
+        let Some(p) = self.playing.as_ref().filter(|p| !p.became_playable) else {
+            return;
+        };
+        warn!(
+            guild = self.guild_id,
+            channel = self.voice_channel_id,
+            track = %p.entry.info.url,
+            "track did not become playable in {PLAYABLE_TIMEOUT:?}"
+        );
+        let id = p.handle.uuid();
+        let _ = p.handle.stop();
+        self.on_track_signal(id, TrackSignal::Error).await;
+    }
+
+    /// The track is playable: go to the position kept for it (restored checkpoint, a seek asked
+    /// while it loaded, or a seek retried on a fresh input).
     async fn apply_resume(&mut self) {
         let playing = self.playing.as_ref().map(|p| p.entry.uid);
         if playing.is_none() || self.resume_at.as_ref().map(|r| r.uid) != playing {
             return;
         }
         let Some(r) = self.resume_at.take() else { return };
-        match self.seek(r.target_ms).await {
-            SeekOutcome::Done => {
-                info!(
-                    guild = self.guild_id,
-                    channel = self.voice_channel_id,
-                    target = r.target_ms,
-                    "resumed at the checkpoint"
-                );
-            }
-            outcome => {
-                warn!(
-                    guild = self.guild_id,
-                    channel = self.voice_channel_id,
-                    target = r.target_ms,
-                    ?outcome,
-                    "could not resume at the checkpoint; playing from the start"
-                );
-                if outcome == SeekOutcome::Failed {
-                    self.restart_from_start(r.uid).await;
-                }
-                self.persist(false);
-            }
-        }
-    }
-
-    /// Play the current track `uid` again from 0 on a fresh input (a failed seek ends the old one).
-    /// Events of the old handle are ignored from here on.
-    async fn restart_from_start(&mut self, uid: Uuid) {
-        let Some(p) = self.playing.as_ref().filter(|p| p.entry.uid == uid) else {
-            return;
-        };
-        let (entry, playable) = (p.entry.clone(), p.playable.clone());
-        let _ = p.handle.stop();
-        match self.start_input(&entry, &playable).await {
-            Ok(handle) => {
-                if let Some(p) = &mut self.playing {
-                    p.handle = handle;
-                    p.clock.set_position(0);
-                }
-                self.publish();
-            }
-            Err(reason) => self.failed(entry, &reason).await,
-        }
-    }
-
-    /// songbird ends a track whose seek failed: play the same stream again and seek the fresh input
-    /// to `target`, so the track goes on instead of being skipped. Events of the old handle are
-    /// ignored from here on (they no longer match the current handle).
-    async fn restart_at(&mut self, target: u64) -> bool {
-        let Some(p) = &self.playing else { return false };
-        let (entry, playable) = (p.entry.clone(), p.playable.clone());
-        let _ = p.handle.stop();
-        let handle = match self.start_input(&entry, &playable).await {
-            Ok(h) => h,
-            Err(reason) => {
-                self.failed(entry, &reason).await;
-                return false;
-            }
-        };
-        if let Some(p) = &mut self.playing {
-            p.handle = handle.clone();
-        }
-        match tokio::time::timeout(SEEK_TIMEOUT, handle.seek_async(Duration::from_millis(target))).await {
-            Ok(Ok(_)) => {
-                info!(guild = self.guild_id, track = %entry.info.url, target, "track restarted at the seek target");
-                true
-            }
-            // If the fresh input is really broken, its own error event skips the track.
-            Ok(Err(e)) => {
-                warn!(guild = self.guild_id, track = %entry.info.url, target, error = %e, "seek failed after restarting the track");
-                false
-            }
-            Err(_) => {
-                warn!(guild = self.guild_id, track = %entry.info.url, target, "seek timed out after restarting the track");
-                false
-            }
+        let outcome = self.seek(r.target_ms).await;
+        let applied = outcome == SeekOutcome::Done
+            && self.resume_at.is_none()
+            && self.playing.as_ref().is_some_and(|p| p.became_playable);
+        if applied {
+            info!(
+                guild = self.guild_id,
+                channel = self.voice_channel_id,
+                target = r.target_ms,
+                "resumed at the kept position"
+            );
+        } else if outcome != SeekOutcome::Done {
+            // A failed seek already restarted the track from the start (see `seek_failed`).
+            warn!(
+                guild = self.guild_id,
+                channel = self.voice_channel_id,
+                target = r.target_ms,
+                ?outcome,
+                "could not resume at the kept position"
+            );
+            self.persist(false);
         }
     }
 
@@ -1881,6 +2073,10 @@ impl Player {
         };
         let duration = p.entry.info.duration_ms;
         let position = p.position_ms();
+        let may_seek = jam_may_seek(
+            p.became_playable,
+            self.seek_trouble.is_some_and(|t| t.uid == p.entry.uid && t.gave_up),
+        );
         let mut seek_to = None;
         let (hold, hold_until, drift_at) = match phase {
             Phase::Stopped | Phase::Preparing { .. } => (true, None, None),
@@ -1906,7 +2102,8 @@ impl Player {
             link.hold_until = hold_until;
             link.drift_at = drift_at;
         }
-        if let Some(target) = seek_to {
+        // Not seekable yet: the line-up runs again when the track becomes playable.
+        if let Some(target) = seek_to.filter(|_| may_seek) {
             debug!(
                 guild = self.guild_id,
                 channel = self.voice_channel_id,
@@ -1929,7 +2126,12 @@ impl Player {
         if link.seq != link.view.seq {
             return;
         }
-        let Some(p) = self.playing.as_ref().filter(|p| p.running()) else {
+        let gave_up = |p: &Playing| self.seek_trouble.is_some_and(|t| t.uid == p.entry.uid && t.gave_up);
+        let Some(p) = self
+            .playing
+            .as_ref()
+            .filter(|p| p.running() && jam_may_seek(p.became_playable, gave_up(p)))
+        else {
             return;
         };
         let actual = match tokio::time::timeout(Duration::from_secs(1), p.handle.get_info()).await {
@@ -1991,7 +2193,9 @@ impl Player {
                 }
                 self.resume_at = None;
                 if let Some(e) = self.queue.cursor() {
-                    if let ResumePlan::SeekTo(target_ms) = checkpoint::resume_plan(saved.position_ms, e.info.duration_ms) {
+                    if let ResumePlan::SeekTo(target_ms) =
+                        checkpoint::resume_plan(saved.position_ms, e.info.duration_ms)
+                    {
                         self.resume_at = Some(PendingResume {
                             uid: e.uid,
                             saved_ms: saved.position_ms,
@@ -2026,9 +2230,10 @@ impl Player {
     // ---- prefetch --------------------------------------------------------------------------
 
     fn schedule_prefetch(&mut self) {
-        self.prefetch_at = self.playing.as_ref().and_then(|p| {
-            p.running().then(|| Instant::now() + PREFETCH_AFTER_START)
-        });
+        self.prefetch_at = self
+            .playing
+            .as_ref()
+            .and_then(|p| p.running().then(|| Instant::now() + PREFETCH_AFTER_START));
     }
 
     fn start_prefetch(&mut self) {
@@ -2501,10 +2706,16 @@ mod tests {
         until_snap(&member_slot, |s| uids(s) == ["x", "y", "z"]).await;
 
         let jam = ask(&host, |reply| Command::JamCreate { reply }).await.unwrap();
-        assert!(ask(&host, |reply| Command::JamCreate { reply }).await.is_err(), "already hosting");
-        ask(&member, |reply| Command::JamJoin { jam: jam.clone(), reply })
-            .await
-            .unwrap();
+        assert!(
+            ask(&host, |reply| Command::JamCreate { reply }).await.is_err(),
+            "already hosting"
+        );
+        ask(&member, |reply| Command::JamJoin {
+            jam: jam.clone(),
+            reply,
+        })
+        .await
+        .unwrap();
         until_snap(&member_slot, |s| s.jam.as_ref().is_some_and(|j| j.members.len() == 2)).await;
         // The member shows the shared queue (the host's).
         until_snap(&member_slot, |s| uids(s) == ["a", "b"]).await;
@@ -2536,17 +2747,22 @@ mod tests {
         assert!(ask(&member, |reply| Command::JamLeave { reply }).await);
         until_snap(&member_slot, |s| s.jam.is_none() && uids(s) == ["x", "y", "z"]).await;
         until_snap(&host_slot, |s| s.jam.as_ref().is_some_and(|j| j.members.len() == 1)).await;
-        assert!(manager.jams().of(SessionKey {
-            guild_id: GUILD,
-            voice_channel_id: VOICE + 1
-        })
-        .is_none());
+        assert!(manager
+            .jams()
+            .of(SessionKey {
+                guild_id: GUILD,
+                voice_channel_id: VOICE + 1
+            })
+            .is_none());
 
         // Join again; then the host's player ends: nobody else has people, so the jam ends and the
         // member's own queue comes back.
-        ask(&member, |reply| Command::JamJoin { jam: jam.clone(), reply })
-            .await
-            .unwrap();
+        ask(&member, |reply| Command::JamJoin {
+            jam: jam.clone(),
+            reply,
+        })
+        .await
+        .unwrap();
         until_snap(&member_slot, |s| uids(s) == ["a", "b"]).await;
         host.send(Command::End(EndReason::EmptyTimeout)).await.unwrap();
         until_snap(&member_slot, |s| s.jam.is_none() && uids(s) == ["x", "y", "z"]).await;
@@ -2567,9 +2783,12 @@ mod tests {
         until_snap(&host_slot, |s| s.empty_channel_deadline.is_none()).await;
         until_snap(&member_slot, |s| s.empty_channel_deadline.is_none()).await;
         let jam = ask(&host, |reply| Command::JamCreate { reply }).await.unwrap();
-        ask(&member, |reply| Command::JamJoin { jam: jam.clone(), reply })
-            .await
-            .unwrap();
+        ask(&member, |reply| Command::JamJoin {
+            jam: jam.clone(),
+            reply,
+        })
+        .await
+        .unwrap();
         until_snap(&host_slot, |s| s.jam.as_ref().is_some_and(|j| j.members.len() == 2)).await;
         ((host, host_slot), (member, member_slot), jam)
     }
@@ -2639,6 +2858,49 @@ mod tests {
         slot.read().unwrap().version
     }
 
+    /// Each failed seek of a track moves one step on: fresh input, fresh URL, then no more seeks.
+    /// Replaying the steps as the actor does always ends within three failures.
+    #[test]
+    fn failed_seeks_recover_in_bounded_steps() {
+        let mut reresolved = false;
+        let mut steps = Vec::new();
+        for failures in 1..=5 {
+            let step = seek_recovery(failures, reresolved);
+            if step == SeekRecovery::Reresolve {
+                reresolved = true;
+            }
+            steps.push(step);
+            if step == SeekRecovery::GiveUp {
+                break;
+            }
+        }
+        assert_eq!(
+            steps,
+            [SeekRecovery::Restart, SeekRecovery::Reresolve, SeekRecovery::GiveUp]
+        );
+        // Already re-resolved (the URL was refused before playing): no second resolve.
+        assert_eq!(seek_recovery(2, true), SeekRecovery::GiveUp);
+        assert_eq!(seek_recovery(9, false), SeekRecovery::GiveUp);
+    }
+
+    /// A seek songbird dropped because the track was busy is retried later, not treated as a
+    /// broken track.
+    #[test]
+    fn replaced_seek_is_not_a_failure() {
+        assert!(seek_was_replaced(&ControlError::Dropped));
+        assert!(!seek_was_replaced(&ControlError::Finished));
+    }
+
+    /// The jam never seeks a track songbird cannot seek yet (the seek would be dropped and count
+    /// as a failure); the line-up runs when it becomes playable. Once seeking was given up the
+    /// track plays unsynced.
+    #[test]
+    fn jam_seeks_only_playable_tracks() {
+        assert!(!jam_may_seek(false, false), "still loading: keep the target");
+        assert!(jam_may_seek(true, false));
+        assert!(!jam_may_seek(true, true), "seeking given up: play unsynced");
+    }
+
     #[test]
     fn seek_target_keeps_the_last_second_and_refuses_past_the_end() {
         assert_eq!(seek_target(60_000, Some(180_000)), Ok(60_000));
@@ -2651,7 +2913,11 @@ mod tests {
     #[tokio::test]
     async fn seek_with_nothing_playing_or_loading_is_refused() {
         let (tx, _slot) = idle_actor().await;
-        let outcome = ask(&tx, |reply| Command::Seek { position_ms: 1_000, reply }).await;
+        let outcome = ask(&tx, |reply| Command::Seek {
+            position_ms: 1_000,
+            reply,
+        })
+        .await;
         assert_eq!(outcome, SeekOutcome::NothingPlaying);
         tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
     }
@@ -2693,14 +2959,19 @@ mod tests {
             events,
             snapshot,
         }));
-        let outcome = tokio::time::timeout(Duration::from_secs(5), seek_rx).await.unwrap().unwrap();
+        let outcome = tokio::time::timeout(Duration::from_secs(5), seek_rx)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(outcome, SeekOutcome::Done);
         let mut shown = false;
         let mut position = false;
         while let Ok(e) = ev.try_recv() {
             match e {
                 PlayerEvent::State(s) if s.status == Status::Loading && s.position_ms == 60_000 => shown = true,
-                PlayerEvent::Position { position_ms: 60_000, .. } => position = true,
+                PlayerEvent::Position {
+                    position_ms: 60_000, ..
+                } => position = true,
                 _ => {}
             }
         }
