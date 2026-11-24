@@ -6,12 +6,10 @@
   "scripts": {
     "dev": "vite",
     "dev:mock": "vite --mode mock",
-    "build": "tsc --noEmit && vite build && vite build -c vite.admin.config.ts",
-    "build:admin": "vite build -c vite.admin.config.ts",
-    "dev:admin": "vite -c vite.admin.config.ts",
+    "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "test": "node --test src/lib/*.test.ts src/admin/*.test.ts"
+    "test": "node --test src/lib/*.test.ts"
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.5.0",

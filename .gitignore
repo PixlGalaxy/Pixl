@@ -13,7 +13,8 @@ target/
 # Web (Activity)
 node_modules/
 web/dist/
-web/dist-admin/
+admin/web/node_modules/
+admin/web/dist/
 
 # Runtime data (SQLite, yt-dlp binary, caches)
 data/

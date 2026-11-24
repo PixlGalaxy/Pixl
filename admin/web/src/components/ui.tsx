@@ -1,6 +1,6 @@
 import { LoaderCircle } from 'lucide-react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
-import type { Status } from './types'
+import type { Status } from '../lib/types'
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 

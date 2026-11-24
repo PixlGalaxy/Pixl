@@ -5,29 +5,43 @@
     "language": "Idioma",
     "lightTheme": "Tema claro",
     "darkTheme": "Tema oscuro",
-    "loading": "Cargando..."
+    "loading": "Cargando...",
+    "menu": "Menú"
   },
-  "tabs": { "overview": "Resumen", "notices": "Avisos", "tweaks": "Ajustes" },
+  "tabs": {
+    "overview": "Resumen",
+    "notices": "Avisos",
+    "tweaks": "Ajustes",
+    "activity": "Actividad",
+    "logs": "Registros"
+  },
   "errors": {
     "generic": "Algo salió mal. Inténtalo de nuevo.",
     "network": "No se pudo conectar con Lynx. Comprueba que el bot está en marcha.",
-    "wrong_password": "Contraseña incorrecta.",
     "rate_limited": "Demasiados intentos. Espera un minuto y vuelve a intentarlo.",
     "csrf": "Se rechazó la solicitud. Recarga la página.",
-    "unauthorized": "Tu sesión terminó. Vuelve a iniciar sesión."
+    "unauthorized": "Tu sesión terminó. Vuelve a iniciar sesión.",
+    "wrong_credentials": "Usuario o contraseña incorrectos.",
+    "busy": "Lynx no respondió a tiempo. Inténtalo de nuevo.",
+    "too_many_streams": "Hay demasiados visores de registros abiertos. Cierra uno y vuelve a intentarlo."
   },
   "off": {
     "title": "El panel de administración no está disponible",
-    "body": "Lynx no está en marcha o el panel de administración está desactivado. Define ADMIN_PASSWORD (12 caracteres como mínimo) en el entorno y reinicia Lynx.",
+    "body": "Lynx no está en marcha o el panel de administración está desactivado. Define ADMIN_USERNAME y ADMIN_PASSWORD (12 caracteres como mínimo) o ADMIN_PASSWORD_HASH en el entorno y reinicia Lynx.",
     "retry": "Reintentar"
   },
   "login": {
     "title": "Iniciar sesión",
     "subtitle": "Panel de operador de esta instancia de Lynx.",
     "password": "Contraseña",
-    "submit": "Entrar"
+    "submit": "Entrar",
+    "username": "Usuario"
   },
-  "status": { "ok": "Operativo", "degraded": "Degradado", "down": "Caído" },
+  "status": {
+    "ok": "Operativo",
+    "degraded": "Degradado",
+    "down": "Caído"
+  },
   "overview": {
     "version": "Versión",
     "commit": "Commit",
@@ -55,7 +69,20 @@
     "noticesStored": "Avisos guardados",
     "maintenanceOn": "El modo mantenimiento está activado: se rechazan canciones nuevas.",
     "refresh": "Actualizar",
-    "unknown": "Desconocido"
+    "unknown": "Desconocido",
+    "totals": "Ahora mismo",
+    "servers": "Servidores",
+    "playersActive": "Reproductores",
+    "playersPlaying": "Sonando",
+    "listeners": "Escuchando",
+    "updatesPaused": "Actualización automática en pausa",
+    "updatesOn": "Actualización automática activada",
+    "lastCheck": "Última comprobación: {{outcome}}",
+    "snapshotAt": "Actualizado {{time}}",
+    "connected": "Conectado",
+    "disconnected": "Desconectado",
+    "downSince": "Caído desde {{time}}",
+    "general": "General"
   },
   "notices": {
     "intro": "Los avisos aparecen en todas las respuestas del bot en Discord y como banner en la Activity, en la zona horaria de cada usuario. Se muestra el aviso visible más próximo.",
@@ -70,7 +97,11 @@
     "saved": "Aviso guardado.",
     "deleted": "Aviso eliminado.",
     "kind": "Tipo",
-    "kinds": { "maintenance": "Mantenimiento programado", "info": "Información", "warning": "Advertencia" },
+    "kinds": {
+      "maintenance": "Mantenimiento programado",
+      "info": "Información",
+      "warning": "Advertencia"
+    },
     "title": "Título",
     "titleHint": "Corto, p. ej. Mejora del servidor",
     "message": "Mensaje",
@@ -124,5 +155,72 @@
     "confirmLookup": "¿Vaciar la caché de búsquedas? Las búsquedas y las listas irán más lentas durante un rato.",
     "cleared": "Se eliminaron {{count}} entradas.",
     "saved": "Guardado."
+  },
+  "activity": {
+    "intro": "Contadores en memoria desde el último arranque: la última hora por minuto y las últimas 24 horas cada 15 minutos.",
+    "lastHour": "Última hora",
+    "lastDay": "Últimas 24 h",
+    "counters": {
+      "commands": "Comandos de barra",
+      "buttons": "Clics en botones",
+      "autocomplete": "Autocompletado",
+      "apiRequests": "Solicitudes del panel",
+      "tracksStarted": "Canciones iniciadas",
+      "tracksFailed": "Canciones fallidas",
+      "searches": "Búsquedas",
+      "resolves": "Resoluciones de yt-dlp",
+      "resolvesCached": "URLs de audio en caché",
+      "rateLimited": "Rechazos por límite",
+      "warnings": "Avisos",
+      "errors": "Errores"
+    },
+    "byCommand": "Comandos de barra por nombre",
+    "byButton": "Botones por tipo",
+    "byRoute": "Solicitudes del panel por grupo de rutas",
+    "buttons": {
+      "now_playing": "Reproduciendo",
+      "queue_page": "Páginas de la cola",
+      "replay": "Repetir",
+      "radio": "Radio",
+      "other": "Otros"
+    },
+    "name": "Nombre",
+    "count": "Cantidad",
+    "none": "Nada todavía.",
+    "timings": "Tiempos",
+    "resolveTime": "Resolución de yt-dlp",
+    "startTime": "Tiempo hasta el primer audio",
+    "avg": "Media",
+    "p95": "p95 (aprox.)",
+    "samples": "Muestras",
+    "perMinute": "{{count}} a las {{time}}",
+    "perStep": "{{count}} de {{from}} a {{to}}",
+    "total": "Total",
+    "showTable": "Ver como tabla",
+    "hideTable": "Ocultar tabla",
+    "time": "Hora",
+    "refresh": "Actualizar"
+  },
+  "logs": {
+    "intro": "Registro en directo del bot: las últimas {{count}} líneas y las nuevas según llegan. Los secretos se ocultan.",
+    "live": "En directo",
+    "offline": "Reconectando...",
+    "pause": "Pausar",
+    "resume": "Reanudar",
+    "clear": "Vaciar vista",
+    "download": "Descargar",
+    "filterText": "Filtrar texto",
+    "allTargets": "Todos los orígenes",
+    "levels": {
+      "error": "Error",
+      "warn": "Aviso",
+      "info": "Info",
+      "debug": "Depuración",
+      "trace": "Traza"
+    },
+    "lagged": "Se saltaron {{count}} líneas (el visor se quedó atrás).",
+    "empty": "Ninguna línea coincide.",
+    "shown": "{{shown}} de {{total}} líneas",
+    "paused": "En pausa: las líneas nuevas se guardan pero no se desplaza hasta ellas."
   }
 }

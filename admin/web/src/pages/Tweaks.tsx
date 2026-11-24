@@ -1,11 +1,11 @@
 import { DatabaseZap, Download, Eraser } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { adminApi } from './api'
-import { useErrorText } from './errors'
-import { formatDateTime } from './time'
-import type { Flags, Tweaks } from './types'
-import { Banner, Button, Card, Spinner, Toggle } from './ui'
+import { adminApi } from '../lib/api'
+import { useErrorText } from '../lib/errors'
+import { formatDateTime } from '../lib/time'
+import type { Flags, Tweaks } from '../lib/types'
+import { Banner, Button, Card, Spinner, Toggle } from '../components/ui'
 
 export function TweaksPage() {
   const { t, i18n } = useTranslation()

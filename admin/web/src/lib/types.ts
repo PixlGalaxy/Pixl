@@ -32,13 +32,55 @@ export type HealthReport = {
 
 export type Flags = { maintenanceMode: boolean; ytdlpUpdatesPaused: boolean }
 
+export type Totals = { servers: number; playersActive: number; playersPlaying: number; listeners: number }
+
 export type Overview = {
   health: HealthReport
+  /** "Main", "Voice A", ... in `health.bots` order. */
+  labels: string[]
+  totals: Totals
   memoryBytes: number | null
+  snapshotAt: number
   flags: Flags
+  ytdlp: { version: string | null; updatesPaused: boolean; job: YtdlpJob }
   notices: { total: number; visible: number }
   serverNow: number
 }
+
+export type CounterName =
+  | 'commands'
+  | 'buttons'
+  | 'autocomplete'
+  | 'apiRequests'
+  | 'tracksStarted'
+  | 'tracksFailed'
+  | 'searches'
+  | 'resolves'
+  | 'resolvesCached'
+  | 'rateLimited'
+  | 'warnings'
+  | 'errors'
+
+export type TimingSummary = { count: number; avgMs: number | null; p95Ms: number | null }
+export type NamedCount = { name: string; count: number }
+
+export type ActivityWindow = {
+  windowMinutes: number
+  stepMinutes: number
+  endMinute: number
+  totals: Record<CounterName, number>
+  series: Record<CounterName, number[]>
+  commands: NamedCount[]
+  buttons: NamedCount[]
+  api: NamedCount[]
+  resolve: TimingSummary
+  start: TimingSummary
+}
+
+export type Activity = { hour: ActivityWindow; day: ActivityWindow; serverNow: number }
+
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace'
+export type LogLine = { seq: number; ts: number; level: LogLevel; target: string; text: string }
 
 export type NoticeKind = 'maintenance' | 'info' | 'warning'
 

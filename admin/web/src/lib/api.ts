@@ -1,6 +1,6 @@
 // Admin API client (same origin, /api). The session is an HttpOnly cookie the page never sees.
 // Every mutating request carries `X-Lynx-Admin: 1`, which the server requires (CSRF guard).
-import type { HealthReport, Notice, NoticeInput, Overview, Tweaks, TweaksInput } from './types'
+import type { Activity, HealthReport, LogLine, Notice, NoticeInput, Overview, Tweaks, TweaksInput } from './types'
 
 export class AdminError extends Error {
   constructor(
@@ -55,9 +55,11 @@ async function request<T>(path: string, method: Method = 'GET', body?: unknown):
 
 export const adminApi = {
   session: () => request<{ enabled: boolean; authenticated: boolean }>('/session'),
-  login: (password: string) => request<{ ok: true }>('/login', 'POST', { password }),
+  login: (username: string, password: string) => request<{ ok: true }>('/login', 'POST', { username, password }),
   logout: () => request<{ ok: true }>('/logout', 'POST'),
   overview: () => request<Overview>('/overview'),
+  activity: () => request<Activity>('/activity'),
+  logs: (after = 0) => request<{ lines: LogLine[]; latest: number }>(`/logs?after=${after}`),
   notices: () => request<{ notices: Notice[]; serverNow: number }>('/notices'),
   createNotice: (n: NoticeInput) => request<{ notices: Notice[]; serverNow: number }>('/notices', 'POST', n),
   updateNotice: (id: number, n: NoticeInput) =>
@@ -71,3 +73,22 @@ export const adminApi = {
 }
 
 export type { HealthReport }
+
+/** Live log lines (Server-Sent Events; the session cookie goes along). Returns a close function. */
+export function streamLogs(
+  after: number,
+  on: { line: (l: LogLine) => void; lagged: (n: number) => void; open: (yes: boolean) => void },
+): () => void {
+  const es = new EventSource(`/api/logs/stream?after=${after}`)
+  es.addEventListener('line', (e) => {
+    try {
+      on.line(JSON.parse((e as MessageEvent<string>).data) as LogLine)
+    } catch {
+      // ignore a malformed line
+    }
+  })
+  es.addEventListener('lagged', (e) => on.lagged(Number((e as MessageEvent<string>).data) || 0))
+  es.onopen = () => on.open(true)
+  es.onerror = () => on.open(false)
+  return () => es.close()
+}

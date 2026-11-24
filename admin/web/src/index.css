@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/* Same tokens as the Activity panel (web/src/index.css), duplicated so this app stands alone. */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent-50: #f0f9ff;
+  --color-accent-100: #e0f2fe;
+  --color-accent-200: #bae6fd;
+  --color-accent-300: #7dd3fc;
+  --color-accent-400: #38bdf8;
+  --color-accent-500: #0ea5e9;
+  --color-accent-600: #0284c7;
+  --color-accent-700: #0369a1;
+  --color-accent-800: #075985;
+  --color-accent-900: #0c4a6e;
+  /* Chart ink: one series hue (the accent) plus recessive grid. */
+  --color-chart: var(--chart);
+  --color-grid: var(--grid);
+}
+
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --line: #e3e6eb;
+  --fg: #111827;
+  --muted: #6b7280;
+  --chart: #0284c7;
+  --grid: #e5e7eb;
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #0a0c10;
+  --surface: #11141a;
+  --surface-2: #171b23;
+  --line: #232833;
+  --fg: #e6e8ee;
+  --muted: #8a92a6;
+  --chart: #38bdf8;
+  --grid: #232833;
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-bg font-sans text-fg antialiased;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

@@ -1,11 +1,11 @@
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { adminApi } from './api'
-import { useErrorText } from './errors'
-import { formatDateTime, fromLocalInput, noticeState, toLocalInput } from './time'
-import type { Notice, NoticeInput, NoticeKind } from './types'
-import { Banner, Button, Card, Field, inputCls, Pill, Spinner, Toggle } from './ui'
+import { adminApi } from '../lib/api'
+import { useErrorText } from '../lib/errors'
+import { formatDateTime, fromLocalInput, noticeState, toLocalInput } from '../lib/time'
+import type { Notice, NoticeInput, NoticeKind } from '../lib/types'
+import { Banner, Button, Card, Field, inputCls, Pill, Spinner, Toggle } from '../components/ui'
 
 const MAX_TITLE = 100
 const MAX_MESSAGE = 500

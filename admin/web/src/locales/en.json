@@ -5,29 +5,43 @@
     "language": "Language",
     "lightTheme": "Light theme",
     "darkTheme": "Dark theme",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "menu": "Menu"
   },
-  "tabs": { "overview": "Overview", "notices": "Notices", "tweaks": "Tweaks" },
+  "tabs": {
+    "overview": "Overview",
+    "notices": "Notices",
+    "tweaks": "Tweaks",
+    "activity": "Activity",
+    "logs": "Logs"
+  },
   "errors": {
     "generic": "Something went wrong. Please try again.",
     "network": "Could not reach Lynx. Check that the bot is running.",
-    "wrong_password": "Wrong password.",
     "rate_limited": "Too many attempts. Wait a minute and try again.",
     "csrf": "The request was refused. Reload the page.",
-    "unauthorized": "Your session ended. Sign in again."
+    "unauthorized": "Your session ended. Sign in again.",
+    "wrong_credentials": "Wrong username or password.",
+    "busy": "Lynx did not answer in time. Try again.",
+    "too_many_streams": "Too many log viewers are open. Close one and try again."
   },
   "off": {
     "title": "The admin panel is not available",
-    "body": "Lynx is not running, or the admin panel is turned off. Set ADMIN_PASSWORD (at least 12 characters) in the environment and restart Lynx.",
+    "body": "Lynx is not running, or the admin panel is turned off. Set ADMIN_USERNAME and ADMIN_PASSWORD (at least 12 characters) or ADMIN_PASSWORD_HASH in the environment and restart Lynx.",
     "retry": "Try again"
   },
   "login": {
     "title": "Sign in",
     "subtitle": "Operator panel for this Lynx instance.",
     "password": "Password",
-    "submit": "Sign in"
+    "submit": "Sign in",
+    "username": "Username"
   },
-  "status": { "ok": "Operational", "degraded": "Degraded", "down": "Down" },
+  "status": {
+    "ok": "Operational",
+    "degraded": "Degraded",
+    "down": "Down"
+  },
   "overview": {
     "version": "Version",
     "commit": "Commit",
@@ -55,7 +69,20 @@
     "noticesStored": "Notices stored",
     "maintenanceOn": "Maintenance mode is on: new songs are refused.",
     "refresh": "Refresh",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "totals": "Right now",
+    "servers": "Servers",
+    "playersActive": "Players",
+    "playersPlaying": "Playing music",
+    "listeners": "Listening",
+    "updatesPaused": "Self-update paused",
+    "updatesOn": "Self-update on",
+    "lastCheck": "Last check: {{outcome}}",
+    "snapshotAt": "Updated {{time}}",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "downSince": "Down since {{time}}",
+    "general": "General"
   },
   "notices": {
     "intro": "Notices appear in every Discord reply of the bot and as a banner in the Activity, in each user's own time zone. The soonest visible notice is shown.",
@@ -70,7 +97,11 @@
     "saved": "Notice saved.",
     "deleted": "Notice deleted.",
     "kind": "Type",
-    "kinds": { "maintenance": "Scheduled downtime", "info": "Information", "warning": "Warning" },
+    "kinds": {
+      "maintenance": "Scheduled downtime",
+      "info": "Information",
+      "warning": "Warning"
+    },
     "title": "Title",
     "titleHint": "Short, e.g. Server upgrade",
     "message": "Message",
@@ -124,5 +155,72 @@
     "confirmLookup": "Clear the lookup cache? Searches and lists will be slower for a while.",
     "cleared": "Removed {{count}} entries.",
     "saved": "Saved."
+  },
+  "activity": {
+    "intro": "Counters kept in memory since the last start: the last hour per minute and the last 24 hours per 15 minutes.",
+    "lastHour": "Last hour",
+    "lastDay": "Last 24 h",
+    "counters": {
+      "commands": "Slash commands",
+      "buttons": "Button clicks",
+      "autocomplete": "Autocomplete",
+      "apiRequests": "Panel requests",
+      "tracksStarted": "Tracks started",
+      "tracksFailed": "Tracks failed",
+      "searches": "Searches",
+      "resolves": "yt-dlp resolves",
+      "resolvesCached": "Cached stream URLs",
+      "rateLimited": "Rate-limit refusals",
+      "warnings": "Warnings",
+      "errors": "Errors"
+    },
+    "byCommand": "Slash commands by name",
+    "byButton": "Buttons by kind",
+    "byRoute": "Panel requests by route group",
+    "buttons": {
+      "now_playing": "Now playing",
+      "queue_page": "Queue pages",
+      "replay": "Replay",
+      "radio": "Radio",
+      "other": "Other"
+    },
+    "name": "Name",
+    "count": "Count",
+    "none": "Nothing yet.",
+    "timings": "Timings",
+    "resolveTime": "yt-dlp resolve",
+    "startTime": "Time to first audio",
+    "avg": "Average",
+    "p95": "p95 (approx.)",
+    "samples": "Samples",
+    "perMinute": "{{count}} at {{time}}",
+    "perStep": "{{count}} from {{from}} to {{to}}",
+    "total": "Total",
+    "showTable": "Show as table",
+    "hideTable": "Hide table",
+    "time": "Time",
+    "refresh": "Refresh"
+  },
+  "logs": {
+    "intro": "Live log of the bot, the last {{count}} lines and new ones as they come. Secrets are redacted.",
+    "live": "Live",
+    "offline": "Reconnecting...",
+    "pause": "Pause",
+    "resume": "Resume",
+    "clear": "Clear view",
+    "download": "Download",
+    "filterText": "Filter text",
+    "allTargets": "All sources",
+    "levels": {
+      "error": "Error",
+      "warn": "Warning",
+      "info": "Info",
+      "debug": "Debug",
+      "trace": "Trace"
+    },
+    "lagged": "Skipped {{count}} lines (the viewer fell behind).",
+    "empty": "No lines match.",
+    "shown": "{{shown}} of {{total}} lines",
+    "paused": "Paused: new lines are kept but not scrolled to."
   }
 }
