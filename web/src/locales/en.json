@@ -356,6 +356,7 @@
     "statusBefore": "Check the status on"
   },
   "taste": {
+    "addLabel": "Add {{title}} to the queue",
     "genresHint": "Click a genre to see its songs from your history.",
     "noGenres": "No genres yet. They show up once your songs are tagged.",
     "genreSongs": "{{genre}} in your history",

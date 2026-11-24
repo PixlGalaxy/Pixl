@@ -1,4 +1,4 @@
-import { ChevronRight, History, Trash2, TrendingUp, X } from 'lucide-react'
+import { ChevronRight, History, ListPlus, Trash2, TrendingUp, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
@@ -68,6 +68,29 @@ function useGenreTracks(genre: string | null) {
 
 type GenreState = ReturnType<typeof useGenreTracks>
 
+/** Adds one song to the queue of the followed voice channel (hidden without the add permission). */
+function AddToQueue({ url, title }: { url: string; title: string }) {
+  const { t } = useTranslation()
+  const { channelId, channelPermissions: permissions, run } = useLynx()
+  const [busy, setBusy] = useState(false)
+  if (!channelId || !permissions.canAdd) return null
+  return (
+    <IconButton
+      label={t('taste.addLabel', { title })}
+      title={t('taste.addLabel', { title })}
+      disabled={busy}
+      className="size-7 hover:text-accent-600 dark:hover:text-accent-400"
+      onClick={async () => {
+        setBusy(true)
+        await run(() => api.add(channelId, url), t('queue.added', { count: 1 }))
+        setBusy(false)
+      }}
+    >
+      {busy ? <Spinner size={14} /> : <ListPlus size={15} />}
+    </IconButton>
+  )
+}
+
 function SongRow({ track, onRemove }: { track: GenreTrack; onRemove: () => void }) {
   const { t, i18n } = useTranslation()
   const [asking, setAsking] = useState(false)
@@ -87,6 +110,7 @@ function SongRow({ track, onRemove }: { track: GenreTrack; onRemove: () => void 
           <div className="font-mono text-[11px] text-muted tabular-nums">{t('privacy.plays', { count: track.plays })}</div>
           <div className="text-[11px] text-muted">{fmtAgo(track.lastPlayed, i18n.language)}</div>
         </div>
+        <AddToQueue url={track.url} title={track.title} />
         <IconButton
           label={t('taste.removeLabel', { title: track.title })}
           title={t('taste.removeHint')}
@@ -204,6 +228,7 @@ function MostPlayed({ taste }: { taste: Taste }) {
               <div className="truncate text-xs text-muted">{tr.artists.join(', ')}</div>
             </button>
             <span className="font-mono text-[11px] text-muted tabular-nums">{t('privacy.plays', { count: tr.plays })}</span>
+            <AddToQueue url={tr.url} title={tr.title} />
           </li>
         ))}
       </ol>

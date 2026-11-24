@@ -356,6 +356,7 @@
     "statusBefore": "Consulta el estado en"
   },
   "taste": {
+    "addLabel": "Añadir {{title}} a la cola",
     "genresHint": "Pulsa un género para ver sus canciones de tu historial.",
     "noGenres": "Todavía no hay géneros. Aparecen cuando tus canciones tienen etiquetas.",
     "genreSongs": "{{genre}} en tu historial",
