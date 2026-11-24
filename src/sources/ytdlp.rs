@@ -33,7 +33,7 @@ const DEFAULT_CLIENT_KEYS_MAX: usize = 2048;
 /// one seekable HTTPS file.
 pub const DEFAULT_PLAYER_CLIENT: &str = "visionos";
 /// A cached URL is reused only if it stays valid at least this long (covers a long song).
-const STREAM_MIN_REMAINING: i64 = 30 * 60;
+pub const STREAM_MIN_REMAINING: i64 = 30 * 60;
 /// Assumed lifetime of URLs without an `expire` parameter.
 const DEFAULT_URL_TTL: i64 = 60 * 60;
 pub const UPDATE_EVERY: Duration = Duration::from_secs(24 * 60 * 60);

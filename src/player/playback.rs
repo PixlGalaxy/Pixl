@@ -11,7 +11,10 @@ use symphonia::core::io::{MediaSource, ReadOnlySource};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::{http_seek::SeekableHttpRequest, Command};
+use super::{
+    http_seek::{HeadFile, SeekableHttpRequest},
+    Command,
+};
 use crate::{
     procs::{ProcOwner, ProcessRegistry, StreamChild},
     sources::{Playable, Sources, StreamInfo},
@@ -21,24 +24,33 @@ use crate::{
 pub const MAX_STREAM_DURATION: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Direct HTTP read of the stream URL (normal case: songbird passes Opus through untouched).
-/// Seekable in both directions when the URL carries its byte length.
-pub fn http_input(client: reqwest::Client, stream: &StreamInfo) -> Input {
+/// Seekable in both directions when the URL carries its byte length; then a prefetched `head`
+/// of the same stream serves the first bytes from disk.
+pub fn http_input(client: reqwest::Client, stream: &StreamInfo, head: Option<HeadFile>) -> Input {
+    let headers = stream_headers(stream);
+    // With the length known, seeks become bounded range requests (YouTube only answers `bytes=a-b`)
+    // instead of reading the stream up to the target, and seeking backward works.
+    match content_length(&stream.url) {
+        Some(len) => SeekableHttpRequest::new(client, stream.url.clone(), headers, len)
+            .with_head(head)
+            .into(),
+        None => HttpRequest::new_with_headers(client, stream.url.clone(), headers).into(),
+    }
+}
+
+/// The request headers yt-dlp gave for the stream.
+pub fn stream_headers(stream: &StreamInfo) -> HeaderMap {
     let mut headers = HeaderMap::new();
     for (k, v) in &stream.http_headers {
         if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(v)) {
             headers.insert(name, value);
         }
     }
-    // With the length known, seeks become bounded range requests (YouTube only answers `bytes=a-b`)
-    // instead of reading the stream up to the target, and seeking backward works.
-    match content_length(&stream.url) {
-        Some(len) => SeekableHttpRequest::new(client, stream.url.clone(), headers, len).into(),
-        None => HttpRequest::new_with_headers(client, stream.url.clone(), headers).into(),
-    }
+    headers
 }
 
 /// Byte length of a googlevideo URL (`clen` query parameter), when present.
-fn content_length(url: &str) -> Option<u64> {
+pub fn content_length(url: &str) -> Option<u64> {
     let parsed = reqwest::Url::parse(url).ok()?;
     let clen = parsed.query_pairs().find(|(k, _)| k == "clen")?.1;
     clen.parse().ok().filter(|n| *n > 0)

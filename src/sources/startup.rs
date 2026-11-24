@@ -32,6 +32,32 @@ pub struct PrepareTimings {
     pub prepared: Duration,
     /// Prepared ahead of time while the previous track played.
     pub prefetch: bool,
+    /// Where the first bytes of the input came from (set by the player when it builds it).
+    pub head: HeadFrom,
+}
+
+/// Where a track's first bytes came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadFrom {
+    /// Not known (the input was not built yet).
+    Unknown,
+    /// A prefetched head file on disk.
+    Disk,
+    /// The network (no head was available).
+    Net,
+    /// Piped through yt-dlp.
+    Pipe,
+}
+
+impl HeadFrom {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "-",
+            Self::Disk => "disk",
+            Self::Net => "net",
+            Self::Pipe => "pipe",
+        }
+    }
 }
 
 impl PrepareTimings {
@@ -46,6 +72,7 @@ impl PrepareTimings {
             fallback: false,
             prepared: Duration::ZERO,
             prefetch: false,
+            head: HeadFrom::Unknown,
         }
     }
 
@@ -88,13 +115,14 @@ impl fmt::Display for StartupSummary<'_> {
         }
         write!(
             f,
-            " resolve={}ms{}{} wait={}ms prepare={}ms input={}ms",
+            " resolve={}ms{}{} wait={}ms prepare={}ms input={}ms head={}",
             ms(t.resolve),
             if t.cache_hit { "(cached)" } else { "" },
             if t.fallback { "(fallback)" } else { "" },
             ms(t.waited),
             ms(t.prepared),
             ms(self.playable.saturating_duration_since(self.begun)),
+            t.head.label(),
         )?;
         // A prefetched track was asked to play when its input was built.
         let from = if t.prefetch { self.begun } else { t.requested };
@@ -163,6 +191,21 @@ impl LateMusic {
     }
 }
 
+impl LateMusic {
+    /// The result if the lookup already finished (then it is taken: later calls return `None`).
+    pub fn try_now(&self) -> Option<Option<MusicMeta>> {
+        let mut slot = self.rx.lock().unwrap_or_else(|p| p.into_inner());
+        let rx = slot.as_mut()?;
+        let got = match rx.try_recv() {
+            Ok(m) => m,
+            Err(oneshot::error::TryRecvError::Empty) => return None,
+            Err(oneshot::error::TryRecvError::Closed) => None,
+        };
+        *slot = None;
+        Some(got)
+    }
+}
+
 impl fmt::Debug for LateMusic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("LateMusic")
@@ -215,11 +258,26 @@ mod tests {
         };
         assert_eq!(start.elapsed(), Duration::from_millis(250), "only the grace is waited");
         let shared = late.clone();
+        assert!(late.try_now().is_none(), "still running");
         let fut = late.take().expect("first take");
         assert!(shared.take().is_none(), "taken once across clones");
         let (m, took) = fut.await;
         assert_eq!(m, Some(meta("b")));
         assert!(took >= Duration::from_secs(8));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn finished_late_lookup_is_taken_at_once() {
+        let lookup = MetaLookup::spawn(async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            Some(meta("c"))
+        });
+        let MetaOutcome::Late(late) = lookup.settle(Duration::from_millis(10)).await else {
+            panic!("should be late");
+        };
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert_eq!(late.try_now(), Some(Some(meta("c"))));
+        assert!(late.try_now().is_none() && late.take().is_none(), "taken once");
     }
 
     #[tokio::test(start_paused = true)]
@@ -247,15 +305,16 @@ mod tests {
         let playable = t0 + Duration::from_millis(4500);
         assert_eq!(
             t.summary(begun, playable).to_string(),
-            "match=420ms meta=late resolve=2100ms wait=1300ms prepare=3900ms input=590ms total=4500ms"
+            "match=420ms meta=late resolve=2100ms wait=1300ms prepare=3900ms input=590ms head=- total=4500ms"
         );
         t.matched = None;
         t.meta = MetaTiming::Ready(Duration::from_millis(80));
         t.cache_hit = true;
         t.prefetch = true;
+        t.head = HeadFrom::Disk;
         assert_eq!(
             t.summary(begun, playable).to_string(),
-            "match=- meta=80ms resolve=2100ms(cached) wait=1300ms prepare=3900ms input=590ms total=590ms"
+            "match=- meta=80ms resolve=2100ms(cached) wait=1300ms prepare=3900ms input=590ms head=disk total=590ms"
         );
     }
 }

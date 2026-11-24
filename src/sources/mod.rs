@@ -39,7 +39,7 @@ use crate::{
 use detect::Input;
 pub use lists::{CachedList, ListRef};
 pub use lyrics::Lyrics;
-pub use startup::{LateMusic, MetaTiming, PrepareTimings};
+pub use startup::{HeadFrom, LateMusic, MetaTiming, PrepareTimings};
 use startup::{MetaLookup, MetaOutcome};
 use ytdlp::ResolveStats;
 pub use ytdlp::StreamInfo;
