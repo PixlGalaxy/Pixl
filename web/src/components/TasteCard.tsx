@@ -1,12 +1,12 @@
-import { ChevronRight, History, ListPlus, Trash2, TrendingUp, X } from 'lucide-react'
+import { ChevronRight, History, Trash2, TrendingUp, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
-import { openExternal } from '../lib/discord'
 import { onTasteChanged, openAccount } from '../lib/events'
 import { cx, fmtAgo } from '../lib/format'
 import { useLynx } from '../lib/lynx'
 import type { GenreTrack, Taste } from '../lib/types'
+import { TrackMenu } from './TrackMenu'
 import { Artwork, Button, Card, IconButton, Spinner } from './ui'
 
 /** Genre songs fetched per page ("Show more" loads the next one). */
@@ -68,29 +68,6 @@ function useGenreTracks(genre: string | null) {
 
 type GenreState = ReturnType<typeof useGenreTracks>
 
-/** Adds one song to the queue of the followed voice channel (hidden without the add permission). */
-function AddToQueue({ url, title }: { url: string; title: string }) {
-  const { t } = useTranslation()
-  const { channelId, channelPermissions: permissions, run } = useLynx()
-  const [busy, setBusy] = useState(false)
-  if (!channelId || !permissions.canAdd) return null
-  return (
-    <IconButton
-      label={t('taste.addLabel', { title })}
-      title={t('taste.addLabel', { title })}
-      disabled={busy}
-      className="size-7 hover:text-accent-600 dark:hover:text-accent-400"
-      onClick={async () => {
-        setBusy(true)
-        await run(() => api.add(channelId, url), t('queue.added', { count: 1 }))
-        setBusy(false)
-      }}
-    >
-      {busy ? <Spinner size={14} /> : <ListPlus size={15} />}
-    </IconButton>
-  )
-}
-
 function SongRow({ track, onRemove }: { track: GenreTrack; onRemove: () => void }) {
   const { t, i18n } = useTranslation()
   const [asking, setAsking] = useState(false)
@@ -98,19 +75,14 @@ function SongRow({ track, onRemove }: { track: GenreTrack; onRemove: () => void 
     <li className="border-t border-line first:border-t-0">
       <div className="flex items-center gap-3 py-2">
         <Artwork url={track.artworkUrl} className="size-9 rounded-lg" iconSize={14} />
-        <button
-          type="button"
-          onClick={() => openExternal(track.url)}
-          className="min-w-0 flex-1 text-left hover:text-accent-600 dark:hover:text-accent-400"
-        >
+        <TrackMenu url={track.url} title={track.title}>
           <div className="truncate text-sm font-medium">{track.title}</div>
           <div className="truncate text-xs text-muted">{track.artists.join(', ')}</div>
-        </button>
+        </TrackMenu>
         <div className="shrink-0 text-right leading-tight">
           <div className="font-mono text-[11px] text-muted tabular-nums">{t('privacy.plays', { count: track.plays })}</div>
           <div className="text-[11px] text-muted">{fmtAgo(track.lastPlayed, i18n.language)}</div>
         </div>
-        <AddToQueue url={track.url} title={track.title} />
         <IconButton
           label={t('taste.removeLabel', { title: track.title })}
           title={t('taste.removeHint')}
@@ -219,16 +191,11 @@ function MostPlayed({ taste }: { taste: Taste }) {
           <li key={tr.url} className="flex items-center gap-3 border-t border-line py-2 first:border-t-0">
             <span className="w-4 text-right font-mono text-[11px] text-muted tabular-nums">{i + 1}</span>
             <Artwork url={tr.artworkUrl} className="size-8 rounded-lg" iconSize={13} />
-            <button
-              type="button"
-              onClick={() => openExternal(tr.url)}
-              className="min-w-0 flex-1 text-left hover:text-accent-600 dark:hover:text-accent-400"
-            >
+            <TrackMenu url={tr.url} title={tr.title}>
               <div className="truncate text-sm font-medium">{tr.title}</div>
               <div className="truncate text-xs text-muted">{tr.artists.join(', ')}</div>
-            </button>
+            </TrackMenu>
             <span className="font-mono text-[11px] text-muted tabular-nums">{t('privacy.plays', { count: tr.plays })}</span>
-            <AddToQueue url={tr.url} title={tr.title} />
           </li>
         ))}
       </ol>

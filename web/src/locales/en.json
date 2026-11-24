@@ -355,8 +355,13 @@
     "compact": "Reconnecting",
     "statusBefore": "Check the status on"
   },
+  "trackMenu": {
+    "addToQueue": "Add to queue",
+    "openOn": "Open on {{platform}}",
+    "openLink": "Open link",
+    "noAdd": "Join a voice channel where you can add songs."
+  },
   "taste": {
-    "addLabel": "Add {{title}} to the queue",
     "genresHint": "Click a genre to see its songs from your history.",
     "noGenres": "No genres yet. They show up once your songs are tagged.",
     "genreSongs": "{{genre}} in your history",

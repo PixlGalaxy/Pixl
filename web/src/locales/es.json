@@ -355,8 +355,13 @@
     "compact": "Reconectando",
     "statusBefore": "Consulta el estado en"
   },
+  "trackMenu": {
+    "addToQueue": "Añadir a la cola",
+    "openOn": "Abrir en {{platform}}",
+    "openLink": "Abrir enlace",
+    "noAdd": "Entra a un canal de voz donde puedas añadir canciones."
+  },
   "taste": {
-    "addLabel": "Añadir {{title}} a la cola",
     "genresHint": "Pulsa un género para ver sus canciones de tu historial.",
     "noGenres": "Todavía no hay géneros. Aparecen cuando tus canciones tienen etiquetas.",
     "genreSongs": "{{genre}} en tu historial",
