@@ -34,13 +34,7 @@ pub async fn cleanup(lynx: &Lynx) {
         if app == 0 {
             continue;
         }
-        match tokio::time::timeout(TIMEOUT, node.http.create_global_commands(&json!([]))).await {
-            Ok(Ok(_)) => info!(bot = node.index, "removed old global commands"),
-            other => {
-                ok = false;
-                warn!(bot = node.index, result = ?other.map(|r| r.err().map(|e| e.to_string())), "could not remove old global commands");
-            }
-        }
+        ok &= clear_global(&node.http, node.index).await;
         for g in lynx.bots.guilds_of(node.index) {
             // Forget what was stored so `reconcile_nodes` registers the current set where needed.
             let _ = lynx.store.delete_node_guild_commands(app, g).await;
@@ -60,6 +54,33 @@ pub async fn cleanup(lynx: &Lynx) {
     } else {
         warn!("old slash command cleanup incomplete; it will run again on the next start");
     }
+}
+
+/// Delete the app's global commands one by one. The Activity Entry Point command (type 4) can't
+/// be removed in a bulk update and is harmless (it only launches the app), so it stays.
+async fn clear_global(http: &serenity::http::Http, bot: usize) -> bool {
+    let list = match tokio::time::timeout(TIMEOUT, http.get_global_commands()).await {
+        Ok(Ok(list)) => list,
+        other => {
+            warn!(bot, result = ?other.map(|r| r.err().map(|e| e.to_string())), "could not list old global commands");
+            return false;
+        }
+    };
+    let mut ok = true;
+    let mut removed = 0;
+    for c in list.iter().filter(|c| u8::from(c.kind) != 4) {
+        match tokio::time::timeout(TIMEOUT, http.delete_global_command(c.id)).await {
+            Ok(Ok(())) => removed += 1,
+            _ => {
+                ok = false;
+                warn!(bot, command = %c.name, "could not remove an old global command");
+            }
+        }
+    }
+    if removed > 0 {
+        info!(bot, removed, "removed old global commands");
+    }
+    ok
 }
 
 /// Remove every guild command of this app in `guild_id` (only calls the bulk endpoint if any exist).
