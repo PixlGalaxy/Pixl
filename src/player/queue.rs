@@ -76,6 +76,8 @@ pub type Entry = Arc<QueueEntry>;
 pub enum PushError {
     /// The upcoming list is already at the limit.
     Full { max: usize },
+    /// A jam whose host lets only its own channel edit the shared queue.
+    NotAllowed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

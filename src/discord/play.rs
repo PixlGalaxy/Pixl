@@ -63,6 +63,12 @@ pub enum PlayError {
     },
     /// The player ended while enqueueing.
     Gone,
+    /// The guild settings or channel rules could not be read: refused rather than run without them.
+    SettingsUnavailable,
+    /// In a jam whose host lets only its own channel edit the shared queue (`host`: its name).
+    JamHostOnly {
+        host: String,
+    },
 }
 
 /// One `/play` request from a user who is in `voice_channel_id`.
@@ -95,7 +101,10 @@ fn busy(ctx: PlayCtx<'_>, guild_id: u64, channel: u64, busy_channel: Option<u64>
 
 /// Voice channel restriction: exempt managers play anywhere, others only in the allowed channels.
 pub async fn check_voice(ctx: PlayCtx<'_>, guild_id: u64, vc: u64, is_manager: bool) -> Result<(), PlayError> {
-    let rules = ctx.store.channel_rules(guild_id).await.unwrap_or_default();
+    let rules = ctx.store.channel_rules(guild_id).await.map_err(|e| {
+        warn!(guild = guild_id, error = %e, "could not read the channel rules; refusing");
+        PlayError::SettingsUnavailable
+    })?;
     if rules.voice_allowed_for(vc, is_manager) {
         Ok(())
     } else {
@@ -148,7 +157,7 @@ pub async fn player_for(
         text_channel_id: text_channel.or(Some(vc)),
         started_by,
         humans: ctx.bots.humans_in(guild_id, vc),
-        settings: ctx.store.guild_settings(guild_id).await.unwrap_or_default(),
+        settings: guild_settings(ctx, guild_id).await?,
         restore,
     };
     match ctx.players.start(req).await {
@@ -156,6 +165,15 @@ pub async fn player_for(
         Err(StartError::ShuttingDown) => Err(PlayError::ShuttingDown),
         Err(_) => Err(PlayError::JoinFailed),
     }
+}
+
+/// Guild settings, or a refusal when they can't be read (never the defaults: they would lift the
+/// limits and restrictions managers set).
+async fn guild_settings(ctx: PlayCtx<'_>, guild_id: u64) -> Result<GuildSettings, PlayError> {
+    ctx.store.guild_settings(guild_id).await.map_err(|e| {
+        warn!(guild = guild_id, error = %e, "could not read the guild settings; refusing");
+        PlayError::SettingsUnavailable
+    })
 }
 
 fn queue_limit(settings: &GuildSettings) -> usize {
@@ -169,7 +187,7 @@ pub async fn play(ctx: PlayCtx<'_>, req: PlayRequest<'_>) -> Result<Played, Play
     if query.is_empty() {
         return Err(PlayError::NoResults);
     }
-    let settings = ctx.store.guild_settings(req.guild_id).await.unwrap_or_default();
+    let settings = guild_settings(ctx, req.guild_id).await?;
     let owner = ProcOwner::new(req.guild_id, req.voice_channel_id, None);
     let resolving = ctx.sources.resolve_for_play(query, queue_limit(&settings), &owner);
     let (resolved, list) = match tokio::time::timeout(RESOLVE_TIMEOUT, resolving).await {
@@ -189,7 +207,7 @@ pub async fn play(ctx: PlayCtx<'_>, req: PlayRequest<'_>) -> Result<Played, Play
 /// [`play`] with tracks that are already resolved (a saved playlist, or one of its songs). Same
 /// player assignment and permission checks; nothing is saved.
 pub async fn play_tracks(ctx: PlayCtx<'_>, req: PlayRequest<'_>, mut resolved: Resolved) -> Result<Played, PlayError> {
-    let settings = ctx.store.guild_settings(req.guild_id).await.unwrap_or_default();
+    let settings = guild_settings(ctx, req.guild_id).await?;
     resolved.tracks.truncate(queue_limit(&settings));
     if resolved.tracks.is_empty() {
         return Err(PlayError::NoResults);
@@ -259,6 +277,15 @@ async fn enqueue(
     {
         Ok(Ok(r)) => r,
         Ok(Err(PushError::Full { max })) => return Err(PlayError::QueueFull { max }),
+        Ok(Err(PushError::NotAllowed)) => {
+            let host = ctx
+                .players
+                .jams()
+                .of(player.key())
+                .and_then(|j| j.view().host_member().map(|m| m.name.clone()))
+                .unwrap_or_default();
+            return Err(PlayError::JamHostOnly { host });
+        }
         Err(_) => return Err(PlayError::Gone),
     };
     Ok(Played {

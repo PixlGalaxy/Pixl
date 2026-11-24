@@ -261,7 +261,12 @@ impl ApiState {
 
     pub async fn permissions(&self, guild_id: u64, user_id: u64, channel: Option<u64>) -> ApiResult<Permissions> {
         let actor = self.actor(guild_id, user_id, channel, false).await?;
-        let settings = self.app.store.guild_settings(guild_id).await.unwrap_or_default();
+        let settings = self
+            .app
+            .store
+            .guild_settings(guild_id)
+            .await
+            .map_err(|e| ApiError::internal("could not read the guild settings", e))?;
         Ok(Permissions::of(&actor, &settings))
     }
 

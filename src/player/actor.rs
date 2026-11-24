@@ -723,6 +723,7 @@ impl Player {
             Command::Settings(s) => {
                 self.volume = self.volume.clamp(MIN_VOLUME, MAX_VOLUME);
                 self.settings = s;
+                self.report_queue_limit();
                 self.publish();
             }
             Command::SetTextChannel(c) => self.set_text_channel(c),
@@ -929,7 +930,7 @@ impl Player {
         let max = self.max_queue();
         let (added, truncated) = match self.push_entries(radio::pick_entries(picks, &owner), max).await {
             Ok(r) => (r.added, r.truncated),
-            Err(PushError::Full { .. }) => (0, true),
+            Err(PushError::Full { .. } | PushError::NotAllowed) => (0, true),
         };
         if let Some(job) = self.radio.as_mut().and_then(|r| r.job_mut(id)) {
             job.added(added, truncated || added < count, first && added > 0);
@@ -1978,11 +1979,22 @@ impl Player {
             drift_at: None,
             has_humans: !self.humans.is_empty(),
         });
+        self.report_queue_limit();
         self.apply_jam_view(&view).await;
         if let Some(p) = &self.playing {
             self.messenger.refresh_now_playing(self.np_data(&p.entry));
         }
         Ok(handle)
+    }
+
+    /// Tell the jam this server's queue limit (it only listens to the host channel's player).
+    fn report_queue_limit(&self) {
+        if let Some(link) = &self.jam {
+            link.handle.post(JamCmd::HostLimit {
+                key: self.key(),
+                max: self.max_queue(),
+            });
+        }
     }
 
     /// Join `jam`: save the own queue and follow the shared one.

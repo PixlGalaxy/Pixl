@@ -127,8 +127,13 @@ impl<'a> Inv<'a> {
         }
     }
 
-    async fn settings(&self) -> GuildSettings {
-        self.lynx.store.guild_settings(self.guild_id).await.unwrap_or_default()
+    /// Guild settings; when they can't be read the action is refused (the defaults would lift the
+    /// rules managers set).
+    async fn settings(&self) -> Result<GuildSettings, Message> {
+        self.lynx.store.guild_settings(self.guild_id).await.map_err(|e| {
+            warn!(guild = self.guild_id, error = %e, "could not read the guild settings; refusing");
+            self.err("settings_unavailable", &[])
+        })
     }
 
     /// Player for an action: the one in the user's voice channel (or, for read-only actions, the
@@ -180,7 +185,7 @@ impl<'a> Inv<'a> {
         action: Action,
         shared: bool,
     ) -> Result<(PlayerHandle, GuildSettings, Decision), Message> {
-        let settings = self.settings().await;
+        let settings = self.settings().await?;
         let snap = player.snapshot();
         let requested_current = snap.current.as_ref().is_some_and(|e| e.requester.id == self.user_id);
         let a = actor(
@@ -485,6 +490,11 @@ fn play_error(inv: &Inv, e: PlayError) -> Message {
         }
         PlayError::QueueFull { max } => inv.err("queue_full", &[("max", &max.to_string())]),
         PlayError::Gone => gone(inv),
+        PlayError::SettingsUnavailable => inv.err("settings_unavailable", &[]),
+        PlayError::JamHostOnly { host } => inv.err(
+            "jam_host_only",
+            &[("channel", &format!("**{}**", ui::escape(&ui::truncate(&host, 80))))],
+        ),
     }
 }
 
@@ -1096,7 +1106,10 @@ async fn np_button(inv: &Inv<'_>, action: NpAction, vc: u64, tag: &str) -> Optio
 /// join. A plain invite into this channel follows as a fallback when the bot may create one.
 async fn jam_button(inv: &Inv<'_>, player: PlayerHandle, vc: u64) -> Message {
     let lynx = inv.lynx;
-    let settings = inv.settings().await;
+    let settings = match inv.settings().await {
+        Ok(s) => s,
+        Err(m) => return m,
+    };
     let a = actor(
         &lynx.bots,
         &lynx.store,
