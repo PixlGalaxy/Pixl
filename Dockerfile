@@ -40,6 +40,8 @@ RUN useradd --system --uid 10001 --home /appdata lynx \
 WORKDIR /app
 COPY --from=bot /app/target/release/lynx /app/lynx
 COPY --from=web /web/dist /app/web
+# Admin UI (served by nginx on 8081 only; see nginx.conf).
+COPY --from=web /web/dist-admin /app/admin
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
@@ -48,5 +50,7 @@ ENV APPDATA_DIR=/appdata DATA_DIR=/data HTTP_HOST=127.0.0.1 HTTP_PORT=4000
 USER lynx
 VOLUME ["/appdata", "/data"]
 EXPOSE 8080
+# Admin panel (notices, overview, tweaks). Off unless ADMIN_PASSWORD is set; keep it LAN-only.
+EXPOSE 8081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD curl -fsS http://127.0.0.1:8080/backend/healthz || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--", "/app/entrypoint.sh"]

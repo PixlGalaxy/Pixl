@@ -1,9 +1,11 @@
 # Native Windows dev run: the bot (release build) on 127.0.0.1:$HttpPort plus the built panel served by
 # `vite preview` on 0.0.0.0:5173 (it proxies /backend to the bot, like nginx in the image). Point the NPM proxy host
 # at this PC, port 5173, with websockets on. Stop with Ctrl+C (stops both).
+# Admin panel (only with ADMIN_PASSWORD in .env): there is no nginx here, so the bot itself serves the
+# built admin UI (web/dist-admin) and the admin API on http://127.0.0.1:$AdminPort (localhost only).
 #
-#   powershell -ExecutionPolicy Bypass -File scripts\dev-windows.ps1 [-NoBuild]
-param([switch]$NoBuild, [int]$HttpPort = 8080)
+#   powershell -ExecutionPolicy Bypass -File scripts\dev-windows.ps1 [-NoBuild] [-AdminPort 8081]
+param([switch]$NoBuild, [int]$HttpPort = 8080, [int]$AdminPort = 8081)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -25,6 +27,9 @@ $env:APPDATA_DIR = Join-Path $root 'appdata'
 $env:DATA_DIR = Join-Path $root 'data'
 $env:HTTP_HOST = '127.0.0.1'
 $env:HTTP_PORT = "$HttpPort"
+$env:ADMIN_HTTP_HOST = '127.0.0.1'
+$env:ADMIN_HTTP_PORT = "$AdminPort"
+$env:ADMIN_WEB_DIR = Join-Path $root 'web\dist-admin'
 if (-not $env:LOG_LEVEL) { $env:LOG_LEVEL = 'info,lynx=debug,serenity=warn,songbird=warn' }
 
 $bot = Start-Process -FilePath (Join-Path $env:CARGO_TARGET_DIR 'release\lynx.exe') -NoNewWindow -PassThru
@@ -36,7 +41,11 @@ $webDir = Join-Path $root 'web'
 Push-Location $webDir
 pnpm exec vite build
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'panel build failed' }
+# Admin UI: built once; the bot serves the files as they are (rebuild with `pnpm build:admin` in web\).
+pnpm exec vite build -c vite.admin.config.ts
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'admin build failed' }
 Pop-Location
+Write-Host "Admin panel: http://127.0.0.1:$AdminPort (needs ADMIN_PASSWORD in .env)"
 $watch = Start-Process -FilePath 'pnpm.cmd' -ArgumentList 'exec', 'vite', 'build', '--watch', '--emptyOutDir', 'false' -WorkingDirectory $webDir -NoNewWindow -PassThru
 $web = Start-Process -FilePath 'pnpm.cmd' -ArgumentList 'exec', 'vite', 'preview', '--host', '0.0.0.0', '--port', '5173', '--strictPort' -WorkingDirectory $webDir -NoNewWindow -PassThru
 

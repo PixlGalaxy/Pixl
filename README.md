@@ -96,6 +96,27 @@ A bot's own `status` (used by `/health/bots/N`) follows the same rules for that 
 3. Optional, one monitor per bot: `https://<activity-domain>/health/bots/0` (main), `https://<activity-domain>/health/bots/1`, and so on, each of type *URL becomes unavailable*.
 4. **Status pages → your page → Structure**: add a section "Discord bots" and put the monitors in it: "Lynx" (the `/health` monitor, plus the keyword monitor if you made it) and, optionally, one entry per bot. Lynx then shows green when everything works, degraded when the keyword monitor fires, and red when `/health` fails.
 
+## Admin panel
+
+An operator panel on its own port, separate from the Activity: announce scheduled downtime and other notices, see the health report, and change a few things at runtime. It is **off** unless `ADMIN_PASSWORD` is set.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ADMIN_PASSWORD` | empty | Turns the admin panel on. At least 12 characters (a shorter one keeps it off, with a warning in the log). Use a long random one. |
+| `ADMIN_HTTP_HOST` / `ADMIN_HTTP_PORT` | `127.0.0.1` / `4001` | Internal admin listener. Only matters without Docker: the image always uses `127.0.0.1:4001`. |
+| `ADMIN_COOKIE_SECURE` | `auto` | `auto`: the session cookie is `Secure` when the request came over HTTPS (`X-Forwarded-Proto: https` from your proxy). `true` / `false` force it. |
+| `ADMIN_WEB_DIR` | empty | Folder of the built admin UI for the backend to serve itself (Windows dev run only; nginx serves it in the image). |
+
+In Docker, nginx serves the admin UI on container port **8081** and proxies only that server's `/api/` to the admin listener; the Activity server on 8080 has no route to it. Publish it in `docker-compose.yml` (`- "81:8081"`, commented out by default). **Keep it off the internet**: publish it on a LAN address only (for example `"192.168.1.10:81:8081"`), or put it behind Nginx Proxy Manager with an access list and HTTPS.
+
+What it offers:
+
+- **Overview**: the `/health` report (bots, shards, ping, servers, database, yt-dlp, Ollama, players), version, commit, uptime and memory.
+- **Notices**: create, edit and delete notices of type scheduled downtime, information or warning, with a title, a message, a start time, a duration or end time, an optional "show from" time (default: right away) and an active switch. Times are entered in your local time and stored in UTC. The soonest visible notice is added as a small line to every message the bot sends in Discord (Discord timestamps, so each user reads it in their own time zone), and appears as a banner at the top of the Activity panel (live; each user can hide it). Notices disappear on their own after the end time and are deleted 30 days later.
+- **Tweaks** (no restart, kept across restarts): maintenance mode (new songs are refused in `/play`, `/ai` and the panel, with the notice; what is playing keeps playing), pause the daily yt-dlp self-update, check for a yt-dlp update now, clear the in-memory stream URL cache, clear the lookup cache (saved searches, list pages, YouTube matches).
+
+Security: the password is compared in constant time; sign-ins are limited to 5 per minute per address (and 30 per minute overall); the session is a random token in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` over HTTPS) that expires after 12 hours (a restart signs you out); every change needs a custom header and a same-origin request (CSRF). The admin panel cannot read settings or secrets and cannot run commands.
+
 ## Development
 
 The Rust toolchain runs inside Docker, so nothing needs to be installed on the host:
@@ -105,7 +126,9 @@ scripts/cargo.sh check
 scripts/cargo.sh test
 ```
 
-The panel lives in [web/](web/) (React, Vite, Tailwind).
+The panel lives in [web/](web/) (React, Vite, Tailwind). The admin UI is a separate entry in the same folder ([web/admin.html](web/admin.html), [web/src/admin/](web/src/admin/)), built to `web/dist-admin` by `pnpm build` (or `pnpm build:admin`).
+
+On Windows without Docker, `scripts/dev-windows.ps1` runs the bot on `127.0.0.1:8080` and the panel on port 5173; with `ADMIN_PASSWORD` in `.env` the bot also serves the admin UI and API itself on `http://127.0.0.1:8081` (`-AdminPort` to change it).
 
 ## License
 
