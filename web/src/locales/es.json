@@ -146,11 +146,18 @@
     "emptyUpcoming": "No hay nada en la cola después de esta canción.",
     "added_one": "Se añadió {{count}} canción a la cola.",
     "added_other": "Se añadieron {{count}} canciones a la cola.",
+    "addedNext_one": "{{count}} canción sonará a continuación.",
+    "addedNext_other": "{{count}} canciones sonarán a continuación, en orden.",
     "addTitle": "Añadir a la cola",
     "addHint": "Pega un enlace de YouTube o Spotify, o busca una canción.",
     "addPlaceholder": "Enlace o nombre de la canción",
     "add": "Añadir",
     "addThis": "Añadir {{title}}",
+    "addThisNext": "Reproducir {{title}} a continuación",
+    "addWhere": "Dónde añadir",
+    "addEnd": "Al final",
+    "addNext": "A continuación",
+    "addNextDjOnly": "Solo los DJs pueden añadir canciones para que suenen a continuación.",
     "searching": "Buscando",
     "noResults": "Sin resultados.",
     "dragHandle": "Arrastra para mover {{title}}",
@@ -453,7 +460,7 @@
     },
     "commands": {
       "play": {
-        "description": "Entra a tu canal de voz y reproduce un enlace (YouTube, YouTube Music, canción, álbum o playlist de Spotify) o lo que mejor encaje con una búsqueda.",
+        "description": "Entra a tu canal de voz y reproduce un enlace (YouTube, YouTube Music, canción, álbum o playlist de Spotify) o lo que mejor encaje con una búsqueda. Con next:True va justo después de la canción actual en lugar de al final (una lista mantiene su orden); en modo DJ solo los DJs y los administradores pueden hacerlo.",
         "example": "/play query:paper lanterns night drive"
       },
       "playlist": {
@@ -785,7 +792,7 @@
     },
     "queue": {
       "add": {
-        "body": "Pega un enlace o escribe para buscar. Los enlaces de playlists, álbumes y artistas añaden sus canciones hasta el límite de la cola y se guardan en tu pestaña Playlists mientras tu historial esté activado. Tienes que estar en el canal de voz.",
+        "body": "Pega un enlace o escribe para buscar. Los enlaces de playlists, álbumes y artistas añaden sus canciones hasta el límite de la cola y se guardan en tu pestaña Playlists mientras tu historial esté activado. Tienes que estar en el canal de voz. Al final añade después de todo lo que hay en la cola; A continuación pone las canciones justo después de la actual, una lista en su orden (en un jam, después de la canción compartida). En modo DJ solo los DJs y los administradores pueden usar A continuación.",
         "example": "Pegas el enlace de un álbum de Spotify. Sus canciones van al final de la cola y el álbum aparece en tu pestaña Playlists."
       },
       "upNext": {

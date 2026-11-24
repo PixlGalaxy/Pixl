@@ -103,6 +103,9 @@ export type AiJob = { id: string; phase: AiPhase; startedAt: number; canCancel: 
 export type AiState = { active: boolean; ownerId: string; job: AiJob | null }
 
 export type LoopMode = 'off' | 'track' | 'queue'
+
+/** Where `POST /api/queue/add` puts the tracks: at the end, or right after the current one. */
+export type AddPosition = 'end' | 'next'
 export type PlayerStatus = 'playing' | 'paused' | 'loading' | 'idle'
 
 export type PlayerState = {

@@ -373,7 +373,10 @@ async fn command(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
         return radio_ui::start(&radio_ctx(&inv), form).await;
     }
     let msg = match cmd.data.name.as_str() {
-        "play" => play(&inv, &str_opt(cmd, "query").unwrap_or_default()).await,
+        "play" => {
+            let next = bool_opt(cmd, "next").unwrap_or(false);
+            play(&inv, &str_opt(cmd, "query").unwrap_or_default(), next).await
+        }
         "playlist" => playlist(&inv, str_opt(cmd, "name")).await,
         "pause" => pause(&inv).await,
         "resume" => resume(&inv).await,
@@ -562,7 +565,8 @@ async fn player_for_play(inv: &Inv<'_>, vc: u64, restore: Option<Restore>) -> Re
     .map_err(|e| play_error(inv, e))
 }
 
-async fn play(inv: &Inv<'_>, query: &str) -> Message {
+/// `/play` (`next`: "Play next", right after the current track).
+async fn play(inv: &Inv<'_>, query: &str, next: bool) -> Message {
     let lynx = inv.lynx;
     let Some(vc) = inv.user_voice() else {
         return inv.err("not_in_voice", &[]);
@@ -572,6 +576,26 @@ async fn play(inv: &Inv<'_>, query: &str) -> Message {
     }
     if let Some(m) = inv.maintenance() {
         return m;
+    }
+    // Playing next reorders the queue: in DJ mode only DJs and managers may (like moving a song).
+    if next {
+        let settings = match inv.settings().await {
+            Ok(s) => s,
+            Err(m) => return m,
+        };
+        let a = actor(
+            &lynx.bots,
+            &lynx.store,
+            inv.guild_id,
+            inv.user_id,
+            inv.permissions,
+            vc,
+            false,
+        )
+        .await;
+        if let Decision::Deny(d) = can(&a, Action::AddNext, &settings) {
+            return inv.deny(d);
+        }
     }
     if let Err(m) = voice_allowed(inv, vc).await {
         return m;
@@ -593,6 +617,7 @@ async fn play(inv: &Inv<'_>, query: &str) -> Message {
         query,
         requester: inv.requester(),
         text_channel: Some(inv.text_channel),
+        next,
     };
     let Played {
         player,
@@ -811,6 +836,7 @@ async fn play_saved(inv: &Inv<'_>, p: SavedPlaylist, defer: bool) -> Message {
         query: "",
         requester: inv.requester(),
         text_channel: Some(inv.text_channel),
+        next: false,
     };
     let Played {
         entries,

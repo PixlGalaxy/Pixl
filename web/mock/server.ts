@@ -858,6 +858,9 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       if (!(permissionsFor(f).isManager && s.settings.managersExempt) && voice.length > 0 && !voice.includes('100')) {
         throw new HttpError(403, 'channel_not_allowed')
       }
+      // "Play next" reorders the queue: the control rule (DJ mode) applies, like moving a song.
+      const next = body.position === 'next'
+      if (next) requireControl(f)
       if (s.upcoming.length >= s.settings.maxQueueLength) throw new HttpError(409, 'queue_full')
       const match = /mock(\d+)/.exec(query)
       const seed = (match && CATALOG[Number(match[1])]) || CATALOG[Math.floor(Math.random() * CATALOG.length)]!
@@ -865,9 +868,11 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
       if (query.includes('playlist')) savePlaylist(query)
       const list: MockList | null =
         added > 1 ? { name: 'Pasted playlist', imageUrl: `/mock/art/${uidCounter % CATALOG.length}.svg`, platform: 'spotify', url: query, total: added } : null
-      for (let i = 0; i < added; i++) {
-        s.upcoming.push(makeTrack(i === 0 ? seed : CATALOG[(i * 3) % CATALOG.length]!, ME, null, list && fromList(list, i + 1)))
-      }
+      const tracks = Array.from({ length: added }, (_, i) =>
+        makeTrack(i === 0 ? seed : CATALOG[(i * 3) % CATALOG.length]!, ME, null, list && fromList(list, i + 1)),
+      )
+      if (next) s.upcoming.unshift(...tracks)
+      else s.upcoming.push(...tracks)
       if (!s.current) {
         advance()
         s.status = 'playing'

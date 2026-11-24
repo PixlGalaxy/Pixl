@@ -396,7 +396,7 @@ pub async fn add(
     let channel = st.own_channel(&m, &b.channel_id)?;
     let user = m.user_id();
     let (p, list) = st.saved_playlist(user, &id).await?;
-    st.add_checks(&m, channel).await?;
+    st.add_checks(&m, channel, false).await?;
     let c = st.list_tracks(&list, false, m.guild_id).await?;
     let req = play_request(&m, channel, "");
     let played = match b.track_url.as_deref().map(str::trim) {

@@ -330,7 +330,8 @@
     "cmd": {
       "play": {
         "description": "Play a song, a playlist or a search",
-        "query": "Link or song name"
+        "query": "Link or song name",
+        "next": "Play next: right after the current song (DJ mode: DJs only)"
       },
       "playlist": {
         "description": "Play one of your saved playlists",

@@ -2023,3 +2023,46 @@ async fn seek_follows_the_control_rule() {
     let (s, v) = h.call("POST", "/api/player/seek", Some(&ana), Some(seek)).await;
     assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "not_in_channel"), "{v}");
 }
+
+#[tokio::test]
+async fn add_next_needs_control_in_dj_mode() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    h.fake.set_voice(BOSS, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (boss, _) = h.login("boss", Some(VOICE)).await;
+    // Lynx is limited to another channel, so a request that passes the permission rule stops at
+    // the channel check (before anything is resolved).
+    let (s, v) = h
+        .call(
+            "PUT",
+            "/api/settings",
+            Some(&boss),
+            Some(json!({ "voiceChannels": ["101"], "controlMode": "dj" })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let add = |position: Option<&str>| {
+        let mut b = json!({ "channelId": "100", "query": "x" });
+        if let Some(p) = position {
+            b["position"] = json!(p);
+        }
+        b
+    };
+    // A listener may add at the end (default or explicit), not next.
+    for body in [add(None), add(Some("end"))] {
+        let (s, v) = h.call("POST", "/api/queue/add", Some(&ana), Some(body)).await;
+        assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "channel_not_allowed"), "{v}");
+    }
+    let (s, v) = h.call("POST", "/api/queue/add", Some(&ana), Some(add(Some("next")))).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "no_permission"), "{v}");
+    // Everyone mode: the listener may add next too.
+    let (s, v) = h.call("PUT", "/api/settings", Some(&boss), Some(json!({ "controlMode": "everyone" }))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = h.call("POST", "/api/queue/add", Some(&ana), Some(add(Some("next")))).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "channel_not_allowed"), "{v}");
+    // Anything else is a bad request.
+    let (s, _) = h.call("POST", "/api/queue/add", Some(&ana), Some(add(Some("middle")))).await;
+    assert_eq!(s.as_u16() / 100, 4);
+    assert_ne!(s, StatusCode::FORBIDDEN);
+}

@@ -634,13 +634,14 @@ impl Player {
             Command::Enqueue {
                 entries,
                 max,
+                next,
                 text_channel,
                 reply,
             } => {
                 if let Some(c) = text_channel {
                     self.set_text_channel(c);
                 }
-                let res = self.push_entries(entries, max).await;
+                let res = self.push_entries(entries, max, next).await;
                 let _ = reply.send(res);
             }
             Command::Pause { reply } => {
@@ -866,8 +867,10 @@ impl Player {
     }
 
     /// Append entries (respecting `max` upcoming) and start playing when idle.
-    async fn push_entries(&mut self, entries: Vec<Entry>, max: usize) -> Result<PushResult, PushError> {
-        let res = self.queue.push(entries, max);
+    /// Queue tracks at the end, or (`next`) right after the current track. Radio refills always go
+    /// at the end.
+    async fn push_entries(&mut self, entries: Vec<Entry>, max: usize, next: bool) -> Result<PushResult, PushError> {
+        let res = self.queue.push_at(entries, max, next);
         if res.is_ok() {
             self.persist(true);
             if self.playing.is_none() && self.loading.is_none() && !self.waiting_start && !self.queue.is_active() {
@@ -977,7 +980,7 @@ impl Player {
         }
         let count = picks.len();
         let max = self.max_queue();
-        let (added, truncated) = match self.push_entries(radio::pick_entries(picks, &owner), max).await {
+        let (added, truncated) = match self.push_entries(radio::pick_entries(picks, &owner), max, false).await {
             Ok(r) => (r.added, r.truncated),
             Err(PushError::Full { .. } | PushError::NotAllowed) => (0, true),
         };
@@ -1940,15 +1943,18 @@ impl Player {
             Command::Enqueue {
                 entries,
                 max,
+                next,
                 text_channel,
                 reply,
             } => {
                 if let Some(c) = text_channel {
                     self.set_text_channel(c);
                 }
+                // "Next" means after the jam's current track (the shared timeline).
                 let cmd = Command::Enqueue {
                     entries,
                     max,
+                    next,
                     text_channel: None,
                     reply,
                 };
@@ -3347,6 +3353,45 @@ mod tests {
         );
         let shown = snapshot.read().unwrap().position_ms;
         assert_eq!(shown, 90_000);
+        tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
+    }
+
+    /// "Play next" through the player: right after the shown current track, a list in order, the
+    /// limit applies; plain adds still go at the end.
+    #[tokio::test]
+    async fn enqueue_next_goes_after_the_current_track() {
+        let (manager, bot) = test_manager().await;
+        let (tx, slot) = spawn_on(&manager, &bot, VOICE, Some(restore_of(&["a", "b"])));
+        until_snap(&slot, |s| s.current.is_some()).await;
+        let named = |ids: &[&str]| -> Vec<Entry> {
+            ids.iter()
+                .map(|id| Arc::new(QueueEntry::new(track(id), Requester::id_only(2))))
+                .collect()
+        };
+        let add = |entries: Vec<Entry>, max: usize, next: bool| {
+            let tx = tx.clone();
+            async move {
+                ask(&tx, |reply| Command::Enqueue {
+                    entries,
+                    max,
+                    next,
+                    text_channel: None,
+                    reply,
+                })
+                .await
+            }
+        };
+        let r = add(named(&["x"]), 100, true).await.unwrap();
+        assert_eq!(r.first_position, 1);
+        add(named(&["p1", "p2"]), 100, true).await.unwrap();
+        add(named(&["z"]), 100, false).await.unwrap();
+        until_snap(&slot, |s| s.upcoming.len() == 5).await;
+        assert_eq!(uids(&slot.read().unwrap()), vec!["a", "p1", "p2", "x", "b", "z"]);
+        assert_eq!(
+            add(named(&["y"]), 5, true).await,
+            Err(PushError::Full { max: 5 }),
+            "the queue limit counts the upcoming tracks"
+        );
         tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
     }
 

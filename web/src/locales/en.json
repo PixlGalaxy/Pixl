@@ -146,11 +146,18 @@
     "emptyUpcoming": "Nothing queued after this song.",
     "added_one": "Added {{count}} track to the queue.",
     "added_other": "Added {{count}} tracks to the queue.",
+    "addedNext_one": "{{count}} track will play next.",
+    "addedNext_other": "{{count}} tracks will play next, in order.",
     "addTitle": "Add to queue",
     "addHint": "Paste a YouTube or Spotify link, or search for a song.",
     "addPlaceholder": "Link or song name",
     "add": "Add",
     "addThis": "Add {{title}}",
+    "addThisNext": "Play {{title}} next",
+    "addWhere": "Where to add",
+    "addEnd": "At the end",
+    "addNext": "Play next",
+    "addNextDjOnly": "Only DJs can add songs to play next.",
     "searching": "Searching",
     "noResults": "No results.",
     "dragHandle": "Drag to reorder {{title}}",
@@ -453,7 +460,7 @@
     },
     "commands": {
       "play": {
-        "description": "Joins your voice channel and plays a link (YouTube, YouTube Music, Spotify track, album or playlist) or the best match for a search.",
+        "description": "Joins your voice channel and plays a link (YouTube, YouTube Music, Spotify track, album or playlist) or the best match for a search. With next:True it goes right after the current song instead of at the end (a list keeps its order); in DJ mode only DJs and managers can do that.",
         "example": "/play query:paper lanterns night drive"
       },
       "playlist": {
@@ -785,7 +792,7 @@
     },
     "queue": {
       "add": {
-        "body": "Paste a link or type to search. Playlist, album and artist links add their songs up to the queue limit and are saved to your Playlists tab while your history is on. You need to be in the voice channel.",
+        "body": "Paste a link or type to search. Playlist, album and artist links add their songs up to the queue limit and are saved to your Playlists tab while your history is on. You need to be in the voice channel. At the end adds after everything queued; Play next puts the songs right after the current one, a list in its order (in a jam, after the shared song). In DJ mode only DJs and managers can use Play next.",
         "example": "You paste a Spotify album link. Its songs go to the end of the queue and the album appears in your Playlists tab."
       },
       "upNext": {

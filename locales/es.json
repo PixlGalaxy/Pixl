@@ -330,7 +330,8 @@
     "cmd": {
       "play": {
         "description": "Reproduce una canción, una playlist o una búsqueda",
-        "query": "Enlace o nombre de la canción"
+        "query": "Enlace o nombre de la canción",
+        "next": "Reproducir a continuación, justo después de la canción actual (modo DJ: solo DJs)"
       },
       "playlist": {
         "description": "Reproduce una de tus playlists guardadas",

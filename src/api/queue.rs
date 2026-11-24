@@ -69,11 +69,25 @@ pub fn play_error(e: PlayError) -> ApiError {
     }
 }
 
+/// Where `POST /api/queue/add` puts the tracks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AddPosition {
+    /// At the end of the queue (the default).
+    #[default]
+    End,
+    /// Right after the current track, a list in its order ("Add next"). Needs the Control rule in
+    /// DJ mode ([`Action::AddNext`]); in a jam, after the shared current track.
+    Next,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddBody {
     channel_id: String,
     query: String,
+    #[serde(default)]
+    position: AddPosition,
 }
 
 #[derive(Serialize)]
@@ -87,8 +101,11 @@ pub async fn add(State(st): State<ApiState>, m: Member, Body(b): Body<AddBody>) 
     if query.is_empty() || query.len() > MAX_QUERY {
         return Err(ApiError::invalid("query must be 1-500 characters"));
     }
-    st.add_checks(&m, channel).await?;
-    let played = play::play(st.play_ctx(), play_request(&m, channel, query))
+    let next = b.position == AddPosition::Next;
+    st.add_checks(&m, channel, next).await?;
+    let mut req = play_request(&m, channel, query);
+    req.next = next;
+    let played = play::play(st.play_ctx(), req)
         .await
         .map_err(play_error)?;
     Ok(Json(Added {
@@ -97,9 +114,10 @@ pub async fn add(State(st): State<ApiState>, m: Member, Body(b): Body<AddBody>) 
 }
 
 impl ApiState {
-    /// Everything `/api/queue/add` checks before resolving: the Add permission (DJ mode), the
-    /// voice channel restriction, the jam's host-only rule, the per-user add limit and a free bot.
-    pub async fn add_checks(&self, m: &Member, channel: u64) -> ApiResult<()> {
+    /// Everything `/api/queue/add` checks before resolving: the Add permission (DJ mode; `next`:
+    /// "Add next", which also needs the Control rule there), the voice channel restriction, the
+    /// jam's host-only rule, the per-user add limit and a free bot.
+    pub async fn add_checks(&self, m: &Member, channel: u64, next: bool) -> ApiResult<()> {
         self.maintenance_check()?;
         let actor = self.actor(m.guild_id, m.user_id(), Some(channel), false).await?;
         // Fail closed: without the settings the DJ mode cannot be checked.
@@ -109,7 +127,8 @@ impl ApiState {
             .guild_settings(m.guild_id)
             .await
             .map_err(|e| ApiError::internal("could not read the server settings", e))?;
-        if let Decision::Deny(d) = can(&actor, Action::Add, &settings) {
+        let action = if next { Action::AddNext } else { Action::Add };
+        if let Decision::Deny(d) = can(&actor, action, &settings) {
             return Err(ApiError::deny(d));
         }
         self.check_voice_channel(m.guild_id, channel, actor.is_manager).await?;
@@ -135,6 +154,7 @@ pub fn play_request<'a>(m: &Member, channel: u64, query: &'a str) -> PlayRequest
             avatar_url: s.avatar_url.clone(),
         },
         text_channel: None,
+        next: false,
     }
 }
 

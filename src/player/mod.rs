@@ -119,6 +119,8 @@ pub enum Command {
     Enqueue {
         entries: Vec<Entry>,
         max: usize,
+        /// Right after the current track ("Play next") instead of at the end.
+        next: bool,
         text_channel: Option<u64>,
         reply: Reply<Result<PushResult, PushError>>,
     },
@@ -349,15 +351,18 @@ impl PlayerHandle {
         }
     }
 
+    /// Add tracks at the end, or (`next`) right after the current track.
     pub async fn enqueue(
         &self,
         entries: Vec<Entry>,
         max: usize,
+        next: bool,
         text_channel: Option<u64>,
     ) -> Result<Result<PushResult, PushError>, PlayerError> {
         self.ask(|reply| Command::Enqueue {
             entries,
             max,
+            next,
             text_channel,
             reply,
         })

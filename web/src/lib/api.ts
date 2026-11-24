@@ -1,4 +1,5 @@
 import type {
+  AddPosition,
   AuthResult,
   ChannelRef,
   Feedback,
@@ -165,7 +166,9 @@ export const api = {
   stop: (channelId: string) => request<void>('/player/stop', 'POST', { channelId }),
 
   // Queue
-  add: (channelId: string, query: string) => request<{ added: number }>('/queue/add', 'POST', { channelId, query }),
+  /** `position: 'next'` puts the tracks right after the current one (a list keeps its order). */
+  add: (channelId: string, query: string, position: AddPosition = 'end') =>
+    request<{ added: number }>('/queue/add', 'POST', { channelId, query, position }),
   move: (channelId: string, uid: string, toIndex: number) =>
     request<void>('/queue/move', 'POST', { channelId, uid, toIndex }),
   remove: (channelId: string, uid: string) => request<void>('/queue/remove', 'POST', { channelId, uid }),
