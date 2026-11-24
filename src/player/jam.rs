@@ -1027,18 +1027,28 @@ impl Jams {
     }
 }
 
+/// Length of a new jam id: 14 characters of a 32-letter alphabet (70 bits from the OS random source),
+/// so ids can't be guessed or enumerated.
+pub const ID_LEN: usize = 14;
+const ID_ALPHABET: &[u8; 32] = b"abcdefghijkmnpqrstuvwxyz23456789";
+
 fn new_id() -> String {
-    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
-    let mut rng = fastrand::Rng::new();
-    (0..10).map(|_| ALPHABET[rng.usize(..ALPHABET.len())] as char).collect()
+    let mut buf = [0u8; ID_LEN];
+    getrandom::fill(&mut buf).expect("OS random source");
+    id_from_bytes(&buf)
 }
 
-/// Jam ids in links and API bodies: the 10 characters of [`new_id`], optionally with the
-/// `custom_id` prefix.
+/// 256 is a multiple of 32, so the low 5 bits of a uniform byte are uniform.
+fn id_from_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| ID_ALPHABET[(*b & 31) as usize] as char).collect()
+}
+
+/// Jam ids in links and API bodies: [`new_id`] (jams made before used 10 characters), optionally with
+/// the `custom_id` prefix.
 pub fn parse_id(raw: &str) -> Option<&str> {
     let id = raw.trim();
     let id = id.strip_prefix(CUSTOM_ID_PREFIX).unwrap_or(id);
-    (id.len() == 10 && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())).then_some(id)
+    ((10..=16).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())).then_some(id)
 }
 
 async fn until_ms(deadline_ms: Option<i64>) {
@@ -1411,10 +1421,18 @@ mod tests {
     #[test]
     fn ids() {
         let id = new_id();
+        assert_eq!(id.len(), ID_LEN);
+        assert!(id.bytes().all(|b| ID_ALPHABET.contains(&b)));
         assert_eq!(parse_id(&id), Some(id.as_str()));
         assert_eq!(parse_id(&format!("jam-{id}")), Some(id.as_str()));
+        assert_eq!(parse_id("jam-partyroom1"), Some("partyroom1"), "older 10-character ids");
         assert_eq!(parse_id("jam-short"), None);
         assert_eq!(parse_id("ABCDEFGHIJ"), None);
+        assert_ne!(new_id(), new_id());
+        // Every byte maps into the alphabet and all 32 letters are reachable.
+        let all: Vec<u8> = (0..=255).collect();
+        let letters: std::collections::HashSet<char> = id_from_bytes(&all).chars().collect();
+        assert_eq!(letters.len(), 32);
     }
 
     #[tokio::test]
