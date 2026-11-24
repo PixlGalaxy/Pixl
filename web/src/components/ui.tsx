@@ -299,6 +299,9 @@ export function Notice({ tone, icon, children }: { tone: Exclude<Tone, 'neutral'
   )
 }
 
+/** Thumb width of `.lynx-range` (index.css, WebKit/Chromium, which Discord uses). */
+const THUMB_PX = 14
+
 /** Native range with the accent fill track. */
 export function Slider({
   value,
@@ -321,7 +324,10 @@ export function Slider({
   onCommit?: (v: number) => void
   className?: string
 }) {
-  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0
+  const pct = max > min ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0
+  // The native thumb's centre travels from THUMB/2 to width - THUMB/2, so the fill must end there
+  // too (a plain `pct%` runs ahead of the knob near the end and behind it near the start).
+  const fillEnd = `calc(${pct}% + ${(THUMB_PX / 2 - (pct / 100) * THUMB_PX).toFixed(2)}px)`
   const commit = (e: { currentTarget: HTMLInputElement }) => onCommit?.(Number(e.currentTarget.value))
   return (
     <input
@@ -338,7 +344,7 @@ export function Slider({
       onKeyUp={commit}
       onTouchEnd={commit}
       className={`lynx-range h-1.5 min-w-0 flex-1 cursor-pointer appearance-none rounded-full disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
-      style={{ background: `linear-gradient(to right, var(--accent-600) ${pct}%, var(--line) ${pct}%)` }}
+      style={{ background: `linear-gradient(to right, var(--accent-600) ${fillEnd}, var(--line) ${fillEnd})` }}
     />
   )
 }
