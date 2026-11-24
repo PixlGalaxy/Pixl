@@ -2,11 +2,13 @@
 //!
 //! nginx serves the built panel at `/` and proxies `/backend/*` here with the prefix stripped, so
 //! this router only defines `/api/...`, `/ws`, `/cdn/...`, `/img` and `/healthz` (plan/api.md).
+//! `/health` (public report for uptime monitors) is also proxied at the domain root.
 
 mod ai;
 mod auth;
 mod error;
 mod follow;
+mod health;
 mod jam;
 mod me;
 mod media;
@@ -67,12 +69,15 @@ pub enum GuildEvent {
 
 pub struct Options {
     pub session_ttl: Duration,
+    /// Thresholds of the `/health` status rules.
+    pub health_limits: health::Limits,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             session_ttl: SESSION_TTL,
+            health_limits: health::LIMITS,
         }
     }
 }
@@ -95,6 +100,9 @@ pub struct Inner {
     pub events: broadcast::Sender<GuildEvent>,
     pub media: reqwest::Client,
     pub search_refused_logged: AtomicBool,
+    /// Last `/health` report (see `health::CACHE_TTL`).
+    pub health: health::HealthCache<health::HealthReport>,
+    pub health_limits: health::Limits,
 }
 
 /// Router state. Cheap to clone.
@@ -132,6 +140,8 @@ impl ApiState {
             events: broadcast::channel(256).0,
             media,
             search_refused_logged: AtomicBool::new(false),
+            health: health::HealthCache::new(health::CACHE_TTL),
+            health_limits: opts.health_limits,
         })))
     }
 
@@ -153,6 +163,9 @@ impl ApiState {
 pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        .route("/health", get(health::health))
+        .route("/health/", get(health::health))
+        .route("/health/bots/{index}", get(health::bot))
         .route("/api/public", get(auth::public))
         .route("/api/auth", post(auth::login))
         .route("/api/player", get(player::state))

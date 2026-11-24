@@ -88,6 +88,14 @@ impl YtdlpVersion {
         }
     }
 
+    /// Set the cached answer directly (tests).
+    #[cfg(test)]
+    pub fn set(&self, version: Option<String>) {
+        if let Ok(mut c) = self.cached.lock() {
+            *c = Some((Instant::now(), version));
+        }
+    }
+
     fn is_stale(&self) -> bool {
         self.cached
             .lock()

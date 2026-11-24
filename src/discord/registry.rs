@@ -2,18 +2,19 @@
 //! it is in and which voice channel it sits in per guild. Also the bot assignment rule.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
     },
+    time::{Duration, Instant, SystemTime},
 };
 
 use dashmap::DashMap;
 use serenity::{
     all::{ChannelId, GuildId, UserId},
     cache::Cache,
-    gateway::ShardManager,
+    gateway::{ConnectionStage, ShardManager},
     http::Http,
     model::Permissions,
 };
@@ -47,6 +48,8 @@ pub struct BotInfo {
     synced: AtomicBool,
     /// The client's shard manager (gateway latency for `/about`).
     shards: OnceLock<Arc<ShardManager>>,
+    /// Which shards have a live gateway session, and since when they do not (health endpoint).
+    gateway: Mutex<GatewayTracker>,
 }
 
 impl BotInfo {
@@ -64,7 +67,39 @@ impl BotInfo {
             pending: Mutex::new(HashSet::new()),
             synced: AtomicBool::new(false),
             shards: OnceLock::new(),
+            gateway: Mutex::new(GatewayTracker::new(Instant::now(), SystemTime::now())),
         }
+    }
+
+    /// A shard's gateway session came up (READY / RESUMED / stage Connected) or went away.
+    pub fn set_shard_connected(&self, shard: u32, connected: bool) {
+        let total = self.shards_total.load(Ordering::Relaxed);
+        if let Ok(mut g) = self.gateway.lock() {
+            g.set(shard, connected, total, Instant::now(), SystemTime::now());
+        }
+    }
+
+    /// Gateway state now. The shard manager's own view of each shard is folded in first, so a
+    /// shard that died without a stage event (runner restarted) is still seen.
+    pub async fn gateway_status(&self) -> GatewayStatus {
+        if let Some(shards) = self.shards.get() {
+            let stages: Vec<(u32, bool)> = shards
+                .runners
+                .lock()
+                .await
+                .iter()
+                .map(|(id, r)| (id.0, r.stage == ConnectionStage::Connected))
+                .collect();
+            let total = self.shards_total.load(Ordering::Relaxed);
+            if let Ok(mut g) = self.gateway.lock() {
+                g.reconcile(&stages, total, Instant::now(), SystemTime::now());
+            }
+        }
+        let total = self.shards_total.load(Ordering::Relaxed);
+        self.gateway
+            .lock()
+            .map(|g| g.status(total, Instant::now()))
+            .unwrap_or_default()
     }
 
     pub fn set_shard_manager(&self, shards: Arc<ShardManager>) {
@@ -129,6 +164,88 @@ impl BotInfo {
     pub fn can_play_in(&self, guild_id: u64, channel_id: u64) -> bool {
         self.channel_permissions(guild_id, channel_id)
             .is_some_and(|p| p.administrator() || (p.view_channel() && p.connect() && p.speak()))
+    }
+}
+
+/// Gateway state of one bot, as the health endpoint reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GatewayStatus {
+    pub shards_total: u32,
+    pub shards_connected: u32,
+    /// How long the bot has not had every shard connected (None: fully connected).
+    pub degraded_for: Option<Duration>,
+    /// How long the bot has had no shard connected at all (None: at least one is).
+    pub down_for: Option<Duration>,
+    /// Wall-clock start of the current outage (partial or total).
+    pub down_since: Option<SystemTime>,
+}
+
+/// Per-shard connection state and outage timestamps. A bot starts disconnected (since creation),
+/// so the startup handshake counts against the same grace period as a reconnect.
+#[derive(Debug)]
+struct GatewayTracker {
+    up: HashMap<u32, bool>,
+    /// Not every shard connected since (monotonic, wall clock).
+    partial_since: Option<(Instant, SystemTime)>,
+    /// No shard connected since.
+    none_since: Option<Instant>,
+}
+
+impl GatewayTracker {
+    fn new(now: Instant, wall: SystemTime) -> Self {
+        Self {
+            up: HashMap::new(),
+            partial_since: Some((now, wall)),
+            none_since: Some(now),
+        }
+    }
+
+    fn set(&mut self, shard: u32, connected: bool, total: u32, now: Instant, wall: SystemTime) {
+        self.up.insert(shard, connected);
+        self.update(total, now, wall);
+    }
+
+    /// Fold in the shard manager's view: listed shards take its stage, shards it no longer runs
+    /// are down.
+    fn reconcile(&mut self, stages: &[(u32, bool)], total: u32, now: Instant, wall: SystemTime) {
+        for v in self.up.values_mut() {
+            *v = false;
+        }
+        for &(id, connected) in stages {
+            self.up.insert(id, connected);
+        }
+        self.update(total, now, wall);
+    }
+
+    fn counts(&self, total: u32) -> (u32, u32) {
+        let connected = self.up.values().filter(|v| **v).count() as u32;
+        let total = total.max(self.up.len() as u32).max(1);
+        (total, connected.min(total))
+    }
+
+    fn update(&mut self, total: u32, now: Instant, wall: SystemTime) {
+        let (total, connected) = self.counts(total);
+        if connected >= total {
+            self.partial_since = None;
+        } else if self.partial_since.is_none() {
+            self.partial_since = Some((now, wall));
+        }
+        if connected > 0 {
+            self.none_since = None;
+        } else if self.none_since.is_none() {
+            self.none_since = Some(now);
+        }
+    }
+
+    fn status(&self, total: u32, now: Instant) -> GatewayStatus {
+        let (total, connected) = self.counts(total);
+        GatewayStatus {
+            shards_total: total,
+            shards_connected: connected,
+            degraded_for: self.partial_since.map(|(at, _)| now.saturating_duration_since(at)),
+            down_for: self.none_since.map(|at| now.saturating_duration_since(at)),
+            down_since: self.partial_since.map(|(_, wall)| wall),
+        }
     }
 }
 
@@ -586,6 +703,64 @@ mod tests {
         assert!(!r.is_lynx_bot(0));
         assert_eq!(r.bot(1).unwrap().name(), "Lynx Node 1");
         assert!(r.bot(0).unwrap().invite_url().unwrap().ends_with("permissions=3148801"));
+    }
+
+    #[test]
+    fn gateway_tracker_outages() {
+        let t0 = Instant::now();
+        let w0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let s = |secs| t0 + Duration::from_secs(secs);
+        let mut g = GatewayTracker::new(t0, w0);
+        // Starts down (startup handshake).
+        let st = g.status(0, s(5));
+        assert_eq!((st.shards_total, st.shards_connected), (1, 0));
+        assert_eq!(st.down_for, Some(Duration::from_secs(5)));
+        assert_eq!(st.down_since, Some(w0));
+        // Two shards: one up = partial outage, not down.
+        g.set(0, true, 2, s(10), w0);
+        let st = g.status(2, s(12));
+        assert_eq!((st.shards_total, st.shards_connected), (2, 1));
+        assert_eq!(st.down_for, None);
+        assert_eq!(st.degraded_for, Some(Duration::from_secs(12)));
+        // Both up: clear.
+        g.set(1, true, 2, s(20), w0);
+        assert_eq!(
+            g.status(2, s(21)),
+            GatewayStatus {
+                shards_total: 2,
+                shards_connected: 2,
+                ..Default::default()
+            }
+        );
+        // Shard 1 drops at 30 s; the outage starts then.
+        let w30 = w0 + Duration::from_secs(30);
+        g.set(1, false, 2, s(30), w30);
+        let st = g.status(2, s(40));
+        assert_eq!(st.degraded_for, Some(Duration::from_secs(10)));
+        assert_eq!(st.down_since, Some(w30));
+        // The manager no longer runs shard 0 either: fully down from the reconcile on.
+        g.reconcile(&[(1, false)], 2, s(50), w30);
+        let st = g.status(2, s(55));
+        assert_eq!(st.shards_connected, 0);
+        assert_eq!(st.down_for, Some(Duration::from_secs(5)));
+        assert_eq!(st.down_since, Some(w30), "the outage started with the first shard");
+        // Reconnect resets everything.
+        g.reconcile(&[(0, true), (1, true)], 2, s(60), w30);
+        let st = g.status(2, s(61));
+        assert_eq!((st.degraded_for, st.down_for, st.down_since), (None, None, None));
+    }
+
+    #[tokio::test]
+    async fn bot_info_gateway_events() {
+        let r = registry(1);
+        let bot = r.bot(0).unwrap();
+        assert_eq!(bot.gateway_status().await.shards_connected, 0);
+        r.on_ready(0, 100, 1000, "Lynx", 1, &[]);
+        bot.set_shard_connected(0, true);
+        let st = bot.gateway_status().await;
+        assert_eq!((st.shards_total, st.shards_connected, st.down_since), (1, 1, None));
+        bot.set_shard_connected(0, false);
+        assert!(bot.gateway_status().await.down_for.is_some());
     }
 
     #[tokio::test]

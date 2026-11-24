@@ -180,6 +180,15 @@ struct Harness {
 }
 
 async fn harness_with(session_ttl: Duration, ai_enabled: bool) -> Harness {
+    harness_full(session_ttl, ai_enabled, 1, super::health::LIMITS).await
+}
+
+async fn harness_full(
+    session_ttl: Duration,
+    ai_enabled: bool,
+    bot_count: usize,
+    health_limits: super::health::Limits,
+) -> Harness {
     let dir = std::env::temp_dir().join(format!("lynx-api-test-{}", uuid::Uuid::new_v4()));
     let mut cfg = crate::ai::test_util::config(dir);
     cfg.discord_client_id = "4242".into();
@@ -190,12 +199,18 @@ async fn harness_with(session_ttl: Duration, ai_enabled: bool) -> Harness {
     let procs = ProcessRegistry::new();
     let sources = Sources::new(&config, store.clone(), procs.clone()).unwrap();
     let (sessions, _task) = SessionWriter::spawn(store.clone());
-    let bots = Arc::new(BotRegistry::new(vec![Arc::new(BotInfo::new(
-        0,
-        Arc::new(Http::new("x")),
-        Arc::new(Cache::new()),
-        Songbird::serenity(),
-    ))]));
+    let bots = Arc::new(BotRegistry::new(
+        (0..bot_count)
+            .map(|i| {
+                Arc::new(BotInfo::new(
+                    i,
+                    Arc::new(Http::new("x")),
+                    Arc::new(Cache::new()),
+                    Songbird::serenity(),
+                ))
+            })
+            .collect(),
+    ));
     let ai = AiEngine::new(&config, store.clone(), sources.clone());
     let players = PlayerManager::new(PlayerDeps {
         config: config.clone(),
@@ -217,6 +232,7 @@ async fn harness_with(session_ttl: Duration, ai_enabled: bool) -> Harness {
         bots,
         players,
         ai,
+        ytdlp_version: Default::default(),
         shutdown: CancellationToken::new(),
     };
     let fake = Arc::new(Fake::default());
@@ -225,7 +241,15 @@ async fn harness_with(session_ttl: Duration, ai_enabled: bool) -> Harness {
         m.insert((GUILD, ANA), false);
         m.insert((GUILD, BOSS), true);
     }
-    let state = ApiState::new(app, fake.clone(), Options { session_ttl }).unwrap();
+    let state = ApiState::new(
+        app,
+        fake.clone(),
+        Options {
+            session_ttl,
+            health_limits,
+        },
+    )
+    .unwrap();
     Harness {
         app: router(state.clone()),
         fake,
@@ -1651,4 +1675,170 @@ async fn saved_playlists_follow_history_and_data_deletion() {
     assert_eq!(s, StatusCode::NO_CONTENT);
     let (_, v) = h.call("GET", "/api/playlists", Some(&ana), None).await;
     assert_eq!(v["playlists"], json!([]), "Delete my data removes saved playlists");
+}
+
+// ---- /health ------------------------------------------------------------------------------
+
+/// No grace: a bot that is not connected counts as down right away.
+const NO_GRACE: super::health::Limits = super::health::Limits {
+    grace: Duration::ZERO,
+    max_ping: Duration::from_millis(1000),
+};
+
+async fn health_harness(bots: usize, limits: super::health::Limits) -> Harness {
+    let h = harness_full(Duration::from_secs(3600), true, bots, limits).await;
+    h.state.app.ytdlp_version.set(Some("2026.11.23".into()));
+    h
+}
+
+fn connect(h: &Harness, index: usize, name: &str) {
+    let bots = &h.state.app.bots;
+    bots.on_ready(index, 987_654_321 + index as u64, 123_456_789, name, 1, &[]);
+    bots.bot(index).unwrap().set_shard_connected(0, true);
+}
+
+async fn fresh(h: &Harness, path: &str) -> (StatusCode, Value) {
+    h.state.health.invalidate().await;
+    h.call("GET", path, None, None).await
+}
+
+#[tokio::test]
+async fn health_status_and_bot_routes() {
+    let h = health_harness(2, NO_GRACE).await;
+    // Nothing connected: down.
+    let (s, v) = fresh(&h, "/health").await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(v["status"], "down");
+    assert_eq!(h.call("GET", "/health/bots/0", None, None).await.0, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(h.call("GET", "/health/bots/1", None, None).await.0, StatusCode::SERVICE_UNAVAILABLE);
+    let (s, v) = h.call("GET", "/health/bots/2", None, None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert_eq!(code(&v), "not_found");
+    assert_eq!(h.call("GET", "/health/bots/main", None, None).await.0, StatusCode::NOT_FOUND);
+
+    // Main bot up, voice bot down: degraded (still 200).
+    connect(&h, 0, "Lynx");
+    let (s, v) = fresh(&h, "/health").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["status"], "degraded");
+    let (s, b) = h.call("GET", "/health/bots/0", None, None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["status"], "ok");
+    assert_eq!(b["connected"], true);
+    let (s, b) = h.call("GET", "/health/bots/1", None, None).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(b["role"], "voice");
+    assert_eq!(b["connected"], false);
+    assert!(b["downSince"].as_str().unwrap().ends_with('Z'));
+
+    // Everything up: ok.
+    connect(&h, 1, "Lynx Voice");
+    let (s, v) = fresh(&h, "/health/").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(v["bots"][1]["name"], "Lynx Voice");
+    assert_eq!(v["bots"][1]["downSince"], Value::Null);
+
+    // yt-dlp unusable: degraded.
+    h.state.app.ytdlp_version.set(None);
+    let (s, v) = fresh(&h, "/health").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["status"], "degraded");
+    assert_eq!(v["services"]["ytdlp"]["ok"], false);
+    h.state.app.ytdlp_version.set(Some("2026.11.23".into()));
+
+    // Main bot loses its gateway: down again.
+    h.state.app.bots.bot(0).unwrap().set_shard_connected(0, false);
+    let (s, v) = fresh(&h, "/health").await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(v["status"], "down");
+
+    // Database gone: down even with every bot connected.
+    connect(&h, 0, "Lynx");
+    assert_eq!(fresh(&h, "/health").await.1["status"], "ok");
+    h.state.app.store.close().await;
+    let (s, v) = fresh(&h, "/health").await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(v["services"]["database"]["ok"], false);
+}
+
+#[tokio::test]
+async fn health_rides_out_reconnects_within_the_grace() {
+    let h = health_harness(2, super::health::LIMITS).await;
+    // Just started, nobody connected yet: within the grace, so not down.
+    let (s, v) = fresh(&h, "/health").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["status"], "ok");
+    assert_eq!(v["bots"][0]["connected"], false);
+    assert!(v["bots"][0]["downSince"].is_string());
+    assert_eq!(h.call("GET", "/health/bots/1", None, None).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn health_json_shape_has_no_ids_or_secrets() {
+    let h = health_harness(2, NO_GRACE).await;
+    connect(&h, 0, "Lynx");
+    connect(&h, 1, "Lynx Voice");
+    h.state.app.bots.set_member(555_555_555, 0, true);
+    let req = Request::builder().uri("/health").body(Body::empty()).unwrap();
+    let res = h.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()["cache-control"], "no-store");
+    assert_eq!(res.headers()["x-robots-tag"], "noindex");
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    for secret in ["987654321", "123456789", "555555555", "token", "/tmp", "lynx-api-test"] {
+        assert!(!text.contains(secret), "{secret} leaked: {text}");
+    }
+    let v: Value = serde_json::from_str(&text).unwrap();
+    let keys = |v: &Value| {
+        let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        k.sort();
+        k
+    };
+    assert_eq!(
+        keys(&v),
+        ["bots", "checkedAt", "commit", "players", "services", "status", "uptimeSecs", "version"]
+    );
+    assert_eq!(
+        keys(&v["bots"][0]),
+        [
+            "connected",
+            "downSince",
+            "gatewayPingMs",
+            "guilds",
+            "index",
+            "name",
+            "role",
+            "shards",
+            "status",
+            "voiceSessions"
+        ]
+    );
+    assert_eq!(v["bots"][0]["role"], "main");
+    assert_eq!(v["bots"][1]["role"], "voice");
+    assert_eq!(v["bots"][0]["guilds"], 1);
+    assert_eq!(v["bots"][0]["shards"], json!({ "total": 1, "connected": 1 }));
+    assert_eq!(v["services"]["database"]["ok"], true);
+    assert!(v["services"]["database"]["latencyMs"].is_u64());
+    assert_eq!(v["services"]["ytdlp"], json!({ "ok": true, "version": "2026.11.23" }));
+    assert_eq!(v["services"]["ollama"], Value::Null, "Ollama is not configured in tests");
+    assert_eq!(v["players"], json!({ "active": 0, "playing": 0 }));
+    assert!(v["checkedAt"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[tokio::test]
+async fn health_report_is_cached() {
+    let h = health_harness(1, NO_GRACE).await;
+    connect(&h, 0, "Lynx");
+    assert_eq!(fresh(&h, "/health").await.0, StatusCode::OK);
+    // The bot drops, but the cached report is served for a few seconds.
+    h.state.app.bots.bot(0).unwrap().set_shard_connected(0, false);
+    let (s, v) = h.call("GET", "/health", None, None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["status"], "ok");
+    assert_eq!(h.call("GET", "/health/bots/0", None, None).await.0, StatusCode::OK);
+    // Once it expires the new state shows.
+    assert_eq!(fresh(&h, "/health").await.0, StatusCode::SERVICE_UNAVAILABLE);
 }

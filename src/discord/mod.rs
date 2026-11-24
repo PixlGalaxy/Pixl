@@ -26,8 +26,12 @@ use std::sync::{
 
 use anyhow::Result;
 use serenity::{
-    all::{Context, EventHandler, GatewayIntents, GuildChannel, Interaction, Ready, UnavailableGuild, VoiceState},
+    all::{
+        Context, EventHandler, GatewayIntents, GuildChannel, Interaction, Ready, ResumedEvent, ShardStageUpdateEvent,
+        UnavailableGuild, VoiceState,
+    },
     async_trait,
+    gateway::ConnectionStage,
     model::guild::Guild,
     Client,
 };
@@ -165,6 +169,7 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         let Some(lynx) = self.lynx() else { return };
         let shards = ready.shard.map(|s| s.total).unwrap_or(1);
+        let shard = ready.shard.map(|s| s.id.0).unwrap_or(ctx.shard_id.0);
         let guilds: Vec<u64> = ready.guilds.iter().map(|g| g.id.get()).collect();
         info!(bot = self.index, user = %ready.user.name, guilds = guilds.len(), "bot ready");
         lynx.bots.on_ready(
@@ -176,12 +181,29 @@ impl EventHandler for Handler {
             shards,
             &guilds,
         );
+        if let Some(me) = self.me(lynx) {
+            me.set_shard_connected(shard, true);
+        }
         if self.index == 0 && !self.registered.swap(true, Ordering::AcqRel) {
             let lynx = lynx.clone();
             let http = ctx.http.clone();
             tokio::spawn(async move { commands::register_main(&lynx).await });
             // Button icons: application emojis owned by the main app (usable in every guild).
             tokio::spawn(async move { emojis::sync_main(&http).await });
+        }
+    }
+
+    async fn resume(&self, ctx: Context, _: ResumedEvent) {
+        let Some(lynx) = self.lynx() else { return };
+        if let Some(me) = self.me(lynx) {
+            me.set_shard_connected(ctx.shard_id.0, true);
+        }
+    }
+
+    async fn shard_stage_update(&self, _ctx: Context, event: ShardStageUpdateEvent) {
+        let Some(lynx) = self.lynx() else { return };
+        if let Some(me) = self.me(lynx) {
+            me.set_shard_connected(event.shard_id.0, event.new == ConnectionStage::Connected);
         }
     }
 
