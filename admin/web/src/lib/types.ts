@@ -95,6 +95,8 @@ export type Notice = {
   active: boolean
   createdAt: number
   updatedAt: number
+  /** Managed by the automatic update notices (not editable by hand). */
+  auto: boolean
   /** What users see right now: null when hidden (inactive, not announced yet, ended). */
   phase: 'upcoming' | 'active' | null
   ended: boolean
@@ -120,3 +122,40 @@ export type YtdlpJob = {
 
 export type Tweaks = { flags: Flags; ytdlp: { version: string | null; job: YtdlpJob } }
 export type TweaksInput = Partial<Flags>
+
+export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
+export type UpdateTemplate = { title: string; message: string }
+export type UpdateTemplates = { en: UpdateTemplate; es: UpdateTemplate }
+
+export type AutoUpdateSettings = {
+  enabled: boolean
+  image: string
+  frequency: 'daily' | 'weekly'
+  weekday: Weekday
+  /** `HH:MM` in `timezone`. */
+  time: string
+  timezone: string
+  leadHours: number
+  durationMinutes: number
+  checkIntervalMinutes: number
+  templates: UpdateTemplates
+}
+
+export type AutoUpdateStatus = {
+  checking: boolean
+  publishedCommit: string | null
+  checkedAt: number | null
+  succeededAt: number | null
+  lastError: string | null
+  updateAvailable: boolean | null
+}
+
+export type AutoUpdate = {
+  settings: AutoUpdateSettings
+  status: AutoUpdateStatus
+  /** Short commit of the running build; null for development builds. */
+  runningCommit: string | null
+  nextWindow: number | null
+  defaults: { templates: UpdateTemplates; timezone: string }
+  serverNow: number
+}

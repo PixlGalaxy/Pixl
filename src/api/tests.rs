@@ -246,6 +246,7 @@ async fn harness_opts(
         ai,
         ytdlp_version: Default::default(),
         notices: Default::default(),
+        updates: Default::default(),
         limits: Default::default(),
         shutdown: CancellationToken::new(),
     };

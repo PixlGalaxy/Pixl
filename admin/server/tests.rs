@@ -73,6 +73,7 @@ async fn app_state() -> AppState {
         ai,
         ytdlp_version: Default::default(),
         notices: NoticeBoard::default(),
+        updates: Default::default(),
         limits: Default::default(),
         shutdown: CancellationToken::new(),
     }
@@ -355,6 +356,9 @@ async fn everything_but_the_session_check_needs_a_login() {
         ("DELETE", "/api/notices/1"),
         ("GET", "/api/tweaks"),
         ("PUT", "/api/tweaks"),
+        ("GET", "/api/auto-update"),
+        ("PUT", "/api/auto-update"),
+        ("POST", "/api/auto-update/check"),
         ("POST", "/api/actions/ytdlp-update"),
         ("POST", "/api/actions/clear-stream-cache"),
         ("POST", "/api/actions/clear-lookup-cache"),
@@ -506,6 +510,106 @@ async fn notices_crud_updates_the_board() {
     assert_eq!(r.status, StatusCode::NOT_FOUND);
     let r = h.send("DELETE", "/api/notices/abc", Some(&token), None, &[]).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn auto_update_settings_status_and_check_now() {
+    let h = harness().await;
+    let token = h.login().await;
+    let r = h.send("GET", "/api/auto-update", Some(&token), None, &[]).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let s = &r.body["settings"];
+    assert_eq!(s["enabled"], false, "off by default");
+    assert_eq!(s["image"], "ghcr.io/pixlgalaxy/lynx:lynx");
+    assert_eq!(s["frequency"], "daily");
+    assert_eq!(s["durationMinutes"], 5);
+    assert_eq!(s["checkIntervalMinutes"], 60);
+    assert_eq!(s["templates"]["es"]["title"], "Actualización programada");
+    assert!(r.body["nextWindow"].as_i64().unwrap() > now_secs() * 1000);
+    assert_eq!(r.body["defaults"]["templates"]["en"]["title"], "Scheduled update");
+    assert_eq!(r.body["status"]["checking"], false);
+
+    let mut body = s.clone();
+    body["enabled"] = json!(true);
+    body["frequency"] = json!("weekly");
+    body["weekday"] = json!("sat");
+    body["time"] = json!("3:15");
+    body["timezone"] = json!("America/Mexico_City");
+    body["leadHours"] = json!(72);
+    let r = h
+        .send("PUT", "/api/auto-update", Some(&token), Some(body.clone()), &[])
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["settings"]["time"], "03:15", "normalized");
+    assert_eq!(r.body["settings"]["weekday"], "sat");
+    assert!(h.state.updates.settings().settings.enabled);
+    let saved = h.state.store.auto_update_settings().await.unwrap().unwrap();
+    assert!(saved.contains("America/Mexico_City"), "kept across restarts: {saved}");
+
+    for (k, v) in [
+        ("image", json!("docker.io/library/nginx:latest")),
+        ("image", json!("ghcr.io/Owner/lynx:lynx")),
+        ("time", json!("24:00")),
+        ("timezone", json!("Atlantis/Capital")),
+        ("weekday", json!("someday")),
+        ("frequency", json!("monthly")),
+        ("leadHours", json!(0)),
+        ("durationMinutes", json!(0)),
+        ("checkIntervalMinutes", json!(5)),
+        ("surprise", json!(1)),
+    ] {
+        let mut bad = body.clone();
+        bad[k] = v.clone();
+        let r = h
+            .send("PUT", "/api/auto-update", Some(&token), Some(bad), &[])
+            .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{k}={v}: {}", r.body);
+    }
+    assert_eq!(
+        h.state.updates.settings().settings.timezone,
+        "America/Mexico_City",
+        "refused changes are not applied"
+    );
+
+    let r = h
+        .send("POST", "/api/auto-update/check", Some(&token), None, &[])
+        .await;
+    assert_eq!(r.status, StatusCode::ACCEPTED);
+    assert_eq!(r.body["status"]["checking"], true);
+
+    // The automatic notice cannot be edited by hand (it can be deleted).
+    let start = now_secs() + 3600;
+    let id = h
+        .state
+        .store
+        .upsert_auto_notice(&crate::notices::NewNotice {
+            kind: crate::notices::Kind::Maintenance,
+            title: "Scheduled update".into(),
+            message: "m".into(),
+            starts_at: start,
+            ends_at: start + 300,
+            show_from: start - 600,
+            active: true,
+        })
+        .await
+        .unwrap();
+    h.state.notices.set_notices(h.state.store.notices().await.unwrap());
+    let r = h.send("GET", "/api/notices", Some(&token), None, &[]).await;
+    assert_eq!(r.body["notices"][0]["auto"], true);
+    let r = h
+        .send(
+            "PUT",
+            &format!("/api/notices/{id}"),
+            Some(&token),
+            Some(json!({ "kind": "info", "title": "x", "startsAt": start * 1000, "durationMinutes": 5 })),
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.body);
+    let r = h
+        .send("DELETE", &format!("/api/notices/{id}"), Some(&token), None, &[])
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
 }
 
 #[tokio::test]

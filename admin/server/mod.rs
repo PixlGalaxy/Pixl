@@ -226,6 +226,11 @@ pub fn router(state: AdminState, web_dir: Option<PathBuf>) -> Router {
             "/api/notices/{id}",
             put(routes::update_notice).delete(routes::delete_notice),
         )
+        .route(
+            "/api/auto-update",
+            get(routes::get_auto_update).put(routes::put_auto_update),
+        )
+        .route("/api/auto-update/check", post(routes::check_auto_update))
         .route("/api/tweaks", get(routes::get_tweaks).put(routes::put_tweaks))
         .route("/api/actions/ytdlp-update", post(routes::ytdlp_update))
         .route("/api/actions/clear-stream-cache", post(routes::clear_stream_cache))

@@ -75,6 +75,8 @@ pub struct Notice {
     pub active: bool,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Written and managed by the automatic update checker (`crate::updates`), not by hand.
+    pub auto: bool,
 }
 
 /// A notice as created or edited (validated by the admin API).
@@ -142,6 +144,7 @@ impl Notice {
             "active": self.active,
             "createdAt": self.created_at * 1000,
             "updatedAt": self.updated_at * 1000,
+            "auto": self.auto,
             "phase": self.phase(now),
             "ended": now >= self.ends_at,
         })
@@ -433,6 +436,7 @@ pub(crate) mod test_util {
             active: true,
             created_at: 0,
             updated_at: 0,
+            auto: false,
         }
     }
 }

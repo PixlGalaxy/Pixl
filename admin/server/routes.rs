@@ -6,7 +6,8 @@
 //! - pause the daily yt-dlp self-update;
 //! - check for a yt-dlp update now (the same GitHub release check the daily task does);
 //! - clear the in-memory stream URL cache;
-//! - clear the SQLite lookup cache (searches, lists, YouTube matches).
+//! - clear the SQLite lookup cache (searches, lists, YouTube matches);
+//! - automatic "scheduled update" notices: settings, status and a check now (`crate::updates`).
 //!
 //! Database and yt-dlp work runs on the bot's runtime ([`AdminState::on_main`]) with a timeout.
 
@@ -29,6 +30,7 @@ use crate::{
     discord::about,
     notices::{Flags, Kind, NewNotice, Notice, MAX_MESSAGE, MAX_TITLE},
     store::now_secs,
+    updates::{self, Settings},
 };
 
 /// Notices kept at most (old ones are pruned automatically).
@@ -261,6 +263,11 @@ pub async fn update_notice(
 ) -> AdminResult<Json<Value>> {
     let id = notice_id(&id)?;
     let n = validate(b, now_secs())?;
+    if st.app().notices.notices().iter().any(|n| n.id == id && n.auto) {
+        return Err(AdminError::invalid(
+            "this notice is managed by the automatic update notices; change their settings instead",
+        ));
+    }
     change(&st, Change::Update(id, n)).await
 }
 
@@ -370,4 +377,61 @@ pub async fn clear_lookup_cache(_: Admin, State(st): State<AdminState>) -> Admin
         .map_err(db_error)?;
     info!(removed, "admin cleared the lookup cache");
     Ok(Json(json!({ "removed": removed })))
+}
+
+fn auto_update_json(st: &AdminState) -> Value {
+    let checker = &st.app().updates;
+    let now = now_secs();
+    json!({
+        "settings": checker.settings().settings,
+        "status": checker.status(),
+        "runningCommit": updates::running_commit(),
+        "nextWindow": checker.next_window(now).map(|t| t * 1000),
+        "defaults": {
+            "templates": updates::Templates::default(),
+            "timezone": updates::default_timezone(),
+        },
+        "serverNow": now * 1000,
+    })
+}
+
+/// `GET /api/auto-update`: settings and status of the automatic update notices.
+pub async fn get_auto_update(_: Admin, State(st): State<AdminState>) -> Json<Value> {
+    Json(auto_update_json(&st))
+}
+
+/// `PUT /api/auto-update`: save the settings (kept across restarts) and re-check right away.
+pub async fn put_auto_update(
+    _: Admin,
+    State(st): State<AdminState>,
+    Body(b): Body<Settings>,
+) -> AdminResult<Json<Value>> {
+    let valid = b.validate().map_err(AdminError::invalid)?;
+    let raw = serde_json::to_string(&valid.settings).map_err(|_| AdminError::internal())?;
+    let app = st.app().clone();
+    let saved = valid.clone();
+    st.on_main(async move {
+        app.store.set_auto_update_settings(&raw).await?;
+        app.updates.set_settings(saved);
+        anyhow::Ok(())
+    })
+    .await?
+    .map_err(db_error)?;
+    let s = &valid.settings;
+    info!(
+        enabled = s.enabled,
+        image = %s.image,
+        frequency = ?s.frequency,
+        time = %s.time,
+        timezone = %s.timezone,
+        "admin changed the automatic update notices"
+    );
+    Ok(Json(auto_update_json(&st)))
+}
+
+/// `POST /api/auto-update/check`: query the registry now (in the background).
+pub async fn check_auto_update(_: Admin, State(st): State<AdminState>) -> (StatusCode, Json<Value>) {
+    info!("admin started an update check");
+    st.app().updates.check_now();
+    (StatusCode::ACCEPTED, Json(auto_update_json(&st)))
 }
