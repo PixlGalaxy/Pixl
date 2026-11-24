@@ -343,8 +343,9 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, socket: WebSock
                     Ok(PlayerEvent::State(snap)) if Some(snap.channel_id) == conn.channel => {
                         conn.state(player.as_ref().map(|p| &p.0)).await
                     }
-                    Ok(PlayerEvent::Position { position_ms, position_at }) => conn.push(json!({
+                    Ok(PlayerEvent::Position { uid, position_ms, position_at }) => conn.push(json!({
                         "type": "position",
+                        "uid": uid.to_string(),
                         "positionMs": position_ms,
                         "positionAt": position_at,
                         "serverNow": epoch_ms(),

@@ -13,7 +13,7 @@ import {
   ThumbsUp,
   Timer,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AddBox } from '../components/AddBox'
 import { AiProgress } from '../components/AiProgress'
@@ -60,10 +60,13 @@ function EmptyChannelBanner({ deadline }: { deadline: number | null }) {
 
 function SeekBar({ state }: { state: PlayerState }) {
   const { t } = useTranslation()
-  const { anchor, setAnchor, channelId, permissions, run } = useLynx()
+  const { anchor, setAnchor, channelId, permissions, run, refresh } = useLynx()
   const position = usePosition(state, anchor)
   const [drag, setDrag] = useState<number | null>(null)
   const duration = state.current?.durationMs ?? null
+  // A drag of the previous track never shows on the next one.
+  const uid = state.current?.uid
+  useEffect(() => setDrag(null), [uid])
 
   if (duration == null) {
     return (
@@ -88,8 +91,12 @@ function SeekBar({ state }: { state: PlayerState }) {
         onCommit={(ms) => {
           setDrag(null)
           if (!channelId) return
-          setAnchor(localAnchor(ms))
-          void run(() => api.seek(channelId, ms))
+          // Bound to this track: if it changes before the server confirms, the new one is not moved.
+          setAnchor(localAnchor(ms, state.current?.uid))
+          // A refused seek (past the real end, seeking unsupported) puts the bar back where it is.
+          void run(() => api.seek(channelId, ms)).then((done) => {
+            if (done === null) void refresh()
+          })
         }}
       />
       <span className="w-11 font-mono text-[11px] text-muted tabular-nums">{fmtTime(duration)}</span>

@@ -79,12 +79,17 @@ impl PlayerSnapshot {
         self.position_now_at(epoch_ms())
     }
 
-    /// Position at `now_ms` (epoch), extrapolated while playing.
+    /// Position at `now_ms` (epoch), extrapolated while playing, never past the track's end (the
+    /// last instants before the end event, or a snapshot that is a little old).
     pub fn position_now_at(&self, now_ms: i64) -> u64 {
-        if self.status == Status::Playing {
+        let pos = if self.status == Status::Playing {
             self.position_ms + (now_ms - self.position_at).max(0) as u64
         } else {
             self.position_ms
+        };
+        match self.current.as_ref().and_then(|e| e.info.duration_ms).filter(|d| *d > 0) {
+            Some(d) => pos.min(d),
+            None => pos,
         }
     }
 }
@@ -94,6 +99,8 @@ impl PlayerSnapshot {
 pub enum PlayerEvent {
     State(std::sync::Arc<PlayerSnapshot>),
     Position {
+        /// The track it is the position of (panels drop a position of another track).
+        uid: uuid::Uuid,
         position_ms: u64,
         position_at: i64,
     },
@@ -389,7 +396,7 @@ mod tests {
 
     #[test]
     fn api_position_is_sampled_when_sent() {
-        // A snapshot published 5 minutes ago while playing (no change since): the panel must get the
+        // A snapshot published 100 s ago while playing (no change since): the panel must get the
         // position of now, not the one of the publish (it used to cap the age and jump back).
         let now = epoch_ms();
         let snap = PlayerSnapshot {
@@ -404,7 +411,7 @@ mod tests {
             empty_channel_deadline: None,
             current: Some(Arc::new(QueueEntry::new(track("a"), Requester::id_only(1)))),
             position_ms: 6_000,
-            position_at: now - 300_000,
+            position_at: now - 100_000,
             upcoming: vec![],
             history: vec![],
             loop_mode: LoopMode::Off,
@@ -415,9 +422,11 @@ mod tests {
             jam: None,
         };
         let api = snap.to_api(&ApiContext::default());
-        assert!((306_000..306_500).contains(&api.position_ms), "{}", api.position_ms);
+        assert!((106_000..106_500).contains(&api.position_ms), "{}", api.position_ms);
         assert!(api.position_at >= now && api.position_at <= api.server_now);
-        assert_eq!(snap.position_now_at(now - 300_000 + 1_000), 7_000);
+        assert_eq!(snap.position_now_at(now - 100_000 + 1_000), 7_000);
+        // Never past the end of the 3:00 track (a /nowplaying card showed 4:20 of 4:15).
+        assert_eq!(snap.position_now_at(now + 600_000), 180_000);
         assert!(next_version() > snap.version, "versions only grow");
     }
 }
