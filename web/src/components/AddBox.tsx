@@ -1,4 +1,4 @@
-import { Link2, Plus, Search, X } from 'lucide-react'
+import { Link2, ListStart, Plus, Search, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
@@ -6,13 +6,13 @@ import { fmtTime } from '../lib/format'
 import { useLynx } from '../lib/lynx'
 import type { AddPosition, SearchResult } from '../lib/types'
 import { useToast } from './Toasts'
-import { Artwork, Button, IconButton, Segmented, Spinner, inputCls } from './ui'
+import { Artwork, Button, IconButton, Spinner, inputCls } from './ui'
 
 const isUrl = (s: string) => /^https?:\/\/\S+$/i.test(s.trim())
 
 /**
  * Add box: a URL is added directly, text searches `/api/search` and lists results to add. The
- * At the end / Play next switch picks where (Play next needs the control permission in DJ mode).
+ * Each result has Play next (ListStart) and Add (Plus); Play next needs the control permission in DJ mode.
  */
 export function AddBox() {
   const { t } = useTranslation()
@@ -23,10 +23,8 @@ export function AddBox() {
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [adding, setAdding] = useState<string | null>(null)
-  const [where, setWhere] = useState<AddPosition>('end')
   // In DJ mode only DJs and managers may put songs ahead of the others.
   const canNext = permissions.canControl
-  const position: AddPosition = canNext ? where : 'end'
   const seq = useRef(0)
 
   const trimmed = query.trim()
@@ -57,9 +55,9 @@ export function AddBox() {
     return () => clearTimeout(timer)
   }, [trimmed, url, errorText])
 
-  const add = async (q: string, key: string) => {
-    if (!channelId) return
-    setAdding(key)
+  const add = async (q: string, key: string, position: AddPosition = 'end') => {
+    if (!channelId || (position === 'next' && !canNext)) return
+    setAdding(`${position}:${key}`)
     const res = await run(() => api.add(channelId, q, position))
     setAdding(null)
     if (res) {
@@ -104,23 +102,26 @@ export function AddBox() {
             </button>
           )}
         </div>
-        <Button type="submit" variant="primary" size="md" icon={<Plus size={14} />} loading={adding === 'form'} disabled={!trimmed}>
+        <Button
+          type="submit"
+          variant="primary"
+          size="md"
+          icon={<Plus size={14} />}
+          loading={adding === 'end:form'}
+          disabled={!trimmed || adding !== null}
+        >
           <span className="hidden min-[420px]:inline">{t('queue.add')}</span>
         </Button>
-      </form>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <Segmented
-          label={t('queue.addWhere')}
-          value={position}
-          disabled={!canNext}
-          onChange={setWhere}
-          options={[
-            { value: 'end', label: t('queue.addEnd') },
-            { value: 'next', label: t('queue.addNext') },
-          ]}
+        <Button
+          type="button"
+          size="md"
+          icon={adding === 'next:form' ? <Spinner size={14} /> : <ListStart size={15} />}
+          disabled={!trimmed || !canNext || adding !== null}
+          title={canNext ? t('queue.addNext') : t('queue.addNextDjOnly')}
+          aria-label={t('queue.addNext')}
+          onClick={() => trimmed && void add(trimmed, 'form', 'next')}
         />
-        {!canNext && <span className="text-[11px] text-muted">{t('queue.addNextDjOnly')}</span>}
-      </div>
+      </form>
 
       {searching && !results && (
         <div className="flex items-center gap-2 px-1 py-2 text-xs text-muted">
@@ -146,11 +147,20 @@ export function AddBox() {
                   </div>
                   <span className="font-mono text-[11px] text-muted tabular-nums">{fmtTime(r.durationMs)}</span>
                   <IconButton
-                    label={t(position === 'next' ? 'queue.addThisNext' : 'queue.addThis', { title: r.title })}
-                    disabled={adding !== null}
-                    onClick={() => add(r.url, r.url)}
+                    label={t('queue.addThisNext', { title: r.title })}
+                    title={canNext ? t('queue.addNext') : t('queue.addNextDjOnly')}
+                    disabled={adding !== null || !canNext}
+                    onClick={() => add(r.url, r.url, 'next')}
                   >
-                    {adding === r.url ? <Spinner size={14} /> : <Plus size={16} />}
+                    {adding === `next:${r.url}` ? <Spinner size={14} /> : <ListStart size={16} />}
+                  </IconButton>
+                  <IconButton
+                    label={t('queue.addThis', { title: r.title })}
+                    title={t('queue.addEnd')}
+                    disabled={adding !== null}
+                    onClick={() => add(r.url, r.url, 'end')}
+                  >
+                    {adding === `end:${r.url}` ? <Spinner size={14} /> : <Plus size={16} />}
                   </IconButton>
                 </li>
               ))}
