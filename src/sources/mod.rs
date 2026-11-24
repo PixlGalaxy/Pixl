@@ -732,6 +732,7 @@ impl Sources {
         if q.is_empty() {
             return Ok(Vec::new());
         }
+        crate::stats::count(crate::stats::Counter::Searches);
         let limit = limit.clamp(1, 25);
         let key = format!("{}|{limit}", text::normalize(q));
         if let Ok(Some(hit)) = self.inner.store.cache_get::<Vec<TrackInfo>>(SEARCH_CACHE_NS, &key).await {

@@ -1,13 +1,18 @@
+// The admin panel backend lives in admin/server (with its UI in admin/web).
+#[path = "../admin/server/mod.rs"]
+mod admin;
 mod ai;
 mod api;
 mod config;
 mod discord;
 mod i18n;
+mod logs;
 mod notices;
 mod perms;
 mod player;
 mod procs;
 mod sources;
+mod stats;
 mod store;
 
 use std::{sync::Arc, time::Duration};
@@ -54,13 +59,22 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // `lynx hash-admin-password`: print an Argon2 hash for ADMIN_PASSWORD_HASH and exit.
+    if std::env::args().nth(1).as_deref() == Some("hash-admin-password") {
+        return admin::hash_password_cli();
+    }
     discord::about::mark_start();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("LOG_LEVEL")
-                .unwrap_or_else(|_| "info,serenity=warn,songbird=warn,sqlx=warn".into()),
-        )
-        .init();
+    {
+        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+        let filter = tracing_subscriber::EnvFilter::try_from_env("LOG_LEVEL")
+            .unwrap_or_else(|_| "info,serenity=warn,songbird=warn,sqlx=warn".into());
+        // stdout as before, plus the admin panel's live log tee (bounded, never blocks).
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(logs::TeeLayer)
+            .init();
+    }
 
     let config = Arc::new(Config::from_env()?);
     tokio::fs::create_dir_all(&config.appdata_dir).await?;
@@ -79,7 +93,7 @@ async fn main() -> Result<()> {
     sources.ytdlp().set_updates_paused(notices.flags().ytdlp_updates_paused);
     notices::install(notices.clone(), i18n.clone());
     let notice_task = notices.spawn_ticker(store.clone(), shutdown.clone());
-    let admin_config = api::admin::AdminConfig::from_env()?;
+    let admin_config = admin::AdminConfig::from_env()?;
 
     // Background housekeeping.
     let maintenance = store::spawn_maintenance(
@@ -155,16 +169,10 @@ async fn main() -> Result<()> {
         })
     };
 
-    // Admin panel: its own listener (127.0.0.1:4001 by default, nginx serves it on 8081), only when
-    // ADMIN_PASSWORD is set. The Activity listener above never routes anything admin.
-    let admin = admin_config.enabled().then(|| {
-        let state = state.clone();
-        tokio::spawn(async move {
-            if let Err(e) = api::admin::serve(state, admin_config).await {
-                tracing::error!(error = %e, "admin http server failed; the admin panel is unavailable");
-            }
-        })
-    });
+    // Admin panel: its own listener (127.0.0.1:4001 by default, nginx serves it on 8081) on its own
+    // thread and runtime, only when ADMIN_USERNAME and a password are set. It can fail or be flooded
+    // without touching the bot; the Activity listener above never routes anything admin.
+    let admin = admin::start(state.clone(), admin_config);
 
     wait_for_signal().await;
     info!("shutdown requested");
@@ -185,7 +193,7 @@ async fn main() -> Result<()> {
         let _ = gateways.await;
         let _ = api.await;
         if let Some(admin) = admin {
-            let _ = admin.await;
+            let _ = tokio::task::spawn_blocking(move || admin.join()).await;
         }
         let _ = notice_task.await;
         let _ = maintenance.await;

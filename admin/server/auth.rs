@@ -1,12 +1,16 @@
-//! Admin sign-in: password check, sessions, the session cookie and the CSRF guard.
+//! Admin sign-in: credentials check, sessions, the session cookie and the CSRF guard.
 
 use std::{
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 
+use argon2::{
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
 use axum::{
-    extract::{FromRequestParts, Request, State},
+    extract::{ConnectInfo, FromRequestParts, Request, State},
     http::{header, request::Parts, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -18,23 +22,30 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
-use super::{AdminState, SESSION_TTL};
-use crate::api::{
-    auth::PeerAddr,
-    error::{ApiError, Body},
-    session::hash_token,
+use super::{
+    error::{AdminError, Body},
+    AdminState, MIN_PASSWORD_CHARS, SESSION_TTL,
 };
 
 pub const COOKIE: &str = "lynx_admin";
 /// Header every mutating request must carry (a cross-site form or image cannot set it, and a
 /// cross-origin script would need a CORS preflight that this server never grants).
 pub const CSRF_HEADER: &str = "x-lynx-admin";
-/// Wait before answering a wrong password.
+/// Wait before answering wrong credentials.
 const FAIL_DELAY: Duration = Duration::from_millis(300);
-const MAX_PASSWORD_BYTES: usize = 1024;
+const MAX_FIELD_BYTES: usize = 1024;
 
 pub fn digest(s: &str) -> [u8; 32] {
     Sha256::digest(s.as_bytes()).into()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// SHA-256 of a token, hex: the only form a session token is kept in.
+fn hash_token(token: &str) -> String {
+    hex(&digest(token))
 }
 
 /// Constant-time comparison: the time taken never depends on where the inputs differ.
@@ -44,6 +55,98 @@ pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     }
     let diff = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
     std::hint::black_box(diff) == 0
+}
+
+/// How the password is checked.
+#[derive(Clone)]
+enum Secret {
+    /// SHA-256 of `ADMIN_PASSWORD` (compared in constant time).
+    Plain([u8; 32]),
+    /// `ADMIN_PASSWORD_HASH`: an Argon2 PHC string (`$argon2id$v=19$m=...`).
+    Argon2(String),
+}
+
+/// `ADMIN_USERNAME` plus `ADMIN_PASSWORD` or `ADMIN_PASSWORD_HASH`.
+#[derive(Clone)]
+pub struct Credentials {
+    username: [u8; 32],
+    secret: Secret,
+}
+
+impl Credentials {
+    /// None (admin off, with a warning when something was set) unless the username and a usable
+    /// password or hash are given. The hash wins when both are set.
+    pub fn from_parts(username: Option<String>, password: Option<String>, hash: Option<String>) -> Option<Self> {
+        let any = username.is_some() || password.is_some() || hash.is_some();
+        let Some(user) = username else {
+            if any {
+                warn!("ADMIN_USERNAME is not set; the admin panel stays off");
+            }
+            return None;
+        };
+        let secret = match (hash, password) {
+            (Some(h), p) => {
+                if p.is_some() {
+                    warn!("both ADMIN_PASSWORD and ADMIN_PASSWORD_HASH are set; using the hash");
+                }
+                let ok = PasswordHash::new(&h).is_ok_and(|ph| ph.algorithm.as_str().starts_with("argon2"));
+                if !ok {
+                    warn!("ADMIN_PASSWORD_HASH is not an Argon2 hash (see `lynx hash-admin-password`); the admin panel stays off");
+                    return None;
+                }
+                Secret::Argon2(h)
+            }
+            (None, Some(p)) if p.chars().count() >= MIN_PASSWORD_CHARS => Secret::Plain(digest(&p)),
+            (None, Some(_)) => {
+                warn!(
+                    min = MIN_PASSWORD_CHARS,
+                    "ADMIN_PASSWORD is too short; the admin panel stays off"
+                );
+                return None;
+            }
+            (None, None) => {
+                warn!("ADMIN_PASSWORD or ADMIN_PASSWORD_HASH is not set; the admin panel stays off");
+                return None;
+            }
+        };
+        Some(Self {
+            username: digest(&user),
+            secret,
+        })
+    }
+
+    /// Both fields are always checked, so the time taken does not reveal which one was wrong.
+    pub async fn verify(&self, username: &str, password: &str) -> bool {
+        if username.len() > MAX_FIELD_BYTES || password.len() > MAX_FIELD_BYTES {
+            return false;
+        }
+        let user_ok = ct_eq(&digest(username), &self.username);
+        let pass_ok = match &self.secret {
+            Secret::Plain(d) => ct_eq(&digest(password), d),
+            Secret::Argon2(phc) => {
+                let (phc, password) = (phc.clone(), password.to_owned());
+                // Argon2 is deliberately slow: off the async workers.
+                tokio::task::spawn_blocking(move || {
+                    PasswordHash::new(&phc)
+                        .is_ok_and(|h| Argon2::default().verify_password(password.as_bytes(), &h).is_ok())
+                })
+                .await
+                .unwrap_or(false)
+            }
+        };
+        user_ok & pass_ok
+    }
+}
+
+/// Argon2id hash (PHC string) of `password` with a random salt.
+pub fn hash_password(password: &str) -> anyhow::Result<String> {
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).map_err(|e| anyhow::anyhow!("random source: {e}"))?;
+    let salt = SaltString::encode_b64(&salt).map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .to_string())
 }
 
 /// In-memory admin sessions (token hash -> expiry). A restart signs everyone out.
@@ -73,7 +176,7 @@ impl AdminSessions {
         }
         let mut buf = [0u8; 32];
         getrandom::fill(&mut buf).expect("OS random source");
-        let token: String = buf.iter().map(|b| format!("{b:02x}")).collect();
+        let token = hex(&buf);
         self.map.insert(hash_token(&token), Instant::now() + self.ttl);
         token
     }
@@ -124,7 +227,23 @@ pub fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> String {
     }
 }
 
-fn cookie_token(headers: &HeaderMap) -> Option<String> {
+/// The socket address when served (absent in router tests).
+pub struct Peer(pub Option<SocketAddr>);
+
+impl<S: Send + Sync> FromRequestParts<S> for Peer {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            parts
+                .extensions
+                .get::<ConnectInfo<super::limit::PeerAddr>>()
+                .map(|c| c.0 .0),
+        ))
+    }
+}
+
+pub fn cookie_token(headers: &HeaderMap) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
@@ -161,17 +280,24 @@ fn clear_cookie(secure: bool) -> String {
     )
 }
 
-/// A signed-in admin (any route except session, login and logout).
-pub struct Admin;
+/// A signed-in admin (every route except session, login and logout). Carries the token, so a
+/// long-lived stream can notice when its session ends.
+pub struct Admin(pub String);
 
 impl FromRequestParts<AdminState> for Admin {
-    type Rejection = ApiError;
+    type Rejection = AdminError;
 
     async fn from_request_parts(parts: &mut Parts, st: &AdminState) -> Result<Self, Self::Rejection> {
         match cookie_token(&parts.headers) {
-            Some(t) if st.sessions.valid(&t) => Ok(Admin),
-            _ => Err(ApiError::unauthorized()),
+            Some(t) if st.sessions.valid(&t) => Ok(Admin(t)),
+            _ => Err(AdminError::unauthorized()),
         }
+    }
+}
+
+impl AdminState {
+    pub fn session_valid(&self, token: &str) -> bool {
+        self.sessions.valid(token)
     }
 }
 
@@ -183,26 +309,31 @@ pub async fn session(State(st): State<AdminState>, headers: HeaderMap) -> Json<s
 
 #[derive(Deserialize)]
 pub struct LoginBody {
+    username: String,
     password: String,
 }
 
 /// `POST /api/login`
 pub async fn login(
     State(st): State<AdminState>,
-    PeerAddr(peer): PeerAddr,
+    Peer(peer): Peer,
     headers: HeaderMap,
     Body(body): Body<LoginBody>,
 ) -> Response {
     let ip = client_ip(&headers, peer);
     if !st.login_ip.allow(ip.clone()) || !st.login_all.allow(()) {
-        warn!(%ip, "admin login rate limited");
-        return ApiError::rate_limited().with_retry_after(60).into_response();
+        warn!(%ip, "admin sign-in rate limited");
+        return AdminError::rate_limited().into_response();
     }
-    let ok = body.password.len() <= MAX_PASSWORD_BYTES && ct_eq(&digest(&body.password), &st.password_digest);
-    if !ok {
-        warn!(%ip, "admin login failed");
+    if !st.credentials.verify(&body.username, &body.password).await {
+        warn!(%ip, "admin sign-in failed");
         tokio::time::sleep(FAIL_DELAY).await;
-        return ApiError::new(StatusCode::UNAUTHORIZED, "wrong_password", "Wrong password").into_response();
+        return AdminError::new(
+            StatusCode::UNAUTHORIZED,
+            "wrong_credentials",
+            "Wrong username or password",
+        )
+        .into_response();
     }
     info!(%ip, "admin signed in");
     let token = st.sessions.create();
@@ -262,7 +393,7 @@ pub fn csrf_refusal(method: &Method, headers: &HeaderMap) -> Option<&'static str
 pub async fn csrf_guard(req: Request, next: Next) -> Response {
     if let Some(reason) = csrf_refusal(req.method(), req.headers()) {
         warn!(reason, path = %req.uri().path(), "admin request refused (csrf)");
-        return ApiError::new(StatusCode::FORBIDDEN, "csrf", "Request refused").into_response();
+        return AdminError::new(StatusCode::FORBIDDEN, "csrf", "Request refused").into_response();
     }
     next.run(req).await
 }
@@ -278,6 +409,41 @@ mod tests {
         assert!(!ct_eq(b"abc", b"abcd"));
         assert!(ct_eq(&digest("pw"), &digest("pw")));
         assert!(!ct_eq(&digest("pw"), &digest("pw ")));
+    }
+
+    #[test]
+    fn credentials_need_a_username_and_a_good_secret() {
+        let s = |v: &str| Some(v.to_owned());
+        assert!(Credentials::from_parts(None, s("a long enough password"), None).is_none());
+        assert!(Credentials::from_parts(s("admin"), None, None).is_none());
+        assert!(Credentials::from_parts(s("admin"), s("short"), None).is_none());
+        assert!(Credentials::from_parts(s("admin"), None, s("not a hash")).is_none());
+        assert!(Credentials::from_parts(s("admin"), None, s("$pbkdf2-sha256$i=1$c2FsdA$aGFzaA")).is_none());
+        assert!(Credentials::from_parts(s("admin"), s("a long enough password"), None).is_some());
+        assert!(Credentials::from_parts(None, None, None).is_none());
+    }
+
+    #[tokio::test]
+    async fn plain_and_hashed_passwords_verify_both_fields() {
+        let s = |v: &str| Some(v.to_owned());
+        let plain = Credentials::from_parts(s("admin"), s("a long enough password"), None).unwrap();
+        assert!(plain.verify("admin", "a long enough password").await);
+        assert!(!plain.verify("Admin", "a long enough password").await);
+        assert!(!plain.verify("admin", "a long enough passwor").await);
+        assert!(!plain.verify("", "").await);
+
+        // Cheap parameters so the test stays fast; real hashes use Argon2id defaults.
+        let params = argon2::Params::new(8, 1, 1, None).unwrap();
+        let a2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+        let salt = SaltString::encode_b64(b"0123456789abcdef").unwrap();
+        let phc = a2.hash_password(b"hashed secret 123", &salt).unwrap().to_string();
+        let hashed = Credentials::from_parts(s("ops"), s("ignored plain one"), Some(phc)).unwrap();
+        assert!(hashed.verify("ops", "hashed secret 123").await);
+        assert!(!hashed.verify("ops", "ignored plain one").await, "the hash wins");
+        assert!(!hashed.verify("admin", "hashed secret 123").await);
+
+        let made = hash_password("another long password").unwrap();
+        assert!(made.starts_with("$argon2id$"));
     }
 
     #[test]

@@ -4,12 +4,11 @@
 //! this router only defines `/api/...`, `/ws`, `/cdn/...`, `/img` and `/healthz` (plan/api.md).
 //! `/health` (public report for uptime monitors) is also proxied at the domain root.
 
-pub mod admin;
 mod ai;
 mod auth;
 mod error;
 mod follow;
-mod health;
+pub(crate) mod health;
 mod jam;
 mod me;
 mod media;
@@ -223,8 +222,17 @@ pub fn router(state: ApiState) -> Router {
         .route("/ws", get(ws::upgrade))
         .route("/cdn/{*path}", get(media::cdn))
         .route("/img", get(media::img))
+        // Activity counters for the admin panel (matched routes only, so the groups stay bounded).
+        .route_layer(axum::middleware::from_fn(count_request))
         .fallback(|| async { error::ApiError::not_found("no such route") })
         .with_state(state)
+}
+
+async fn count_request(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    if let Some(p) = req.extensions().get::<axum::extract::MatchedPath>() {
+        crate::stats::api(crate::stats::api_group(p.as_str()));
+    }
+    next.run(req).await
 }
 
 pub async fn serve(state: AppState) -> Result<()> {

@@ -5,6 +5,7 @@ use std::{sync::Arc, time::Duration};
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
+    routing::get,
     Router,
 };
 use serde_json::{json, Value};
@@ -13,7 +14,7 @@ use songbird::Songbird;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
-use super::{router, AdminConfig, AdminState, LOGIN_PER_IP};
+use super::{auth::Credentials, harden, router, AdminConfig, AdminDeps, AdminState, LOGIN_PER_IP};
 use crate::{
     ai::AiEngine,
     discord::registry::{BotInfo, BotRegistry},
@@ -26,9 +27,10 @@ use crate::{
     AppState,
 };
 
+const USER: &str = "operator";
 const PASSWORD: &str = "correct horse battery staple";
 
-pub(crate) async fn app_state() -> AppState {
+async fn app_state() -> AppState {
     let dir = std::env::temp_dir().join(format!("lynx-admin-test-{}", uuid::Uuid::new_v4()));
     let config = Arc::new(crate::ai::test_util::config(dir));
     let store = Store::open_in_memory().await.unwrap();
@@ -36,12 +38,18 @@ pub(crate) async fn app_state() -> AppState {
     let procs = ProcessRegistry::new();
     let sources = Sources::new(&config, store.clone(), procs.clone()).unwrap();
     let (sessions, _task) = SessionWriter::spawn(store.clone());
-    let bots = Arc::new(BotRegistry::new(vec![Arc::new(BotInfo::new(
-        0,
-        Arc::new(Http::new("x")),
-        Arc::new(Cache::new()),
-        Songbird::serenity(),
-    ))]));
+    let bots = Arc::new(BotRegistry::new(
+        (0..2)
+            .map(|i| {
+                Arc::new(BotInfo::new(
+                    i,
+                    Arc::new(Http::new("x")),
+                    Arc::new(Cache::new()),
+                    Songbird::serenity(),
+                ))
+            })
+            .collect(),
+    ));
     let ai = AiEngine::new(&config, store.clone(), sources.clone());
     let players = PlayerManager::new(PlayerDeps {
         config: config.clone(),
@@ -69,13 +77,21 @@ pub(crate) async fn app_state() -> AppState {
     }
 }
 
-fn cfg(password: Option<&str>) -> AdminConfig {
+fn cfg(user: Option<&str>, password: Option<&str>) -> AdminConfig {
     AdminConfig {
-        password: password.map(String::from),
+        credentials: Credentials::from_parts(user.map(String::from), password.map(String::from), None),
         host: "127.0.0.1".into(),
         port: 0,
         web_dir: None,
         cookie_secure: None,
+    }
+}
+
+fn deps(app: AppState) -> AdminDeps {
+    AdminDeps {
+        app,
+        main: tokio::runtime::Handle::current(),
+        snapshot: tokio::sync::watch::channel(None).1,
     }
 }
 
@@ -86,7 +102,7 @@ struct H {
 
 async fn harness() -> H {
     let state = app_state().await;
-    let admin = AdminState::new(state.clone(), &cfg(Some(PASSWORD))).unwrap();
+    let admin = AdminState::new(deps(state.clone()), &cfg(Some(USER), Some(PASSWORD))).unwrap();
     H {
         app: router(admin, None),
         state,
@@ -138,7 +154,13 @@ impl H {
 
     async fn login(&self) -> String {
         let r = self
-            .send("POST", "/api/login", None, Some(json!({ "password": PASSWORD })), &[])
+            .send(
+                "POST",
+                "/api/login",
+                None,
+                Some(json!({ "username": USER, "password": PASSWORD })),
+                &[],
+            )
             .await;
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
         let cookie = r.headers[header::SET_COOKIE].to_str().unwrap().to_owned();
@@ -157,13 +179,32 @@ fn code(v: &Value) -> &str {
 }
 
 #[tokio::test]
-async fn admin_is_off_without_a_password() {
+async fn admin_is_off_without_username_and_password() {
     let state = app_state().await;
-    assert!(AdminState::new(state, &cfg(None)).is_none());
-    assert!(!cfg(None).enabled());
-    assert!(cfg(Some(PASSWORD)).enabled());
-    let debug = format!("{:?}", cfg(Some(PASSWORD)));
-    assert!(!debug.contains(PASSWORD), "the password never shows in logs: {debug}");
+    assert!(AdminState::new(deps(state.clone()), &cfg(None, None)).is_none());
+    assert!(
+        AdminState::new(deps(state.clone()), &cfg(None, Some(PASSWORD))).is_none(),
+        "no username"
+    );
+    assert!(
+        AdminState::new(deps(state.clone()), &cfg(Some(USER), None)).is_none(),
+        "no password"
+    );
+    assert!(
+        AdminState::new(deps(state), &cfg(Some(USER), Some("short"))).is_none(),
+        "too short"
+    );
+    assert!(!cfg(None, None).enabled());
+    assert!(cfg(Some(USER), Some(PASSWORD)).enabled());
+    assert!(
+        super::start(app_state().await, cfg(None, None)).is_none(),
+        "nothing starts when off"
+    );
+    let debug = format!("{:?}", cfg(Some(USER), Some(PASSWORD)));
+    assert!(
+        !debug.contains(PASSWORD) && !debug.contains(USER),
+        "credentials never show in logs: {debug}"
+    );
 }
 
 #[tokio::test]
@@ -178,25 +219,38 @@ async fn login_cookie_and_logout() {
         .unwrap()
         .contains("frame-ancestors 'none'"));
 
+    for (u, p) in [
+        (USER, "wrong"),
+        ("admin", PASSWORD),
+        ("", ""),
+        (USER, &format!("{PASSWORD} ")[..]),
+    ] {
+        let r = h
+            .send(
+                "POST",
+                "/api/login",
+                None,
+                Some(json!({ "username": u, "password": p })),
+                &[("x-real-ip", "198.51.100.50")],
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{u}/{p}");
+        assert_eq!(code(&r.body), "wrong_credentials");
+        assert!(r.headers.get(header::SET_COOKIE).is_none());
+    }
     let r = h
-        .send("POST", "/api/login", None, Some(json!({ "password": "wrong" })), &[])
+        .send("POST", "/api/login", None, Some(json!({ "password": PASSWORD })), &[])
         .await;
-    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(code(&r.body), "wrong_password");
-    assert!(r.headers.get(header::SET_COOKIE).is_none());
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "the username is required");
+
     let r = h
         .send(
             "POST",
             "/api/login",
             None,
-            Some(json!({ "password": format!("{PASSWORD} ") })),
+            Some(json!({ "username": USER, "password": PASSWORD })),
             &[],
         )
-        .await;
-    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "exact match only");
-
-    let r = h
-        .send("POST", "/api/login", None, Some(json!({ "password": PASSWORD })), &[])
         .await;
     assert_eq!(r.status, StatusCode::OK);
     let cookie = r.headers[header::SET_COOKIE].to_str().unwrap();
@@ -218,29 +272,31 @@ async fn login_cookie_and_logout() {
         .to_owned();
     assert_eq!(token.len(), 64);
 
-    // Behind an HTTPS proxy the cookie is Secure.
     let r = h
         .send(
             "POST",
             "/api/login",
             None,
-            Some(json!({ "password": PASSWORD })),
+            Some(json!({ "username": USER, "password": PASSWORD })),
             &[("x-forwarded-proto", "https")],
         )
         .await;
-    assert!(r.headers[header::SET_COOKIE].to_str().unwrap().ends_with("; Secure"));
+    assert!(
+        r.headers[header::SET_COOKIE].to_str().unwrap().ends_with("; Secure"),
+        "Secure behind HTTPS"
+    );
 
     let r = h.send("GET", "/api/session", Some(&token), None, &[]).await;
     assert_eq!(r.body["authenticated"], true);
     assert_eq!(
-        h.send("GET", "/api/overview", Some(&token), None, &[]).await.status,
+        h.send("GET", "/api/tweaks", Some(&token), None, &[]).await.status,
         StatusCode::OK
     );
 
     let r = h.send("POST", "/api/logout", Some(&token), None, &[]).await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(r.headers[header::SET_COOKIE].to_str().unwrap().contains("Max-Age=0"));
-    let r = h.send("GET", "/api/overview", Some(&token), None, &[]).await;
+    let r = h.send("GET", "/api/tweaks", Some(&token), None, &[]).await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED, "the session is gone after logout");
 }
 
@@ -249,13 +305,25 @@ async fn login_is_rate_limited_per_ip() {
     let h = harness().await;
     for _ in 0..LOGIN_PER_IP {
         let r = h
-            .send("POST", "/api/login", None, Some(json!({ "password": "nope" })), &[])
+            .send(
+                "POST",
+                "/api/login",
+                None,
+                Some(json!({ "username": USER, "password": "nope" })),
+                &[],
+            )
             .await;
         assert_eq!(r.status, StatusCode::UNAUTHORIZED);
     }
-    // Even the right password is refused while over the limit.
+    // Even the right credentials are refused while over the limit.
     let r = h
-        .send("POST", "/api/login", None, Some(json!({ "password": PASSWORD })), &[])
+        .send(
+            "POST",
+            "/api/login",
+            None,
+            Some(json!({ "username": USER, "password": PASSWORD })),
+            &[],
+        )
         .await;
     assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
     assert!(r.headers.get(header::SET_COOKIE).is_none());
@@ -265,7 +333,7 @@ async fn login_is_rate_limited_per_ip() {
             "POST",
             "/api/login",
             None,
-            Some(json!({ "password": PASSWORD })),
+            Some(json!({ "username": USER, "password": PASSWORD })),
             &[("x-real-ip", "198.51.100.8")],
         )
         .await;
@@ -277,6 +345,9 @@ async fn everything_but_the_session_check_needs_a_login() {
     let h = harness().await;
     for (m, p) in [
         ("GET", "/api/overview"),
+        ("GET", "/api/activity"),
+        ("GET", "/api/logs"),
+        ("GET", "/api/logs/stream"),
         ("GET", "/api/notices"),
         ("POST", "/api/notices"),
         ("PUT", "/api/notices/1"),
@@ -287,7 +358,7 @@ async fn everything_but_the_session_check_needs_a_login() {
         ("POST", "/api/actions/clear-stream-cache"),
         ("POST", "/api/actions/clear-lookup-cache"),
     ] {
-        let body = (m != "GET" && m != "DELETE").then(|| json!({}));
+        let body = (m == "POST" || m == "PUT").then(|| json!({}));
         let r = h.send(m, p, Some(&"0".repeat(64)), body.clone(), &[]).await;
         assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{m} {p}");
         let r = h.send(m, p, None, body, &[]).await;
@@ -338,14 +409,15 @@ async fn mutating_requests_need_the_csrf_header_and_same_origin() {
         .await,
         StatusCode::OK
     );
-    // Login is guarded too.
     let r = Request::builder()
         .method("POST")
         .uri("/api/login")
         .header("content-type", "application/json")
-        .body(Body::from(json!({ "password": PASSWORD }).to_string()))
+        .body(Body::from(
+            json!({ "username": USER, "password": PASSWORD }).to_string(),
+        ))
         .unwrap();
-    assert_eq!(status(r).await, StatusCode::FORBIDDEN);
+    assert_eq!(status(r).await, StatusCode::FORBIDDEN, "sign-in is guarded too");
 }
 
 #[tokio::test]
@@ -376,7 +448,6 @@ async fn notices_crud_updates_the_board() {
     assert_eq!(n.title, "Upgrade");
     assert_eq!(h.state.store.notices().await.unwrap().len(), 1, "saved in SQLite");
 
-    // Invalid input.
     for bad in [
         json!({ "kind": "party", "title": "x", "startsAt": start, "durationMinutes": 10 }),
         json!({ "kind": "info", "startsAt": start, "durationMinutes": 10 }),
@@ -397,7 +468,6 @@ async fn notices_crud_updates_the_board() {
         assert_eq!(r.status, StatusCode::BAD_REQUEST, "{bad}: {}", r.body);
     }
 
-    // Edit: end time instead of duration, announce later, then deactivate.
     let r = h
         .send(
             "PUT",
@@ -411,11 +481,7 @@ async fn notices_crud_updates_the_board() {
     assert_eq!(r.body["notices"][0]["kind"], "warning");
     assert_eq!(r.body["notices"][0]["phase"], Value::Null, "not announced yet");
     assert!(h.state.notices.current(now).is_none());
-    assert_eq!(
-        h.state.notices.public_json(now)["notices"],
-        json!([]),
-        "the Activity sees nothing before show from"
-    );
+    assert_eq!(h.state.notices.public_json(now)["notices"], json!([]));
     let r = h
         .send(
             "PUT",
@@ -467,7 +533,6 @@ async fn tweaks_set_flags_and_clear_caches() {
         h.state.store.admin_flags().await.unwrap().maintenance_mode,
         "kept across restarts"
     );
-    assert!(!h.state.sources.ytdlp().updates_paused());
 
     let r = h
         .send(
@@ -482,6 +547,7 @@ async fn tweaks_set_flags_and_clear_caches() {
         r.body["flags"],
         json!({ "maintenanceMode": true, "ytdlpUpdatesPaused": true })
     );
+    assert_eq!(r.body["ytdlp"]["updatesPaused"], true);
     assert!(h.state.sources.ytdlp().updates_paused());
     let r = h
         .send(
@@ -510,26 +576,153 @@ async fn tweaks_set_flags_and_clear_caches() {
 }
 
 #[tokio::test]
-async fn overview_carries_the_health_report() {
+async fn overview_activity_and_logs() {
     let h = harness().await;
     let token = h.login().await;
     let r = h.send("GET", "/api/overview", Some(&token), None, &[]).await;
-    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert!(r.body["health"]["status"].is_string());
-    assert!(r.body["health"]["bots"].is_array());
+    assert_eq!(r.body["health"]["bots"].as_array().unwrap().len(), 2);
+    assert_eq!(r.body["labels"], json!(["Main", "Voice A"]));
+    assert_eq!(r.body["totals"]["playersActive"], 0);
+    assert!(r.body["totals"]["listeners"].is_number());
     assert_eq!(r.body["health"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(r.body["notices"], json!({ "total": 0, "visible": 0 }));
-    assert_eq!(r.body["flags"]["maintenanceMode"], false);
+    assert!(
+        !r.body.to_string().to_lowercase().contains("node"),
+        "never 'node' in what the UI shows"
+    );
+
+    crate::stats::command("play");
+    let r = h.send("GET", "/api/activity", Some(&token), None, &[]).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body["hour"]["totals"]["commands"].as_u64().unwrap() >= 1);
+    assert_eq!(r.body["hour"]["series"]["commands"].as_array().unwrap().len(), 60);
+    assert_eq!(r.body["day"]["series"]["commands"].as_array().unwrap().len(), 96);
+
+    let marker = format!("admin log test {}", uuid::Uuid::new_v4());
+    crate::logs::global().push("info", "lynx::test", &marker);
+    let r = h.send("GET", "/api/logs", Some(&token), None, &[]).await;
+    assert!(r.body["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|l| l["text"] == marker.as_str()));
+    let latest = r.body["latest"].as_u64().unwrap();
+    let r = h
+        .send("GET", &format!("/api/logs?after={latest}"), Some(&token), None, &[])
+        .await;
+    assert!(r.body["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|l| l["seq"].as_u64().unwrap() > latest));
+}
+
+#[tokio::test]
+async fn log_stream_sends_the_backlog_then_live_lines() {
+    let h = harness().await;
+    let token = h.login().await;
+    let marker = format!("stream test {}", uuid::Uuid::new_v4());
+    let hub = crate::logs::global();
+    hub.push("warn", "lynx::test", &format!("{marker} one"));
+    let after = hub.latest_seq() - 1;
+    let req = Request::builder()
+        .uri(format!("/api/logs/stream?after={after}"))
+        .header(header::COOKIE, format!("lynx_admin={token}"))
+        .body(Body::empty())
+        .unwrap();
+    let res = h.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()[header::CONTENT_TYPE], "text/event-stream");
+    let mut body = res.into_body().into_data_stream();
+    use futures_util::StreamExt;
+    hub.push("info", "lynx::test", &format!("{marker} two"));
+    let mut seen = String::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !(seen.contains(&format!("{marker} one")) && seen.contains(&format!("{marker} two"))) {
+        let chunk = tokio::time::timeout_at(deadline, body.next())
+            .await
+            .expect("stream stalled")
+            .unwrap()
+            .unwrap();
+        seen.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    assert!(seen.contains("event: line"));
+}
+
+#[tokio::test]
+async fn slow_or_panicking_handlers_are_contained() {
+    let app = harden(
+        Router::new()
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    "late"
+                }),
+            )
+            .route(
+                "/boom",
+                get(|| async {
+                    if true {
+                        panic!("admin handler bug");
+                    }
+                    "never"
+                }),
+            ),
+        Duration::from_millis(100),
+    );
+    let call = |p: &str| {
+        let app = app.clone();
+        let req = Request::builder().uri(p).body(Body::empty()).unwrap();
+        async move { app.oneshot(req).await.unwrap().status() }
+    };
+    let started = std::time::Instant::now();
+    assert_eq!(call("/slow").await, StatusCode::REQUEST_TIMEOUT, "the timeout fires");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(
+        call("/boom").await,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "a panic becomes a 500"
+    );
+    let big = Request::builder()
+        .method("POST")
+        .uri("/slow")
+        .body(Body::from(vec![b'x'; 128 * 1024]))
+        .unwrap();
+    let _ = app.clone().oneshot(big).await.unwrap();
+}
+
+#[tokio::test]
+async fn the_bot_keeps_running_when_the_admin_port_is_taken() {
+    // Occupy a port, then start the admin panel on it: start() returns, the thread retries in the
+    // background, and nothing here blocks or panics.
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let app = app_state().await;
+    let stop = app.shutdown.clone();
+    let mut c = cfg(Some(USER), Some(PASSWORD));
+    c.port = port;
+    let handle = super::start(app, c).expect("admin thread started");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!handle.is_finished(), "still retrying, not crashed");
+    stop.cancel();
+    let joined = tokio::task::spawn_blocking(move || handle.join()).await.unwrap();
+    assert!(joined.is_ok(), "the admin thread ends cleanly at shutdown");
 }
 
 #[tokio::test]
 async fn built_ui_is_served_only_when_configured() {
     let dir = std::env::temp_dir().join(format!("lynx-admin-ui-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(dir.join("assets")).unwrap();
-    std::fs::write(dir.join("admin.html"), "<!doctype html><title>Lynx admin</title>").unwrap();
+    std::fs::write(dir.join("index.html"), "<!doctype html><title>Lynx admin</title>").unwrap();
     std::fs::write(dir.join("assets/app.js"), "console.log(1)").unwrap();
     let state = app_state().await;
-    let app = router(AdminState::new(state, &cfg(Some(PASSWORD))).unwrap(), Some(dir.clone()));
+    let app = router(
+        AdminState::new(deps(state), &cfg(Some(USER), Some(PASSWORD))).unwrap(),
+        Some(dir.clone()),
+    );
     let get = |p: &str| {
         let app = app.clone();
         let req = Request::builder().uri(p).body(Body::empty()).unwrap();
@@ -551,4 +744,38 @@ async fn built_ui_is_served_only_when_configured() {
     assert_eq!(s, StatusCode::NOT_FOUND);
     assert!(body.contains("not_found"), "unknown API paths stay JSON 404s");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn isolated_listener_serves_on_its_own_runtime() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let app = app_state().await;
+    let stop = app.shutdown.clone();
+    let mut c = cfg(Some(USER), Some(PASSWORD));
+    c.port = port;
+    let handle = super::start(app, c).expect("admin thread started");
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{port}/api/session");
+    let mut body = None;
+    for _ in 0..50 {
+        if let Ok(r) = client.get(&url).send().await {
+            body = Some(r.json::<Value>().await.unwrap());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(body, Some(json!({ "enabled": true, "authenticated": false })));
+    // Sign in over a real socket: the peer address (loopback) is seen, the cookie comes back.
+    let r = client
+        .post(format!("http://127.0.0.1:{port}/api/login"))
+        .header("x-lynx-admin", "1")
+        .json(&json!({ "username": USER, "password": PASSWORD }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    assert!(r.headers().get("set-cookie").is_some());
+    stop.cancel();
+    let joined = tokio::task::spawn_blocking(move || handle.join()).await.unwrap();
+    assert!(joined.is_ok());
 }

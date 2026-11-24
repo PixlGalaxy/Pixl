@@ -318,6 +318,7 @@ async fn command(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
         cmd.member.as_deref(),
         &cmd.user,
     );
+    crate::stats::command(&cmd.data.name);
     if inv.guild_id == 0 {
         return inv.send(inv.err("guild_only", &[])).await;
     }
@@ -416,6 +417,7 @@ fn int_opt(cmd: &CommandInteraction, name: &str) -> i64 {
 }
 
 async fn autocomplete(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
+    crate::stats::count(crate::stats::Counter::Autocomplete);
     let choices = match cmd.data.autocomplete() {
         Some(opt) if cmd.data.name == "play" => {
             let q = opt.value.trim();
@@ -964,8 +966,15 @@ async fn component(lynx: &Lynx, http: &Http, c: &ComponentInteraction) {
         return;
     }
     let Some(id) = CustomId::parse(&c.data.custom_id) else {
+        crate::stats::button("other");
         return;
     };
+    crate::stats::button(match &id {
+        CustomId::NowPlaying { .. } => "now_playing",
+        CustomId::QueuePage { .. } => "queue_page",
+        CustomId::Replay { .. } => "replay",
+        CustomId::StartRadio { .. } | CustomId::StopRadio { .. } | CustomId::CancelRadio { .. } => "radio",
+    });
     match id {
         CustomId::NowPlaying {
             action: NpAction::Panel,

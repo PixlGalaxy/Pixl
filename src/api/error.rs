@@ -100,6 +100,7 @@ impl ApiError {
     }
 
     pub fn rate_limited() -> Self {
+        crate::stats::count(crate::stats::Counter::RateLimited);
         Self::new(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
