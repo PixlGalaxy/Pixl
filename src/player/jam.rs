@@ -743,7 +743,7 @@ impl JamCore {
             Command::Previous { reply } => {
                 let _ = reply.send(self.previous(now_ms));
             }
-            Command::Seek { position_ms, reply } => {
+            Command::Seek { position_ms, reply, .. } => {
                 let _ = reply.send(self.seek(position_ms, now_ms));
             }
             Command::Loop { mode, reply } => {

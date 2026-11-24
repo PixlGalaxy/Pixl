@@ -145,6 +145,9 @@ pub enum Command {
     },
     Seek {
         position_ms: u64,
+        /// Seeks through a [`PlayerHandle`] carry one: a seek still queued when a newer one was asked
+        /// is answered `Done` without seeking (the latest target wins, nothing piles up).
+        ticket: Option<SeekTicket>,
         reply: Reply<SeekOutcome>,
     },
     Volume {
@@ -252,6 +255,29 @@ pub enum Command {
     },
 }
 
+/// Order of a seek among the seeks asked to one player (see `Command::Seek`).
+#[derive(Debug, Clone)]
+pub struct SeekTicket {
+    seq: u64,
+    latest: Arc<AtomicU64>,
+}
+
+impl SeekTicket {
+    /// The next ticket of a player's seek counter.
+    pub fn next(latest: &Arc<AtomicU64>) -> Self {
+        let seq = latest.fetch_add(1, Ordering::AcqRel) + 1;
+        Self {
+            seq,
+            latest: latest.clone(),
+        }
+    }
+
+    /// A newer seek was asked since this one.
+    pub fn superseded(&self) -> bool {
+        self.latest.load(Ordering::Acquire) != self.seq
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PlayerError {
     #[error("the player is gone")]
@@ -271,6 +297,8 @@ pub struct PlayerHandle {
     tx: mpsc::Sender<Command>,
     events: broadcast::Sender<PlayerEvent>,
     snapshot: Arc<RwLock<Arc<PlayerSnapshot>>>,
+    /// Seeks asked through this player's handles (coalescing, see `SeekTicket`).
+    seeks: Arc<AtomicU64>,
 }
 
 impl PlayerHandle {
@@ -376,7 +404,13 @@ impl PlayerHandle {
     }
 
     pub async fn seek(&self, position_ms: u64) -> Result<SeekOutcome, PlayerError> {
-        self.ask(|reply| Command::Seek { position_ms, reply }).await
+        let ticket = Some(SeekTicket::next(&self.seeks));
+        self.ask(|reply| Command::Seek {
+            position_ms,
+            ticket,
+            reply,
+        })
+        .await
     }
 
     /// 0-100 (100 = original, passthrough). Returns the previous volume.
@@ -656,6 +690,7 @@ impl PlayerManager {
             tx: tx.clone(),
             events: events.clone(),
             snapshot: snapshot.clone(),
+            seeks: Arc::default(),
         };
         let key = SessionKey {
             guild_id: req.guild_id,
@@ -710,6 +745,7 @@ impl PlayerManager {
             tx: tx.clone(),
             events: events.clone(),
             snapshot: snapshot.clone(),
+            seeks: Arc::default(),
         };
         let key = SessionKey {
             guild_id: req.guild_id,

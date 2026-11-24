@@ -1999,3 +1999,27 @@ async fn skip_takes_an_optional_expected_uid() {
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn seek_follows_the_control_rule() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (boss, _) = h.login("boss", None).await;
+    detached_player(&h, VOICE, &["a", "b"]);
+    let seek = json!({ "channelId": "100", "positionMs": 1000 });
+    // Everyone mode: the listener reaches the player (nothing is playing yet: the queue waits).
+    let (s, v) = h.call("POST", "/api/player/seek", Some(&ana), Some(seek.clone())).await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"), "{v}");
+    // DJ mode: refused before the player is asked, like pause or skip.
+    h.call("PUT", "/api/settings", Some(&boss), Some(json!({ "controlMode": "dj" })))
+        .await;
+    let (s, v) = h.call("POST", "/api/player/seek", Some(&ana), Some(seek.clone())).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "no_permission"), "{v}");
+    let (s, v) = h.call("POST", "/api/player/pause", Some(&ana), Some(json!({ "channelId": "100" }))).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "no_permission"), "{v}");
+    // Out of the channel: refused too.
+    h.fake.set_voice(ANA, None);
+    let (s, v) = h.call("POST", "/api/player/seek", Some(&ana), Some(seek)).await;
+    assert_eq!((s, code(&v)), (StatusCode::FORBIDDEN, "not_in_channel"), "{v}");
+}

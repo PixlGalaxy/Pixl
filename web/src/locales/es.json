@@ -265,7 +265,6 @@
     "nothingPlaying": "La letra aparece aquí cuando suena una canción.",
     "source": "de {{source}}",
     "synced": "Sincronizada",
-    "jump": "Ir a esta línea",
     "error": "No se pudo cargar la letra.",
     "none": "No hay letra para esta canción."
   },
@@ -419,7 +418,7 @@
       },
       "lyrics": {
         "title": "Letra",
-        "body": "Las letras vienen de LRCLIB. Las sincronizadas resaltan la línea actual y siguen la canción; toca una línea para ir a ella. Algunas canciones solo tienen la letra sin tiempos y otras no tienen."
+        "body": "Las letras vienen de LRCLIB. Las sincronizadas resaltan la línea actual y siguen la canción. Algunas canciones solo tienen la letra sin tiempos y otras no tienen."
       },
       "radio": {
         "title": "Radio",
@@ -810,8 +809,8 @@
     },
     "lyrics": {
       "card": {
-        "body": "Las letras vienen de LRCLIB, buscadas por artista, título y duración. Las sincronizadas resaltan la línea actual y siguen la canción; si te desplazas a mano, se detiene unos segundos. Si puedes controlar la música, al pulsar una línea la canción salta allí. Algunas canciones solo tienen la letra sin tiempos y otras no tienen.",
-        "example": "Suena una canción con letra sincronizada. Pulsas la línea del estribillo y la canción salta a ella; el resto del canal también oye el salto."
+        "body": "Las letras vienen de LRCLIB, buscadas por artista, título y duración. Las sincronizadas resaltan la línea actual y siguen la canción; si te desplazas a mano, se detiene unos segundos. Las líneas son solo para leer: para moverte por la canción, usa la barra de progreso. Algunas canciones solo tienen la letra sin tiempos y otras no tienen.",
+        "example": "Suena una canción con letra sincronizada. Subes para volver a leer la primera estrofa; unos segundos después la letra vuelve a la línea que se está cantando."
       }
     },
     "radio": {

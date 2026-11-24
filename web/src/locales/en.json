@@ -265,7 +265,6 @@
     "nothingPlaying": "Lyrics show up here when a song is playing.",
     "source": "from {{source}}",
     "synced": "Synced",
-    "jump": "Jump to this line",
     "error": "Could not load lyrics.",
     "none": "No lyrics found for this song."
   },
@@ -419,7 +418,7 @@
       },
       "lyrics": {
         "title": "Lyrics",
-        "body": "Lyrics come from LRCLIB. Synced lyrics highlight the current line and follow the song; tap a line to jump to it. Some songs only have plain lyrics, and some have none."
+        "body": "Lyrics come from LRCLIB. Synced lyrics highlight the current line and follow the song. Some songs only have plain lyrics, and some have none."
       },
       "radio": {
         "title": "Radio",
@@ -810,8 +809,8 @@
     },
     "lyrics": {
       "card": {
-        "body": "Lyrics come from LRCLIB, matched by artist, title and length. Synced lyrics highlight the current line and follow the song; scrolling by hand pauses that for a few seconds. If you can control playback, clicking a line jumps there. Some songs only have plain lyrics and some have none.",
-        "example": "A synced song is playing. You click the chorus line and the song jumps to it; the rest of the channel hears the jump too."
+        "body": "Lyrics come from LRCLIB, matched by artist, title and length. Synced lyrics highlight the current line and follow the song; scrolling by hand pauses that for a few seconds. The lines are for reading only: to move within the song, use the progress bar. Some songs only have plain lyrics and some have none.",
+        "example": "A synced song is playing. You scroll up to read the first verse again; a few seconds later the lyrics go back to the line being sung."
       }
     },
     "radio": {
