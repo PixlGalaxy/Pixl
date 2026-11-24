@@ -2,10 +2,11 @@
 //! (`bot.*` keys). Accent colors: info (blue), warn (amber), danger (red), ok (green).
 
 use super::{
-    escape, format_duration, link, relative_time, truncate, Accessory, Button, ButtonStyle, Component, Icon, Message,
+    escape, escape_line, format_duration, link, relative_time, truncate, Accessory, Button, ButtonStyle, Component, Icon, Message,
     COLOR_ERROR, COLOR_INFO, COLOR_SUCCESS, COLOR_WARNING,
 };
 use crate::{
+    text::sanitize_text,
     ai::AiPhase,
     discord::{
         about::{YtdlpLine, DEVELOPER_URL, HOST_URL, SOURCE_URL},
@@ -546,22 +547,44 @@ pub fn queue_page(v: &QueuePage, i18n: &I18n) -> Message {
 // Lyrics and jam
 // ---------------------------------------------------------------------------
 
+/// Characters of lyrics shown (after escaping), under the 4000 of a text display.
+const LYRICS_MAX: usize = 3200;
+
+/// Lyrics from LRCLIB (anyone can submit them) as plain text: every line escaped ([`escape_line`]:
+/// no markdown, masked links, mentions or headings), whole lines up to `max` characters, then `...`.
+fn lyrics_text(body: &str, max: usize) -> String {
+    let mut text = String::new();
+    let mut len = 0;
+    for line in body.trim().lines() {
+        let line = escape_line(line);
+        let n = line.chars().count() + 1;
+        if len + n > max {
+            if text.is_empty() {
+                text = truncate(&line, max);
+            }
+            text.push_str("\n...");
+            return text;
+        }
+        if len > 0 {
+            text.push('\n');
+        }
+        text.push_str(&line);
+        len += n;
+    }
+    text
+}
+
 pub fn lyrics(track: &TrackCard, body: &str, voice_channel_id: Option<u64>, i18n: &I18n) -> Message {
     let mut texts = vec![
         format!("-# {}", i18n.t("bot.lyrics.title", &[])),
-        format!("### {}", escape(&truncate(track.title, 150))),
+        format!("### {}", escape(&truncate(&sanitize_text(track.title), 150))),
     ];
     if !track.artists.is_empty() {
         texts.push(track.artists());
     }
     let mut children = Component::section_or_text(texts, track.thumbnail);
     children.push(Component::separator());
-    let trimmed = body.trim();
-    let mut text = truncate(trimmed, 3200);
-    if text.chars().count() < trimmed.chars().count() {
-        text.push_str("\n...");
-    }
-    children.push(Component::text(text));
+    children.push(Component::text(lyrics_text(body, LYRICS_MAX)));
     children.push(Component::separator());
     children.push(Component::text(format!("-# {}", i18n.t("bot.lyrics.footer", &[]))));
     children.push(Component::Row(vec![panel_button(voice_channel_id.unwrap_or(0), i18n)]));
@@ -1322,6 +1345,23 @@ mod tests {
 
     fn i18n() -> I18n {
         I18n::load("en").unwrap()
+    }
+
+    #[test]
+    fn lyrics_are_escaped_line_by_line_and_cut_on_whole_lines() {
+        let body = "# Verse\n[free nitro](https://evil.example)\n<@123> -# hi\n\n- la la";
+        assert_eq!(
+            lyrics_text(body, 3200),
+            r"\# Verse
+\[free nitro\]\(https://evil.example\)
+\<\@123\> -\# hi
+
+\- la la"
+        );
+        let long = "word\n".repeat(2000);
+        let cut = lyrics_text(&long, 3200);
+        assert!(cut.chars().count() <= 3204 && cut.ends_with("\n..."), "{}", cut.len());
+        assert!(cut.trim_end_matches("\n...").lines().all(|l| l == "word"));
     }
 
     fn artists() -> Vec<String> {

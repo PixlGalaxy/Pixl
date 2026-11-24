@@ -8,6 +8,7 @@ mod player;
 mod procs;
 mod sources;
 mod store;
+mod text;
 
 use std::{sync::Arc, time::Duration};
 
