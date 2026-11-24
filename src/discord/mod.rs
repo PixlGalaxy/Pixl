@@ -16,6 +16,7 @@ pub mod registry;
 pub mod respond;
 pub mod restrict;
 pub mod resume;
+pub mod saved;
 pub mod radio;
 pub mod ui;
 

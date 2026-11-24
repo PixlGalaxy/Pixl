@@ -130,6 +130,23 @@ pub enum Component {
         large: bool,
     },
     Row(Vec<Button>),
+    /// A string select menu in its own action row (at most 25 options).
+    Select(Select),
+}
+
+/// One option of a string select menu.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectOption {
+    pub label: String,
+    pub value: String,
+    pub default: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Select {
+    pub custom_id: String,
+    pub placeholder: String,
+    pub options: Vec<SelectOption>,
 }
 
 impl Component {
@@ -189,6 +206,20 @@ impl Component {
             }
             Self::Row(buttons) => {
                 json!({ "type": 1, "components": buttons.iter().take(5).map(|b| b.to_json(emoji_ids)).collect::<Vec<_>>() })
+            }
+            Self::Select(s) => {
+                let options: Vec<Value> = s
+                    .options
+                    .iter()
+                    .take(25)
+                    .map(|o| json!({ "label": truncate(&o.label, 100), "value": o.value, "default": o.default }))
+                    .collect();
+                json!({ "type": 1, "components": [{
+                    "type": 3,
+                    "custom_id": truncate(&s.custom_id, 100),
+                    "placeholder": truncate(&s.placeholder, 150),
+                    "options": options,
+                }] })
             }
         }
     }

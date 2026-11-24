@@ -11,6 +11,7 @@ type Access = 'anyone' | 'control' | 'vote'
 
 const COMMANDS: Array<{ name: string; access: Access; ai?: boolean }> = [
   { name: 'play', access: 'anyone' },
+  { name: 'playlist', access: 'anyone' },
   { name: 'pause', access: 'control' },
   { name: 'resume', access: 'control' },
   { name: 'skip', access: 'vote' },

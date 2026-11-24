@@ -36,6 +36,7 @@
       "jam": "Invitar a escuchar",
       "previous": "Anterior",
       "next": "Siguiente",
+      "select": "Seleccionar",
       "open_invite": "Abrir invitación",
       "open_jam": "Abrir enlace",
       "replay": "Volver a reproducir",
@@ -245,6 +246,12 @@
         "body": "{user} apagó la radio. Las canciones que ya están en la cola siguen sonando."
       }
     },
+    "playlist": {
+      "pick_title": "Selecciona la playlist",
+      "jump": "Ir a una playlist",
+      "songs": "{count} canciones",
+      "no_match": "Ninguna playlist guardada coincide con {query}."
+    },
     "history_off": {
       "title": "Tu historial está desactivado",
       "body": "Me gusta, No me gusta y la radio usan tu historial de escucha. Actívalo en el panel, en Privacidad."
@@ -286,6 +293,10 @@
       "jam_host_only": { "title": "Solo el canal anfitrión puede cambiar la música.", "body": "El anfitrión decidió que solo la gente de {channel} edite la cola compartida." },
       "rate_limited": { "title": "Más despacio.", "body": "Estás haciendo eso demasiado seguido. Inténtalo de nuevo en un minuto." },
       "vote_not_eligible": { "title": "Quien está ensordecido no puede votar para saltar.", "body": "Quita el ensordecimiento para votar, o pide a alguien con control que salte la canción." },
+      "playlist_none": { "title": "Aún no tienes playlists guardadas.", "body": "Las playlists se guardan solas cuando usas `/play` con el enlace de una playlist o un álbum, o desde la pestaña Playlists del panel." },
+      "playlist_not_yours": { "title": "Esta selección no es tuya.", "body": "Usa `/playlist` para elegir una de tus playlists guardadas." },
+      "playlist_expired": { "title": "Esta selección caducó.", "body": "Vuelve a usar `/playlist`." },
+      "playlist_gone": { "title": "Esa playlist ya no está guardada.", "body": "Vuelve a usar `/playlist` para elegir otra." },
       "settings_unavailable": { "title": "Lynx no pudo revisar los ajustes de este servidor.", "body": "Inténtalo de nuevo en un momento." }
     },
     "reply": {
@@ -311,6 +322,10 @@
       "play": {
         "description": "Reproduce una canción, una playlist o una búsqueda",
         "query": "Enlace o nombre de la canción"
+      },
+      "playlist": {
+        "description": "Reproduce una de tus playlists guardadas",
+        "name": "Nombre de una playlist guardada (déjalo vacío para verlas todas)"
       },
       "pause": { "description": "Pausa la música" },
       "resume": { "description": "Reanuda la música" },

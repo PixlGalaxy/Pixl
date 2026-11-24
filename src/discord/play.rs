@@ -17,8 +17,8 @@ use crate::{
         StartRequest,
     },
     procs::ProcOwner,
-    sources::{ListOrigin, ListRef, Resolved, SourceError, Sources, TrackSource, DEFAULT_LIST_LIMIT},
-    store::{GuildSettings, NewPlaylist, SaveOutcome, Store},
+    sources::{CachedList, ListOrigin, ListRef, Resolved, SourceError, Sources, TrackSource, DEFAULT_LIST_LIMIT},
+    store::{GuildSettings, NewPlaylist, SaveOutcome, SavedPlaylist, Store},
 };
 
 pub const RESOLVE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -239,6 +239,62 @@ pub async fn play_tracks(
         return Err(PlayError::NoResults);
     }
     enqueue(ctx, &req, &settings, resolved, source).await
+}
+
+/// A saved list's songs: the shared 60-minute list cache, or a fetch (`force` always fetches).
+pub async fn saved_list_tracks(
+    ctx: PlayCtx<'_>,
+    list: &ListRef,
+    force: bool,
+    owner: &ProcOwner,
+) -> Result<CachedList, PlayError> {
+    match tokio::time::timeout(RESOLVE_TIMEOUT, ctx.sources.list(list, force, owner)).await {
+        Ok(Ok(c)) => Ok(c),
+        Ok(Err(e)) => Err(PlayError::Source(e)),
+        Err(_) => Err(PlayError::Timeout),
+    }
+}
+
+/// The list entries of a saved playlist come from (stacked covers in the queue): the platform's
+/// current name and cover, else the saved ones.
+pub fn saved_origin(p: &SavedPlaylist, list: &ListRef, c: &CachedList) -> Arc<ListOrigin> {
+    Arc::new(ListOrigin {
+        name: c
+            .name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| p.name.clone()),
+        image: c.image.clone().or_else(|| p.image_url.clone()),
+        platform: list.platform.into(),
+        url: list.url.clone(),
+        total: u32::try_from(c.tracks.len()).unwrap_or(u32::MAX),
+    })
+}
+
+/// Queue a whole saved playlist (the panel's "Add all to queue" and `/playlist`): its songs from
+/// `c` with their list origin, through [`play_tracks`]. Then the list moves to the top of the
+/// user's saved playlists (not for users whose listening history is off, like saving).
+/// `playlist_name` of the result is the list's display name.
+pub async fn play_saved(
+    ctx: PlayCtx<'_>,
+    req: PlayRequest<'_>,
+    p: &SavedPlaylist,
+    list: &ListRef,
+    c: CachedList,
+) -> Result<Played, PlayError> {
+    let origin = saved_origin(p, list, &c);
+    let resolved = Resolved {
+        playlist_name: Some(origin.name.clone()),
+        image: c.image,
+        tracks: c.tracks,
+    };
+    let user = req.user_id;
+    let spec = ListSpec { origin, first_index: 1 };
+    let played = play_tracks(ctx, req, resolved, Some(spec)).await?;
+    if ctx.store.history_enabled(user).await.unwrap_or(false) {
+        let _ = ctx.store.touch_playlist(user, p.id).await;
+    }
+    Ok(played)
 }
 
 /// Save a list the user just queued (or move it to the top of their saved playlists). Users who
