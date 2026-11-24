@@ -1,6 +1,7 @@
 import { Headphones, Moon, Sun } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { AppFooter } from './AppFooter'
 import { applyTheme, isDark, originOf } from '../lib/appearance'
 import { onOpenAccount } from '../lib/events'
 import { cx } from '../lib/format'
@@ -157,6 +158,7 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
           </aside>
         )}
       </div>
+      <AppFooter />
       {accountOpen && <AccountPanel onClose={closeAccount} />}
     </div>
   )

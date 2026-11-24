@@ -122,29 +122,6 @@ export function HelpScreen() {
 
       <SupportCard />
 
-      <footer className="pb-2 text-center text-xs text-muted">
-        <span className="font-medium text-fg/80">Lynx</span>
-        <span className="px-2">|</span>
-        <span className="font-mono">v{__APP_VERSION__}</span>
-        <span className="px-2">|</span>
-        {t('help.developedBy')}{' '}
-        <button
-          type="button"
-          onClick={() => void openExternal('https://github.com/PixlGalaxy')}
-          className="cursor-pointer font-medium text-fg/80 underline-offset-2 transition-colors hover:text-accent-500 hover:underline"
-        >
-          PixlGalaxy
-        </button>
-        <span className="px-2">|</span>
-        {t('help.hostedOn')}{' '}
-        <button
-          type="button"
-          onClick={() => void openExternal('https://itzgalaxy.com')}
-          className="cursor-pointer font-medium text-fg/80 underline-offset-2 transition-colors hover:text-accent-500 hover:underline"
-        >
-          ItzGalaxy.com
-        </button>
-      </footer>
     </div>
   )
 }
