@@ -31,7 +31,7 @@ $env:HTTP_PORT = "$HttpPort"
 $env:ADMIN_HTTP_HOST = '127.0.0.1'
 $env:ADMIN_HTTP_PORT = "$AdminPort"
 $env:ADMIN_WEB_DIR = Join-Path $root 'admin\web\dist'
-if (-not $env:LOG_LEVEL) { $env:LOG_LEVEL = 'info,lynx=debug,serenity=warn,songbird=warn' }
+if (-not $env:LOG_LEVEL) { $env:LOG_LEVEL = 'info,lynx=debug,serenity=warn,songbird=warn,symphonia=warn,symphonia_format_mkv=warn' }
 
 $bot = Start-Process -FilePath (Join-Path $env:CARGO_TARGET_DIR 'release\lynx.exe') -NoNewWindow -PassThru
 $env:LYNX_BACKEND = "http://127.0.0.1:$HttpPort"

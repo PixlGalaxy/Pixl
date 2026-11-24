@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
     {
         use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
         let filter = tracing_subscriber::EnvFilter::try_from_env("LOG_LEVEL")
-            .unwrap_or_else(|_| "info,serenity=warn,songbird=warn,sqlx=warn".into());
+            .unwrap_or_else(|_| "info,serenity=warn,songbird=warn,sqlx=warn,symphonia=warn,symphonia_format_mkv=warn".into());
         // stdout as before, plus the admin panel's live log tee (bounded, never blocks).
         tracing_subscriber::registry()
             .with(filter)

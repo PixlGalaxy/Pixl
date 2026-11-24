@@ -115,12 +115,19 @@ pub struct TeeLayer;
 struct Fields {
     message: String,
     rest: String,
+    /// Real target of an event forwarded from the `log` crate (e.g. symphonia), whose own
+    /// metadata only says "log" and carries `log.target` / `log.file` / ... as fields.
+    log_target: Option<String>,
 }
 
 impl Visit for Fields {
     fn record_str(&mut self, field: &Field, value: &str) {
         if field.name() == "message" {
             self.message.push_str(value);
+        } else if field.name() == "log.target" {
+            self.log_target = Some(value.to_owned());
+        } else if field.name().starts_with("log.") {
+            // log.module_path / log.file / log.line: noise in the viewer.
         } else {
             let _ = write!(self.rest, " {}={}", field.name(), value);
         }
@@ -129,6 +136,7 @@ impl Visit for Fields {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
             let _ = write!(self.message, "{value:?}");
+        } else if field.name().starts_with("log.") {
         } else {
             let _ = write!(self.rest, " {}={:?}", field.name(), value);
         }
@@ -154,10 +162,12 @@ impl<S: Subscriber> Layer<S> for TeeLayer {
         let mut f = Fields {
             message: String::new(),
             rest: String::new(),
+            log_target: None,
         };
         event.record(&mut f);
         f.message.push_str(&f.rest);
-        GLOBAL.push(level, meta.target(), &f.message);
+        let target = f.log_target.as_deref().unwrap_or(meta.target());
+        GLOBAL.push(level, target, f.message.trim_end());
     }
 }
 
