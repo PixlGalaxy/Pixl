@@ -292,7 +292,10 @@
       "not_paused": { "title": "La música no está en pausa.", "body": "" },
       "nothing_to_replay": { "title": "Esa cola ya no existe.", "body": "Empieza algo nuevo con `/play`." },
       "radio_in_jam": { "title": "La radio no funciona en una escucha compartida.", "body": "Sal de la escucha compartida para iniciar una radio en este canal." },
-      "jam_host_only": { "title": "Solo el canal anfitrión puede cambiar la música.", "body": "El anfitrión decidió que solo la gente de {channel} edite la cola compartida." }
+      "jam_host_only": { "title": "Solo el canal anfitrión puede cambiar la música.", "body": "El anfitrión decidió que solo la gente de {channel} edite la cola compartida." },
+      "rate_limited": { "title": "Más despacio.", "body": "Estás haciendo eso demasiado seguido. Inténtalo de nuevo en un minuto." },
+      "vote_not_eligible": { "title": "Quien está ensordecido no puede votar para saltar.", "body": "Quita el ensordecimiento para votar, o pide a alguien con control que salte la canción." },
+      "settings_unavailable": { "title": "Lynx no pudo revisar los ajustes de este servidor.", "body": "Inténtalo de nuevo en un momento." }
     },
     "reply": {
       "paused": "**En pausa.** Usa `/resume` o el botón Reanudar para continuar.",

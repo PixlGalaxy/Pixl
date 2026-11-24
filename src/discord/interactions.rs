@@ -46,6 +46,8 @@ struct Inv<'a> {
     user_id: u64,
     text_channel: u64,
     permissions: Option<u64>,
+    /// The member who interacted (roles included), for permissions in other channels.
+    member: Option<Member>,
     name: String,
     avatar: Option<String>,
     deferred: AtomicBool,
@@ -72,6 +74,7 @@ impl<'a> Inv<'a> {
             user_id: user.id.get(),
             text_channel: channel,
             permissions: member.and_then(|m| m.permissions).map(|p| p.bits()),
+            member: member.cloned(),
             name: member
                 .and_then(|m| m.nick.clone())
                 .or_else(|| user.global_name.clone())
@@ -142,8 +145,13 @@ impl<'a> Inv<'a> {
         }
     }
 
-    async fn settings(&self) -> GuildSettings {
-        self.lynx.store.guild_settings(self.guild_id).await.unwrap_or_default()
+    /// Guild settings; when they can't be read the action is refused (the defaults would lift the
+    /// rules managers set).
+    async fn settings(&self) -> Result<GuildSettings, Message> {
+        self.lynx.store.guild_settings(self.guild_id).await.map_err(|e| {
+            warn!(guild = self.guild_id, error = %e, "could not read the guild settings; refusing");
+            self.err("settings_unavailable", &[])
+        })
     }
 
     /// Player for an action: the one in the user's voice channel (or, for read-only actions, the
@@ -195,7 +203,7 @@ impl<'a> Inv<'a> {
         action: Action,
         shared: bool,
     ) -> Result<(PlayerHandle, GuildSettings, Decision), Message> {
-        let settings = self.settings().await;
+        let settings = self.settings().await?;
         let snap = player.snapshot();
         let requested_current = snap.current.as_ref().is_some_and(|e| e.requester.id == self.user_id);
         let a = actor(
@@ -421,7 +429,7 @@ async fn autocomplete(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
     let choices = match cmd.data.autocomplete() {
         Some(opt) if cmd.data.name == "play" => {
             let q = opt.value.trim();
-            if q.chars().count() < 2 || q.starts_with("http://") || q.starts_with("https://") {
+            if !suggest(q, &lynx.limits, cmd.user.id.get()) {
                 Vec::new()
             } else {
                 match tokio::time::timeout(AUTOCOMPLETE_TIMEOUT, lynx.sources.search(q, 8)).await {
@@ -433,6 +441,12 @@ async fn autocomplete(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
         _ => Vec::new(),
     };
     respond::respond(http, cmd.id, &cmd.token, &ui::autocomplete_callback(&choices)).await;
+}
+
+/// Whether `/play` autocomplete searches for `q`: a name (not a link) of 2+ characters, within the
+/// user's search budget (shared with the panel; every keystroke is a search). Over it: no suggestions.
+fn suggest(q: &str, limits: &crate::limits::UserLimits, user: u64) -> bool {
+    q.chars().count() >= 2 && !q.starts_with("http://") && !q.starts_with("https://") && limits.search.allow(user)
 }
 
 /// "Title - Artist (3:07)" -> track URL.
@@ -459,7 +473,12 @@ fn source_error(inv: &Inv, e: &SourceError) -> Message {
         SourceError::SpotifyDisabled => inv.err("spotify_disabled", &[]),
         SourceError::Timeout => inv.err("timeout", &[]),
         SourceError::Cancelled => inv.err("generic", &[]),
-        SourceError::Unavailable(r) | SourceError::Http(r) | SourceError::Other(r) => {
+        // Internal errors (I/O, process spawn) may carry paths: log them, show the generic text.
+        SourceError::Other(r) => {
+            tracing::warn!(error = %r, "resolve failed");
+            inv.err("generic", &[])
+        }
+        SourceError::Unavailable(r) | SourceError::Http(r) => {
             inv.err("source", &[("reason", r.trim_end_matches('.'))])
         }
     }
@@ -499,6 +518,11 @@ fn play_error(inv: &Inv, e: PlayError) -> Message {
         }
         PlayError::QueueFull { max } => inv.err("queue_full", &[("max", &max.to_string())]),
         PlayError::Gone => gone(inv),
+        PlayError::SettingsUnavailable => inv.err("settings_unavailable", &[]),
+        PlayError::JamHostOnly { host } => inv.err(
+            "jam_host_only",
+            &[("channel", &format!("**{}**", ui::escape(&ui::truncate(&host, 80))))],
+        ),
     }
 }
 
@@ -542,6 +566,10 @@ async fn play(inv: &Inv<'_>, query: &str) -> Message {
     // Fail fast (before resolving) when no bot could play here.
     if let Err(e) = play::precheck(play_ctx(lynx), inv.guild_id, vc) {
         return play_error(inv, e);
+    }
+    // Same budget as adding from the panel.
+    if !lynx.limits.add.allow(inv.user_id) {
+        return inv.err("rate_limited", &[]);
     }
     inv.defer(false).await;
 
@@ -646,23 +674,29 @@ async fn resume(inv: &Inv<'_>) -> Message {
 
 /// `/skip` or the Skip / Vote buttons. `tag`: the button's track (must still be current).
 async fn skip(inv: &Inv<'_>, button: Option<(PlayerHandle, &str)>) -> Message {
-    let (p, settings, decision) = match button {
+    // The track this skip is about: the button's (checked now), or the one playing for `/skip`. The
+    // player answers `Outdated` when another one plays by the time it gets the command, so a double
+    // click skips one track, not two.
+    let (p, settings, decision, expected) = match button {
         Some((player, tag)) => {
-            if player.snapshot().current.as_ref().map(|e| track_tag(&e.uid)).as_deref() != Some(tag) {
+            let Some(uid) = tagged_current(&player, tag) else {
                 return inv.err("outdated", &[]);
-            }
+            };
             match inv.check(player, Action::Skip).await {
-                Ok(x) => x,
+                Ok((p, s, d)) => (p, s, d, uid),
                 Err(m) => return m,
             }
         }
         None => match inv.player_for(Action::Skip).await {
-            Ok(x) => x,
+            Ok((p, s, d)) => match p.snapshot().current.as_ref().map(|e| e.uid) {
+                Some(uid) => (p, s, d, uid),
+                None => return gone(inv),
+            },
             Err(m) => return m,
         },
     };
     let force = decision == Decision::Allow;
-    match p.skip(inv.user_id, force, settings.vote_skip).await {
+    match p.skip(inv.user_id, force, settings.vote_skip, Some(expected)).await {
         Ok(SkipOutcome::Skipped {
             skipped,
             next: Some(next),
@@ -695,8 +729,19 @@ async fn skip(inv: &Inv<'_>, button: Option<(PlayerHandle, &str)>) -> Message {
                 &[("current", &current.to_string()), ("required", &required.to_string())],
             ),
         ),
+        Ok(SkipOutcome::NotEligible) => inv.err("vote_not_eligible", &[]),
+        Ok(SkipOutcome::Outdated) => inv.err("outdated", &[]),
         Ok(SkipOutcome::NothingPlaying) | Err(_) => gone(inv),
     }
+}
+
+/// The current entry's uid when it is still the track a button was made for (its tag).
+fn tagged_current(player: &PlayerHandle, tag: &str) -> Option<uuid::Uuid> {
+    current_if_tagged(&player.snapshot(), tag).map(|e| e.uid)
+}
+
+fn current_if_tagged<'s>(snap: &'s PlayerSnapshot, tag: &str) -> Option<&'s Entry> {
+    snap.current.as_ref().filter(|e| track_tag(&e.uid) == tag)
 }
 
 async fn stop(inv: &Inv<'_>, announce: bool) -> Message {
@@ -905,6 +950,10 @@ async fn lyrics(inv: &Inv<'_>, query: Option<String>) -> Message {
     let lynx = inv.lynx;
     let (track, vc) = match query {
         Some(q) => {
+            // Same budget as searching from the panel.
+            if !lynx.limits.search.allow(inv.user_id) {
+                return inv.err("rate_limited", &[]);
+            }
             inv.defer(false).await;
             match tokio::time::timeout(Duration::from_secs(15), lynx.sources.search(&q, 1)).await {
                 Ok(Ok(mut list)) if !list.is_empty() => (list.swap_remove(0), inv.user_voice()),
@@ -1023,7 +1072,9 @@ async fn np_button(inv: &Inv<'_>, action: NpAction, vc: u64, tag: &str) -> Optio
     let Some(player) = lynx.players.get(inv.guild_id, vc) else {
         return Some(gone(inv));
     };
-    let current_tag = player.snapshot().current.as_ref().map(|e| track_tag(&e.uid));
+    // The button's track, taken before any await (it may change while the checks run).
+    let snap = player.snapshot();
+    let tagged = current_if_tagged(&snap, tag).cloned();
     match action {
         NpAction::Pause | NpAction::Resume | NpAction::Stop => {
             let (p, _, _) = match inv.check_in(player, Action::Control, action != NpAction::Stop).await {
@@ -1051,17 +1102,16 @@ async fn np_button(inv: &Inv<'_>, action: NpAction, vc: u64, tag: &str) -> Optio
             if !lynx.config.ai_enabled {
                 return Some(inv.err("generic", &[]));
             }
-            if current_tag.as_deref() != Some(tag) {
+            // Feedback goes to the track the button was for, even if the next one started meanwhile.
+            let Some(e) = tagged.as_ref() else {
                 return Some(inv.err("outdated", &[]));
-            }
+            };
             if let Err(m) = inv.check(player.clone(), Action::Feedback).await {
                 return Some(m);
             }
             if !lynx.store.history_enabled(inv.user_id).await.unwrap_or(true) {
                 return Some(cards::history_off(vc, &lynx.i18n));
             }
-            let snap = player.snapshot();
-            let e = snap.current.as_ref()?;
             let wanted = if action == NpAction::Like {
                 Feedback::Like
             } else {
@@ -1094,7 +1144,10 @@ async fn np_button(inv: &Inv<'_>, action: NpAction, vc: u64, tag: &str) -> Optio
 /// join. A plain invite into this channel follows as a fallback when the bot may create one.
 async fn jam_button(inv: &Inv<'_>, player: PlayerHandle, vc: u64) -> Message {
     let lynx = inv.lynx;
-    let settings = inv.settings().await;
+    let settings = match inv.settings().await {
+        Ok(s) => s,
+        Err(m) => return m,
+    };
     let a = actor(
         &lynx.bots,
         &lynx.store,
@@ -1127,15 +1180,25 @@ async fn jam_button(inv: &Inv<'_>, player: PlayerHandle, vc: u64) -> Message {
         lynx.config.discord_client_id.parse().unwrap_or(0)
     };
     let share = jam.view().share_link(&app.to_string());
-    let can_invite = main
-        .channel_permissions(inv.guild_id, vc)
-        .is_none_or(|p| p.administrator() || p.create_instant_invite());
-    let code = if can_invite {
+    // A server invite only for people who could make one themselves in that voice channel (the bot
+    // must be able to as well); everyone else gets the Activity link only.
+    let clicker = inv
+        .member
+        .as_ref()
+        .and_then(|m| main.member_permissions_in(inv.guild_id, vc, m));
+    let code = if may_share_invite(clicker, main.channel_permissions(inv.guild_id, vc)) {
         lynx.jam.get_or_create(&main.http, app, vc).await.ok()
     } else {
         None
     };
     cards::jam(vc, &share, code.as_deref(), &lynx.i18n)
+}
+
+/// Whether "Invite to jam" may hand out a server invite: the clicker has Create Invite (or
+/// Administrator) in the voice channel (unknown: no), and the bot is not known to lack it.
+fn may_share_invite(clicker: Option<serenity::all::Permissions>, bot: Option<serenity::all::Permissions>) -> bool {
+    let invite = |p: serenity::all::Permissions| p.administrator() || p.create_instant_invite();
+    clicker.is_some_and(invite) && bot.is_none_or(invite)
 }
 
 /// "Play it again": restart the deleted queue in the user's voice channel.
@@ -1190,5 +1253,38 @@ async fn replay(inv: &Inv<'_>, original_vc: u64) -> Message {
             )
         }
         Err(m) => m,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::limits::UserLimits;
+
+    #[test]
+    fn autocomplete_spends_the_shared_search_budget() {
+        let limits = UserLimits::default();
+        assert!(!suggest("a", &limits, 1), "too short");
+        assert!(!suggest("https://youtu.be/x", &limits, 1), "links are not searched");
+        for _ in 0..30 {
+            assert!(suggest("song", &limits, 1));
+        }
+        assert!(!suggest("song", &limits, 1), "over the budget: no suggestions");
+        assert!(!limits.search.allow(1), "the panel search shares it");
+        assert!(suggest("song", &limits, 2), "per user");
+    }
+
+    #[test]
+    fn jam_invites_need_create_invite_for_the_clicker() {
+        use serenity::all::Permissions as P;
+        let invite = Some(P::CREATE_INSTANT_INVITE);
+        let admin = Some(P::ADMINISTRATOR);
+        let plain = Some(P::VIEW_CHANNEL | P::CONNECT);
+        assert!(may_share_invite(invite, invite));
+        assert!(may_share_invite(admin, invite));
+        assert!(may_share_invite(invite, None), "bot permissions unknown: Discord decides");
+        assert!(!may_share_invite(plain, invite), "no Create Invite: Activity link only");
+        assert!(!may_share_invite(None, invite), "unknown clicker permissions: no invite");
+        assert!(!may_share_invite(invite, plain), "the bot can't either");
     }
 }

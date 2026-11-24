@@ -6,6 +6,7 @@ mod api;
 mod config;
 mod discord;
 mod i18n;
+mod limits;
 mod logs;
 mod notices;
 mod perms;
@@ -14,6 +15,7 @@ mod procs;
 mod sources;
 mod stats;
 mod store;
+mod text;
 
 use std::{sync::Arc, time::Duration};
 
@@ -54,6 +56,8 @@ pub struct AppState {
     pub ytdlp_version: Arc<YtdlpVersion>,
     /// Operator notices and runtime flags (admin panel).
     pub notices: NoticeBoard,
+    /// Per-user rate limits shared by the panel and the Discord commands.
+    pub limits: Arc<limits::UserLimits>,
     pub shutdown: CancellationToken,
 }
 
@@ -115,7 +119,8 @@ async fn main() -> Result<()> {
         sessions: sessions.clone(),
         bots: bots.registry.clone(),
         ai: ai.clone(),
-        http: reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build()?,
+        // Fetches stream URLs (yt-dlp output for user links): public addresses only, redirects re-checked.
+        http: sources::netguard::guarded(reqwest::Client::builder().connect_timeout(Duration::from_secs(10))).build()?,
     });
     {
         let players = players.clone();
@@ -129,6 +134,7 @@ async fn main() -> Result<()> {
     tokio::spawn(stream_limit_task(sources.clone(), players.clone(), shutdown.clone()));
 
     let ytdlp_version = Arc::new(YtdlpVersion::default());
+    let limits = Arc::new(limits::UserLimits::default());
     let state = AppState {
         config: config.clone(),
         store: store.clone(),
@@ -140,9 +146,11 @@ async fn main() -> Result<()> {
         ai: ai.clone(),
         ytdlp_version: ytdlp_version.clone(),
         notices: notices.clone(),
+        limits: limits.clone(),
         shutdown: shutdown.clone(),
     };
     let lynx = Arc::new(Lynx {
+        limits: limits.clone(),
         config: config.clone(),
         i18n,
         store: store.clone(),

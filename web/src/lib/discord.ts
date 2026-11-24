@@ -50,7 +50,7 @@ export type Connection = {
 
 /** Jam links carry `custom_id` = `jam-<id>` (see the backend's `player::jam::CUSTOM_ID_PREFIX`). */
 export function jamIdFromCustomId(customId: string | null | undefined): string | null {
-  const m = /^jam-([a-z0-9]{10})$/.exec((customId ?? '').trim())
+  const m = /^jam-([a-z0-9]{10,16})$/.exec((customId ?? '').trim())
   return m?.[1] ?? null
 }
 

@@ -11,7 +11,7 @@ use std::{
 
 use serenity::all::GuildId;
 use songbird::{
-    tracks::{ControlError, TrackHandle},
+    tracks::{ControlError, PlayMode, ReadyState, TrackHandle},
     Call, Event,
 };
 use tokio::{
@@ -57,6 +57,15 @@ const PLAYABLE_TIMEOUT: Duration = Duration::from_secs(30);
 const HISTORY_LEN: usize = 20;
 /// A play counts for the history after this much listening (or half the track).
 const PLAY_COUNTS_AFTER: Duration = Duration::from_secs(30);
+/// While a track plays, its clock is compared with songbird's real position this often (stalls,
+/// a voice reconnect or a slow mixer make a wall clock run ahead of the audio).
+const RECONCILE_EVERY: Duration = Duration::from_secs(5);
+/// First comparison after the track became playable, a seek or a resume.
+const RECONCILE_SOON: Duration = Duration::from_secs(1);
+/// The mixer answers `get_info` between two frames; a blocked mixer is not waited for.
+const RECONCILE_TIMEOUT: Duration = Duration::from_millis(500);
+/// Clock and audio further apart than this: the clock follows the audio (and panels are told).
+const RECONCILE_TOLERANCE_MS: u64 = 750;
 
 pub struct Spawn {
     pub manager: PlayerManager,
@@ -233,6 +242,31 @@ async fn jam_changed(rx: &mut Option<watch::Receiver<Arc<JamView>>>) -> bool {
     }
 }
 
+/// The position the clock must jump to when it drifted from songbird's real position (`None`:
+/// in sync, nothing to change or publish).
+fn reconcile_target(clock_ms: u64, real_ms: u64) -> Option<u64> {
+    (clock_ms.abs_diff(real_ms) > RECONCILE_TOLERANCE_MS).then_some(real_ms)
+}
+
+/// Duration of the track that plays: the stream's own (what the audio really lasts) over the
+/// catalog metadata (Spotify / YouTube Music durations, a lazily matched video), which can be off
+/// by seconds.
+fn played_duration(stream_ms: Option<u64>, meta_ms: Option<u64>) -> Option<u64> {
+    stream_ms.filter(|d| *d > 0).or(meta_ms.filter(|d| *d > 0))
+}
+
+/// Position shown for the current track: a track that is not playable yet has played nothing,
+/// so it shows the position it will start at (a target kept for that same track) or 0, never what
+/// a clock counted while it loaded nor a target kept for another track.
+fn shown_position(playing: Option<(Uuid, bool, u64)>, pending: Option<&PendingResume>, loading: Option<Uuid>) -> u64 {
+    let pending_for = |uid: Uuid| pending.filter(|r| r.uid == uid).map(|r| r.target_ms);
+    match playing {
+        Some((_, true, clock_ms)) => clock_ms,
+        Some((uid, false, _)) => pending_for(uid).unwrap_or(0),
+        None => loading.and_then(pending_for).unwrap_or(0),
+    }
+}
+
 /// Where a seek to `position_ms` lands on a track of `duration_ms`: past the end is refused, and
 /// the last second is kept so the track does not end at once.
 fn seek_target(position_ms: u64, duration_ms: Option<u64>) -> Result<u64, SeekOutcome> {
@@ -370,6 +404,8 @@ struct Player {
     seek_trouble: Option<SeekTrouble>,
     /// The playing input must be playable by then (see `PLAYABLE_TIMEOUT`).
     playable_deadline: Option<Instant>,
+    /// Next comparison of the track clock with songbird's real position (see `reconcile`).
+    reconcile_at: Option<Instant>,
     rng: fastrand::Rng,
     ending: Option<EndReason>,
     radio: Option<Radio>,
@@ -425,6 +461,7 @@ pub async fn run(s: Spawn) {
         stream_retry: None,
         seek_trouble: None,
         playable_deadline: None,
+        reconcile_at: None,
         rng: fastrand::Rng::new(),
         ending: None,
         radio: None,
@@ -529,6 +566,12 @@ impl Player {
             let mut jam_rx = self.jam.as_ref().map(|j| j.rx.clone());
             let jam_hold = self.jam.as_ref().and_then(|j| j.hold_until);
             let jam_drift = self.jam.as_ref().and_then(|j| j.drift_at);
+            let reconcile = self
+                .playing
+                .as_ref()
+                .is_some_and(|p| p.running() && p.became_playable)
+                .then_some(self.reconcile_at)
+                .flatten();
             tokio::select! {
                 cmd = rx.recv() => match cmd {
                     Some(cmd) => self.handle(cmd).await,
@@ -562,11 +605,10 @@ impl Player {
                 }
                 _ = until(jam_drift) => self.drift_check().await,
                 _ = until(self.playable_deadline) => self.playable_timeout().await,
+                _ = until(reconcile) => self.reconcile().await,
                 _ = until(tick) => {
                     self.next_tick = Instant::now() + POSITION_TICK;
-                    if self.playing.is_some() {
-                        let _ = self.events.send(PlayerEvent::Position { position_ms: self.shown_position_ms(), position_at: epoch_ms() });
-                    }
+                    self.send_position();
                 }
             }
         }
@@ -615,9 +657,10 @@ impl Player {
                 user,
                 force,
                 rule,
+                expected,
                 reply,
             } => {
-                let outcome = self.skip(user, force, &rule).await;
+                let outcome = self.skip(user, force, &rule, expected).await;
                 let _ = reply.send(outcome);
             }
             Command::Previous { reply } => {
@@ -722,6 +765,7 @@ impl Player {
             Command::Settings(s) => {
                 self.volume = self.volume.clamp(MIN_VOLUME, MAX_VOLUME);
                 self.settings = s;
+                self.report_queue_limit();
                 self.publish();
             }
             Command::SetTextChannel(c) => self.set_text_channel(c),
@@ -729,6 +773,7 @@ impl Player {
                 self.humans = h;
                 self.on_humans_changed().await;
             }
+            Command::Listeners => self.on_listeners_changed().await,
             Command::Moved(to) => self.moved(to).await,
             Command::End(reason) => self.ending = Some(reason),
             Command::Prepared { uid, prefetch, result } => self.on_prepared(uid, prefetch, *result).await,
@@ -927,7 +972,7 @@ impl Player {
         let max = self.max_queue();
         let (added, truncated) = match self.push_entries(radio::pick_entries(picks, &owner), max).await {
             Ok(r) => (r.added, r.truncated),
-            Err(PushError::Full { .. }) => (0, true),
+            Err(PushError::Full { .. } | PushError::NotAllowed) => (0, true),
         };
         if let Some(job) = self.radio.as_mut().and_then(|r| r.job_mut(id)) {
             job.added(added, truncated || added < count, first && added > 0);
@@ -964,7 +1009,7 @@ impl Player {
             Taken::Fresh(playable) => {
                 let mut playable = *playable;
                 settle_late_music(&mut playable);
-                let entry = self.adopt_prepared(entry, &playable);
+                let entry = self.adopt_prepared(entry, &mut playable);
                 self.begin(entry, playable).await;
                 return;
             }
@@ -1039,11 +1084,14 @@ impl Player {
             return;
         };
         match result {
-            Ok(playable) => {
-                let entry = self.adopt_prepared(entry, &playable);
+            Ok(mut playable) => {
+                let entry = self.adopt_prepared(entry, &mut playable);
                 self.begin(entry, playable).await;
             }
-            Err(e) => self.failed(entry, &e.to_string()).await,
+            Err(e) => {
+                debug!(guild = self.guild_id, error = %e, "prepare failed");
+                self.failed(entry, &e.public_reason()).await
+            }
         }
     }
 
@@ -1079,9 +1127,23 @@ impl Player {
     }
 
     /// Lazy Spotify match: keep the matched video in the queue (and the saved session). Also keep
-    /// the YouTube Music metadata found while preparing (playlist entries).
-    fn adopt_prepared(&mut self, entry: Entry, playable: &Playable) -> Entry {
-        if playable.track.youtube_id == entry.info.youtube_id && playable.track.music == entry.info.music {
+    /// the YouTube Music metadata found while preparing (playlist entries), and the duration of
+    /// the stream that plays (the metadata one stays only when the stream has none, e.g. live).
+    fn adopt_prepared(&mut self, entry: Entry, playable: &mut Playable) -> Entry {
+        let duration = played_duration(playable.stream.duration_ms, playable.track.duration_ms);
+        if duration != playable.track.duration_ms {
+            debug!(
+                uid = %entry.uid,
+                metadata_ms = ?playable.track.duration_ms,
+                stream_ms = ?duration,
+                "track duration taken from the stream"
+            );
+            playable.track.duration_ms = duration;
+        }
+        if playable.track.youtube_id == entry.info.youtube_id
+            && playable.track.music == entry.info.music
+            && playable.track.duration_ms == entry.info.duration_ms
+        {
             return entry;
         }
         let updated = Arc::new(QueueEntry {
@@ -1309,6 +1371,7 @@ impl Player {
                         p.became_playable = true;
                         p.clock.set_position(0);
                         self.playable_deadline = None;
+                        self.reconcile_at = Some(Instant::now() + RECONCILE_SOON);
                     }
                     if let Some((timings, begun)) = p.startup.take() {
                         record_start_stats(&timings, begun);
@@ -1336,6 +1399,12 @@ impl Player {
                     }
                 } else {
                     self.apply_resume().await;
+                }
+                // The snapshot showed it loading (at 0 or the kept target): now it plays, from
+                // where the clock was just set.
+                if first {
+                    self.publish();
+                    self.send_position();
                 }
             }
             TrackSignal::End => self.next_track(false).await,
@@ -1427,6 +1496,7 @@ impl Player {
             } else if !want && !p.running() {
                 let _ = p.handle.play();
                 p.start_clock();
+                self.reconcile_at = Some(Instant::now() + RECONCILE_SOON);
             }
         }
         let running = self.playing.as_ref().is_some_and(Playing::running);
@@ -1461,10 +1531,7 @@ impl Player {
         });
         self.persist(false);
         self.publish();
-        let _ = self.events.send(PlayerEvent::Position {
-            position_ms: target,
-            position_at: epoch_ms(),
-        });
+        self.send_position();
         SeekOutcome::Done
     }
 
@@ -1502,13 +1569,10 @@ impl Player {
         let reason = match seeked {
             Ok(Ok(_)) => {
                 p.clock.set_position(target);
-                let pos = p.position_ms();
+                self.reconcile_at = Some(Instant::now() + RECONCILE_SOON);
                 self.persist(false);
                 self.publish();
-                let _ = self.events.send(PlayerEvent::Position {
-                    position_ms: pos,
-                    position_at: epoch_ms(),
-                });
+                self.send_position();
                 return SeekOutcome::Done;
             }
             Ok(Err(e)) if seek_was_replaced(&e) => {
@@ -1534,10 +1598,7 @@ impl Player {
         }
         self.persist(false);
         self.publish();
-        let _ = self.events.send(PlayerEvent::Position {
-            position_ms: target,
-            position_at: epoch_ms(),
-        });
+        self.send_position();
         SeekOutcome::Done
     }
 
@@ -1617,10 +1678,7 @@ impl Player {
         self.resume_at = target.map(|t| PendingResume::at(entry.uid, t));
         self.persist(false);
         self.publish();
-        let _ = self.events.send(PlayerEvent::Position {
-            position_ms: target.unwrap_or(0),
-            position_at: epoch_ms(),
-        });
+        self.send_position();
         SeekOutcome::Done
     }
 
@@ -1688,27 +1746,42 @@ impl Player {
         }
     }
 
-    async fn skip(&mut self, user: u64, force: bool, rule: &crate::store::VoteSkip) -> SkipOutcome {
+    async fn skip(
+        &mut self,
+        user: u64,
+        force: bool,
+        rule: &crate::store::VoteSkip,
+        expected: Option<Uuid>,
+    ) -> SkipOutcome {
         let Some(current) = self.queue.current().cloned() else {
             return SkipOutcome::NothingPlaying;
         };
+        if stale(expected, Some(current.uid)) {
+            return SkipOutcome::Outdated;
+        }
         if !force && rule.enabled {
-            let listeners = self.listeners();
-            match self.votes.vote(user, &listeners, rule) {
-                VoteResult::Passed => {}
-                VoteResult::Counted { current, required } => {
-                    self.publish();
-                    return SkipOutcome::Voted { current, required };
-                }
-                VoteResult::AlreadyVoted { current, required } => {
-                    return SkipOutcome::AlreadyVoted { current, required };
-                }
+            if let Some(outcome) = self.vote_skip(user, rule) {
+                return outcome;
             }
         }
         self.next_track(true).await;
         SkipOutcome::Skipped {
             skipped: current,
             next: self.queue.current().cloned(),
+        }
+    }
+
+    /// Count a vote to skip; None when it passed (skip now), else the answer.
+    fn vote_skip(&mut self, user: u64, rule: &crate::store::VoteSkip) -> Option<SkipOutcome> {
+        let listeners = self.listeners();
+        match self.votes.vote(user, &listeners, rule) {
+            VoteResult::Passed => None,
+            VoteResult::Counted { current, required } => {
+                self.publish();
+                Some(SkipOutcome::Voted { current, required })
+            }
+            VoteResult::AlreadyVoted { current, required } => Some(SkipOutcome::AlreadyVoted { current, required }),
+            VoteResult::NotEligible => Some(SkipOutcome::NotEligible),
         }
     }
 
@@ -1724,6 +1797,17 @@ impl Player {
     /// People in the channel who can hear the music (deafened users don't vote or count for votes).
     fn listeners(&self) -> std::collections::HashSet<u64> {
         self.deps.bots.listeners_in(self.guild_id, self.voice_channel_id)
+    }
+
+    /// Deafen / undeafen: votes of people who can no longer hear stop counting, and fewer listeners
+    /// can make the remaining votes enough.
+    async fn on_listeners_changed(&mut self) {
+        let rule = self.settings.vote_skip;
+        if rule.enabled && self.playing.is_some() && self.votes.passes(&self.listeners(), &rule) {
+            self.next_track(true).await;
+        } else {
+            self.publish();
+        }
     }
 
     async fn on_humans_changed(&mut self) {
@@ -1868,27 +1952,27 @@ impl Player {
                 user,
                 force,
                 rule,
+                expected,
                 reply,
             } => {
+                // The mirrored queue keeps the jam's uids: a stale request stops here.
+                let current = self.queue.current().map(|e| e.uid);
+                if stale(expected, current) {
+                    let _ = reply.send(SkipOutcome::Outdated);
+                    return None;
+                }
                 if !force && rule.enabled {
-                    let listeners = self.listeners();
-                    match self.votes.vote(user, &listeners, &rule) {
-                        VoteResult::Passed => {}
-                        VoteResult::Counted { current, required } => {
-                            self.publish();
-                            let _ = reply.send(SkipOutcome::Voted { current, required });
-                            return None;
-                        }
-                        VoteResult::AlreadyVoted { current, required } => {
-                            let _ = reply.send(SkipOutcome::AlreadyVoted { current, required });
-                            return None;
-                        }
+                    if let Some(outcome) = self.vote_skip(user, &rule) {
+                        let _ = reply.send(outcome);
+                        return None;
                     }
                 }
+                // The jam checks `expected` again against its own current track.
                 let cmd = Command::Skip {
                     user,
                     force: true,
                     rule,
+                    expected,
                     reply,
                 };
                 handle.post(JamCmd::Edit { from, cmd });
@@ -1952,11 +2036,22 @@ impl Player {
             drift_at: None,
             has_humans: !self.humans.is_empty(),
         });
+        self.report_queue_limit();
         self.apply_jam_view(&view).await;
         if let Some(p) = &self.playing {
             self.messenger.refresh_now_playing(self.np_data(&p.entry));
         }
         Ok(handle)
+    }
+
+    /// Tell the jam this server's queue limit (it only listens to the host channel's player).
+    fn report_queue_limit(&self) {
+        if let Some(link) = &self.jam {
+            link.handle.post(JamCmd::HostLimit {
+                key: self.key(),
+                max: self.max_queue(),
+            });
+        }
     }
 
     /// Join `jam`: save the own queue and follow the shared one.
@@ -2183,12 +2278,23 @@ impl Player {
         else {
             return;
         };
-        let actual = match tokio::time::timeout(Duration::from_secs(1), p.handle.get_info()).await {
-            Ok(Ok(info)) => info.position.as_millis() as u64,
-            _ => p.position_ms(),
+        let real = match tokio::time::timeout(Duration::from_secs(1), p.handle.get_info()).await {
+            Ok(Ok(info)) if info.ready == ReadyState::Playable => Some(info.position.as_millis() as u64),
+            _ => None,
+        };
+        let duration = p.entry.info.duration_ms;
+        // The clock follows the audio first (same rule as `reconcile`), so the jam line-up and
+        // this channel's panels compare against the real position, and the jam correction below
+        // is the only seek.
+        let actual = match real {
+            Some(real) => {
+                self.follow_audio(real);
+                real
+            }
+            None => p.position_ms(),
         };
         let expected = (epoch_ms() - anchor_ms).max(0) as u64;
-        if let Some(target) = jam::drift_correction(actual, expected, p.entry.info.duration_ms) {
+        if let Some(target) = jam::drift_correction(actual, expected, duration) {
             debug!(
                 guild = self.guild_id,
                 channel = self.voice_channel_id,
@@ -2402,6 +2508,8 @@ impl Player {
         let status = match &self.playing {
             Some(_) if jam_hold => Status::Loading,
             Some(_) if self.paused() => Status::Paused,
+            // Nothing is heard before the input is playable: panels must not count time yet.
+            Some(p) if !p.became_playable => Status::Loading,
             Some(_) => Status::Playing,
             None if self.loading.is_some() => Status::Loading,
             None if self.waiting_start => Status::Paused,
@@ -2454,17 +2562,70 @@ impl Player {
     /// Position shown to the panel: the playing position, or the position a loading track will
     /// start at (a seek asked while it loads, or a restored position) until that seek is applied.
     fn shown_position_ms(&self) -> u64 {
-        let pending = self.resume_at.as_ref();
-        match &self.playing {
-            Some(p) => match pending {
-                Some(r) if r.uid == p.entry.uid && !p.became_playable => r.target_ms,
-                _ => p.position_ms(),
-            },
-            None => match (pending, self.loading) {
-                (Some(r), Some(uid)) if r.uid == uid => r.target_ms,
-                _ => 0,
-            },
-        }
+        shown_position(
+            self.playing.as_ref().map(|p| (p.entry.uid, p.became_playable, p.position_ms())),
+            self.resume_at.as_ref(),
+            self.loading,
+        )
+    }
+
+    /// Tell panels where the current track is (with its uid: a position for another track is
+    /// dropped by the panel).
+    fn send_position(&self) {
+        let Some(uid) = self.playing.as_ref().map(|p| p.entry.uid).or(self.loading) else {
+            return;
+        };
+        let _ = self.events.send(PlayerEvent::Position {
+            uid,
+            position_ms: self.shown_position_ms(),
+            position_at: epoch_ms(),
+        });
+    }
+
+    /// Compare the track clock with songbird's real position and follow the audio when they
+    /// drifted apart. A mixer that does not answer in time keeps the clock (checked again later).
+    async fn reconcile(&mut self) {
+        self.reconcile_at = Some(Instant::now() + RECONCILE_EVERY);
+        let Some(p) = self.playing.as_ref().filter(|p| p.running() && p.became_playable) else {
+            return;
+        };
+        let real = match tokio::time::timeout(RECONCILE_TIMEOUT, p.handle.get_info()).await {
+            Ok(Ok(info)) if info.ready == ReadyState::Playable && matches!(info.playing, PlayMode::Play) => {
+                info.position.as_millis() as u64
+            }
+            // Seeking, being made playable again, paused or ending: nothing to compare.
+            Ok(Ok(_)) => return,
+            Ok(Err(e)) => {
+                debug!(guild = self.guild_id, channel = self.voice_channel_id, error = %e, "position check: no track state");
+                return;
+            }
+            Err(_) => {
+                debug!(guild = self.guild_id, channel = self.voice_channel_id, "position check: the mixer did not answer in time");
+                return;
+            }
+        };
+        self.follow_audio(real);
+    }
+
+    /// Re-anchor the clock on `real_ms` (songbird's position) when it drifted; panels get the new
+    /// position. Nothing is published while they agree.
+    fn follow_audio(&mut self, real_ms: u64) -> bool {
+        let Some(p) = self.playing.as_mut() else { return false };
+        let clock = p.position_ms();
+        let Some(target) = reconcile_target(clock, real_ms) else {
+            return false;
+        };
+        debug!(
+            guild = self.guild_id,
+            channel = self.voice_channel_id,
+            clock,
+            real = target,
+            "position drifted from the audio; following the audio"
+        );
+        p.clock.set_position(target);
+        self.publish();
+        self.send_position();
+        true
     }
 
     /// Position saved with the session: the saved position of a restored track until its seek is
@@ -3151,6 +3312,162 @@ mod tests {
         tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
     }
 
+    #[test]
+    fn reconcile_follows_the_audio_only_past_the_tolerance() {
+        assert_eq!(reconcile_target(60_000, 60_000), None, "in sync: nothing to publish");
+        assert_eq!(reconcile_target(60_700, 60_000), None, "small jitter is not corrected");
+        assert_eq!(reconcile_target(60_000, 60_750), None, "the tolerance itself is still in sync");
+        assert_eq!(reconcile_target(65_000, 60_000), Some(60_000), "a clock ahead of the audio (stall) goes back");
+        assert_eq!(reconcile_target(60_000, 61_000), Some(61_000), "a clock behind the audio goes forward");
+        assert_eq!(reconcile_target(3_000, 0), Some(0));
+    }
+
+    #[test]
+    fn the_stream_duration_wins_over_the_metadata() {
+        assert_eq!(played_duration(Some(260_500), Some(255_000)), Some(260_500));
+        assert_eq!(played_duration(Some(250_000), Some(255_000)), Some(250_000));
+        assert_eq!(played_duration(None, Some(255_000)), Some(255_000), "no stream duration (live): metadata");
+        assert_eq!(played_duration(Some(0), Some(255_000)), Some(255_000));
+        assert_eq!(played_duration(Some(255_000), None), Some(255_000));
+        assert_eq!(played_duration(None, Some(0)), None);
+    }
+
+    #[test]
+    fn a_track_that_is_not_playable_shows_its_own_start() {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let kept_for_a = PendingResume::at(a, 250_000);
+        // A seek kept for the previous track never leaks into the next one.
+        assert_eq!(shown_position(Some((b, false, 4_000)), Some(&kept_for_a), None), 0);
+        assert_eq!(shown_position(None, Some(&kept_for_a), Some(b)), 0);
+        // Its own kept target, or the clock once it plays.
+        assert_eq!(shown_position(Some((a, false, 4_000)), Some(&kept_for_a), None), 250_000);
+        assert_eq!(shown_position(None, Some(&kept_for_a), Some(a)), 250_000);
+        assert_eq!(shown_position(Some((b, true, 4_000)), Some(&kept_for_a), None), 4_000);
+        assert_eq!(shown_position(Some((b, false, 4_000)), None, None), 0, "load time is not play time");
+        assert_eq!(shown_position(None, None, None), 0);
+    }
+
+    fn playable_of(info: crate::sources::TrackInfo, stream_url: &str, stream_ms: Option<u64>) -> Playable {
+        Playable {
+            track: info,
+            stream: crate::sources::StreamInfo {
+                url: stream_url.to_owned(),
+                http_headers: Vec::new(),
+                expires_at: i64::MAX / 2,
+                container: Some("webm".into()),
+                codec: Some("opus".into()),
+                format_id: Some("251".into()),
+                protocol: Some("https".into()),
+                is_opus: true,
+                needs_ytdlp: false,
+                duration_ms: stream_ms,
+                available_at: None,
+            },
+            ytdlp_fallback: false,
+            page_url: "http://127.0.0.1/".into(),
+            work_dir: None,
+            played_youtube_id: None,
+            fallback_reason: None,
+            late_music: None,
+            timings: PrepareTimings::new(Instant::now()),
+        }
+    }
+
+    /// The live report: a seek near the end of track A, then the next track B showed the wrong
+    /// elapsed time. B must start at 0 (not A's target, not the time it took to load), show as
+    /// loading until it is playable, carry its stream duration, and every position event names B.
+    #[tokio::test]
+    async fn seek_near_the_end_then_the_next_track_starts_at_zero() {
+        // A stream server that accepts and never answers: the inputs stay "loading".
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let stream_url = format!("http://{}/audio.webm", listener.local_addr().unwrap());
+        let (manager, bot) = test_manager().await;
+        let restore = restore_of(&["a", "b"]);
+        let (a, b) = (restore.tracks[0].clone(), restore.tracks[1].clone());
+        let req = StartRequest {
+            guild_id: GUILD,
+            voice_channel_id: VOICE,
+            bot_index: 0,
+            text_channel_id: None,
+            started_by: 1,
+            humans: HashSet::from([1]),
+            settings: GuildSettings::default(),
+            restore: Some(restore),
+        };
+        let rule = req.settings.vote_skip;
+        let (tx, rx) = mpsc::channel(64);
+        let (events, mut ev) = broadcast::channel(256);
+        let slot: Slot = Arc::new(RwLock::new(Arc::new(initial_snapshot(&req, 0))));
+        let call = Arc::new(Mutex::new(Call::standalone(GuildId::new(GUILD), UserId::new(99))));
+        // Queued before the actor boots: A's prepare result lands while A is the loading track.
+        tx.send(Command::Prepared {
+            uid: a.uid,
+            prefetch: None,
+            result: Box::new(Ok(playable_of(a.info.clone(), &stream_url, Some(180_000)))),
+        })
+        .await
+        .unwrap();
+        tokio::spawn(run(Spawn {
+            manager,
+            req,
+            call,
+            bot,
+            generation: 1,
+            tx: tx.clone(),
+            rx,
+            events,
+            snapshot: slot.clone(),
+        }));
+        until_snap(&slot, |s| s.current.as_ref().is_some_and(|e| e.uid == a.uid) && s.status == Status::Loading).await;
+        let seek = ask(&tx, |reply| Command::Seek {
+            position_ms: 178_500,
+            reply,
+        })
+        .await;
+        assert_eq!(seek, SeekOutcome::Done);
+        assert_eq!(slot.read().unwrap().position_ms, 178_500, "A shows the seek target");
+        let skipped = ask(&tx, |reply| Command::Skip {
+            user: 1,
+            force: true,
+            rule,
+            expected: Some(a.uid),
+            reply,
+        })
+        .await;
+        assert!(matches!(skipped, SkipOutcome::Skipped { .. }), "{skipped:?}");
+        // B's stream lasts 4:20 while its metadata says 3:00.
+        tx.send(Command::Prepared {
+            uid: b.uid,
+            prefetch: None,
+            result: Box::new(Ok(playable_of(b.info.clone(), &stream_url, Some(260_000)))),
+        })
+        .await
+        .unwrap();
+        until_snap(&slot, |s| s.current.as_ref().is_some_and(|e| e.uid == b.uid) && s.status == Status::Loading).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let snap = slot.read().unwrap().clone();
+        assert_eq!(snap.position_ms, 0, "B starts at 0");
+        assert_eq!(snap.position_now(), 0, "a loading track does not count time");
+        assert_eq!(snap.current.as_ref().unwrap().info.duration_ms, Some(260_000), "duration of the stream");
+        let mut after_skip = false;
+        while let Ok(e) = ev.try_recv() {
+            match e {
+                PlayerEvent::State(s) if s.current.as_ref().is_some_and(|c| c.uid == b.uid) => {
+                    after_skip = true;
+                    assert_eq!(s.position_ms, 0, "every snapshot of B is at 0 before it plays");
+                }
+                PlayerEvent::Position { uid, position_ms, .. } if after_skip => {
+                    assert_eq!(uid, b.uid, "positions after the skip are for B");
+                    assert_eq!(position_ms, 0);
+                }
+                _ => {}
+            }
+        }
+        assert!(after_skip);
+        tx.send(Command::End(EndReason::Shutdown)).await.unwrap();
+        drop(listener);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn track_clock_across_pause_resume_and_seek() {
         let mut c = TrackClock::new(true);
@@ -3226,3 +3543,22 @@ mod tests {
     }
 }
 
+/// A skip meant for `expected` while `current` plays: true when it is about another track (the
+/// first of a double click already skipped it). No expectation, or nothing current, is not stale.
+fn stale(expected: Option<Uuid>, current: Option<Uuid>) -> bool {
+    matches!((expected, current), (Some(e), Some(c)) if e != c)
+}
+
+#[cfg(test)]
+mod stale_tests {
+    use super::*;
+
+    #[test]
+    fn a_skip_for_another_track_is_stale() {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        assert!(stale(Some(a), Some(b)));
+        assert!(!stale(Some(a), Some(a)));
+        assert!(!stale(None, Some(a)));
+        assert!(!stale(Some(a), None));
+    }
+}

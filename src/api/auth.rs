@@ -1,11 +1,15 @@
-//! `GET /api/public`, `POST /api/auth`, the session extractors and the per-request permission
-//! check (manager through Discord, DJ from the store, voice channel from the main bot's cache).
+//! `GET /api/public`, `POST /api/auth` (sign-in), `DELETE /api/auth` (sign-out), the session
+//! extractors and the per-request permission check (manager through Discord, DJ from the store, voice
+//! channel from the main bot's cache).
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 
 use axum::{
     extract::{ConnectInfo, FromRequestParts, State},
-    http::{request::Parts, HeaderMap},
+    http::{request::Parts, HeaderMap, StatusCode},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -92,21 +96,24 @@ pub struct LoginResponse {
     locale: Option<String>,
 }
 
-/// Client address: the first `X-Forwarded-For` hop (Discord's proxy puts the client there, nginx
-/// appends), then `X-Real-IP`, then the socket.
+/// Client address for rate limits: `X-Real-IP`, which the bundled nginx always sets to the
+/// address it trusts (`$remote_addr`, after `real_ip` when `TRUSTED_PROXIES` is configured), then
+/// the socket. `X-Forwarded-For` is never read: its first hop is whatever the client sent.
+/// IPv6 addresses count per /64, since one host usually controls a whole /64.
 pub fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> String {
-    let header = |name: &str| {
-        headers
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .map(|v| v.trim().to_owned())
-            .filter(|v| !v.is_empty() && v.len() <= 64)
-    };
-    header("x-forwarded-for")
-        .or_else(|| header("x-real-ip"))
-        .or_else(|| peer.map(|p| p.ip().to_string()))
-        .unwrap_or_else(|| "unknown".into())
+    let real = headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<IpAddr>().ok());
+    match real.or_else(|| peer.map(|p| p.ip())) {
+        Some(IpAddr::V6(v6)) if v6.to_ipv4_mapped().is_none() => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+        }
+        Some(IpAddr::V6(v6)) => v6.to_ipv4_mapped().map(|v4| v4.to_string()).unwrap_or_default(),
+        Some(ip) => ip.to_string(),
+        None => "unknown".into(),
+    }
 }
 
 fn upstream(e: UpstreamError) -> ApiError {
@@ -198,6 +205,23 @@ pub async fn login(
     }))
 }
 
+/// `DELETE /api/auth`: sign this session out (its sockets close too). Other sessions of the user stay.
+pub async fn logout(State(st): State<ApiState>, Auth(s): Auth, headers: HeaderMap) -> ApiResult<StatusCode> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .ok_or_else(ApiError::unauthorized)?;
+    st.sessions
+        .revoke(token)
+        .await
+        .map_err(|e| ApiError::internal("could not sign out", e))?;
+    st.sockets.close(s.user_id, Some(&super::session::hash_token(token)));
+    info!(user = s.user_id, "panel sign-out");
+    Ok(StatusCode::NO_CONTENT)
+}
+
 impl ApiState {
     /// Membership and manager status, re-checked through Discord at most every `MEMBER_TTL`.
     pub async fn member_status(&self, guild_id: u64, user_id: u64) -> ApiResult<MemberStatus> {
@@ -246,7 +270,12 @@ impl ApiState {
 
     pub async fn permissions(&self, guild_id: u64, user_id: u64, channel: Option<u64>) -> ApiResult<Permissions> {
         let actor = self.actor(guild_id, user_id, channel, false).await?;
-        let settings = self.app.store.guild_settings(guild_id).await.unwrap_or_default();
+        let settings = self
+            .app
+            .store
+            .guild_settings(guild_id)
+            .await
+            .map_err(|e| ApiError::internal("could not read the guild settings", e))?;
         Ok(Permissions::of(&actor, &settings))
     }
 
@@ -352,5 +381,38 @@ impl FromRequestParts<ApiState> for Member {
             guild_id,
             status,
         })
+    }
+}
+
+#[cfg(test)]
+mod client_ip_tests {
+    use super::*;
+
+    fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(*k, v.parse().unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn uses_x_real_ip_never_x_forwarded_for() {
+        let peer: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        // A client-supplied first hop cannot pick its rate-limit key.
+        let h = headers(&[("x-forwarded-for", "1.2.3.4, 9.9.9.9"), ("x-real-ip", "9.9.9.9")]);
+        assert_eq!(client_ip(&h, Some(peer)), "9.9.9.9");
+        assert_eq!(client_ip(&headers(&[("x-forwarded-for", "1.2.3.4")]), Some(peer)), "127.0.0.1");
+        assert_eq!(client_ip(&headers(&[("x-real-ip", "not an ip")]), Some(peer)), "127.0.0.1");
+        assert_eq!(client_ip(&HeaderMap::new(), None), "unknown");
+    }
+
+    #[test]
+    fn ipv6_counts_per_64() {
+        let a = client_ip(&headers(&[("x-real-ip", "2001:db8:1:2:aaaa::1")]), None);
+        let b = client_ip(&headers(&[("x-real-ip", "2001:db8:1:2:bbbb::2")]), None);
+        assert_eq!(a, b);
+        assert_eq!(a, "2001:db8:1:2::/64");
+        assert_eq!(client_ip(&headers(&[("x-real-ip", "::ffff:1.2.3.4")]), None), "1.2.3.4");
     }
 }

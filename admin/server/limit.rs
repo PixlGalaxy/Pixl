@@ -1,62 +1,20 @@
-//! Limits of the admin listener: a fixed-window rate limiter (sign-ins) and a TCP listener that
-//! accepts at most N connections at a time.
+//! Connection limit of the admin listener: a TCP listener that accepts at most N connections at a
+//! time. (Sign-ins use the bot's shared `api::session::RateLimiter`.)
 
 use std::{
-    hash::Hash,
     io,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use dashmap::DashMap;
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::{TcpListener, TcpStream},
     sync::{OwnedSemaphorePermit, Semaphore},
 };
-
-/// At most `limit` hits per `window` per key; bounded to `max_keys` keys.
-pub struct RateLimiter<K> {
-    map: DashMap<K, (Instant, u32)>,
-    limit: u32,
-    window: Duration,
-    max_keys: usize,
-}
-
-impl<K: Eq + Hash + Clone> RateLimiter<K> {
-    pub fn new(limit: u32, window: Duration, max_keys: usize) -> Self {
-        Self {
-            map: DashMap::new(),
-            limit,
-            window,
-            max_keys: max_keys.max(1),
-        }
-    }
-
-    /// Count a hit; false when the key is over its limit.
-    pub fn allow(&self, key: K) -> bool {
-        if self.map.len() >= self.max_keys && !self.map.contains_key(&key) {
-            self.sweep();
-            if self.map.len() >= self.max_keys {
-                self.map.clear();
-            }
-        }
-        let mut e = self.map.entry(key).or_insert((Instant::now(), 0));
-        if e.0.elapsed() >= self.window {
-            *e = (Instant::now(), 0);
-        }
-        e.1 += 1;
-        e.1 <= self.limit
-    }
-
-    pub fn sweep(&self) {
-        let w = self.window;
-        self.map.retain(|_, (at, _)| at.elapsed() < w);
-    }
-}
 
 /// A TCP listener that waits for a free slot before accepting: at most `max` open connections.
 pub struct LimitedListener {

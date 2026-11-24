@@ -83,6 +83,10 @@ pub async fn boot(lynx: Arc<Lynx>) {
     }
     while set.join_next().await.is_some() {}
     lynx.booted.store(true, std::sync::atomic::Ordering::Release);
+    let (activity, status) = super::ready_presence(&lynx.config);
+    for bot in lynx.bots.bots() {
+        bot.set_presence(activity.clone(), status).await;
+    }
     info!(players = lynx.players.len(), "startup finished");
 }
 

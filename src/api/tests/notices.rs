@@ -135,13 +135,8 @@ async fn open_panels_get_notice_changes_over_the_socket() {
     let stop = CancellationToken::new();
     tokio::spawn(super::super::notices::forward(h.state.clone(), stop.clone()));
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let app = h.app.clone();
-    tokio::spawn(async move { axum::serve(listener, app).await });
-    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws?session={ana}&channelId=100"))
-        .await
-        .unwrap();
+    let addr = super::serve(&h).await;
+    let mut socket = super::ws_open(addr, &ana).await;
     // The first message means the socket is subscribed to the events.
     next(&mut socket).await;
     let now = now_secs();

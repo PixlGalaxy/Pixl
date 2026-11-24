@@ -75,6 +75,10 @@ pub enum SkipOutcome {
     Skipped { skipped: Entry, next: Option<Entry> },
     Voted { current: usize, required: usize },
     AlreadyVoted { current: usize, required: usize },
+    /// A vote from someone who is not a listener (deafened): not counted.
+    NotEligible,
+    /// The track the request was about is no longer the current one (a double click).
+    Outdated,
     NothingPlaying,
 }
 
@@ -128,6 +132,8 @@ pub enum Command {
         user: u64,
         force: bool,
         rule: VoteSkip,
+        /// Uid of the track the user saw playing: a different current track answers `Outdated`.
+        expected: Option<uuid::Uuid>,
         reply: Reply<SkipOutcome>,
     },
     Previous {
@@ -180,6 +186,8 @@ pub enum Command {
     Settings(GuildSettings),
     SetTextChannel(u64),
     Humans(HashSet<u64>),
+    /// Someone in the channel deafened or undeafened: the listeners (who vote) changed.
+    Listeners,
     /// The bot was moved to another voice channel (already re-keyed in the manager).
     Moved(u64),
     End(EndReason),
@@ -339,11 +347,20 @@ impl PlayerHandle {
     }
 
     /// `force`: skip directly (permission says so); otherwise the request is a vote under `rule`.
-    pub async fn skip(&self, user: u64, force: bool, rule: VoteSkip) -> Result<SkipOutcome, PlayerError> {
+    /// `expected`: the current track the user saw; when another one plays by then nothing happens
+    /// (`Outdated`), so a double click skips one track, not two.
+    pub async fn skip(
+        &self,
+        user: u64,
+        force: bool,
+        rule: VoteSkip,
+        expected: Option<uuid::Uuid>,
+    ) -> Result<SkipOutcome, PlayerError> {
         self.ask(|reply| Command::Skip {
             user,
             force,
             rule,
+            expected,
             reply,
         })
         .await
@@ -413,6 +430,10 @@ impl PlayerHandle {
 
     pub(crate) async fn humans_changed(&self, humans: HashSet<u64>) -> Result<(), PlayerError> {
         self.send(Command::Humans(humans)).await
+    }
+
+    pub(crate) async fn listeners_changed(&self) -> Result<(), PlayerError> {
+        self.send(Command::Listeners).await
     }
 
     pub(crate) async fn moved(&self, to: u64) -> Result<(), PlayerError> {

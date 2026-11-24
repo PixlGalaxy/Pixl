@@ -43,7 +43,8 @@ use crate::{
 };
 use auth::{AdminSessions, Credentials};
 use error::AdminError;
-use limit::{LimitedListener, RateLimiter};
+use crate::api::session::RateLimiter;
+use limit::LimitedListener;
 pub use snapshot::Snapshot;
 
 /// Shortest `ADMIN_PASSWORD` accepted; a shorter one keeps the admin panel off.
@@ -204,7 +205,7 @@ impl AdminState {
     }
 }
 
-const CSP: &str = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; \
+const CSP: &str = "default-src 'self'; script-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; \
                    connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 fn not_found() -> AdminError {

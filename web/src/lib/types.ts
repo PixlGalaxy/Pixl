@@ -237,6 +237,7 @@ export type ErrorCode =
   | 'queue_full'
   | 'no_results'
   | 'rate_limited'
+  | 'not_eligible'
   | 'bot_unavailable'
   | 'invalid'
   | 'history_disabled'
@@ -301,7 +302,7 @@ export type PlaylistTracks = {
 
 export type ServerMessage =
   | { type: 'state'; state: PlayerState | null; serverNow?: number }
-  | { type: 'position'; positionMs: number; positionAt: number; serverNow?: number }
+  | { type: 'position'; uid?: string; positionMs: number; positionAt: number; serverNow?: number }
   | { type: 'ai'; ai: AiState | null }
   | { type: 'settings'; settings: GuildSettings }
   | { type: 'permissions'; permissions: Permissions }

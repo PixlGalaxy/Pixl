@@ -27,8 +27,8 @@ use std::sync::{
 use anyhow::Result;
 use serenity::{
     all::{
-        Context, EventHandler, GatewayIntents, GuildChannel, Interaction, Ready, ResumedEvent, ShardStageUpdateEvent,
-        UnavailableGuild, VoiceState,
+        ActivityData, Context, EventHandler, GatewayIntents, GuildChannel, Interaction, OnlineStatus, Ready,
+        ResumedEvent, ShardStageUpdateEvent, UnavailableGuild, VoiceState,
     },
     async_trait,
     gateway::ConnectionStage,
@@ -59,6 +59,8 @@ pub struct Lynx {
     pub bots: Arc<BotRegistry>,
     pub players: PlayerManager,
     pub jam: JamInvites,
+    /// Per-user rate limits (shared with the panel API).
+    pub limits: Arc<crate::limits::UserLimits>,
     /// yt-dlp version shown by `/about`.
     pub ytdlp_version: Arc<about::YtdlpVersion>,
     /// Operator notices and maintenance mode (admin panel).
@@ -110,6 +112,9 @@ impl Bots {
                     registered: AtomicBool::new(false),
                 })
                 .register_songbird_with(songbird.clone())
+                // Until the startup sequence finished: Do Not Disturb with "Loading...".
+                .status(OnlineStatus::DoNotDisturb)
+                .activity(ActivityData::custom("Loading..."))
                 .await?;
             let info = Arc::new(BotInfo::new(index, client.http.clone(), client.cache.clone(), songbird));
             info.set_shard_manager(client.shard_manager.clone());
@@ -174,6 +179,11 @@ impl EventHandler for Handler {
         let shard = ready.shard.map(|s| s.id.0).unwrap_or(ctx.shard_id.0);
         let guilds: Vec<u64> = ready.guilds.iter().map(|g| g.id.get()).collect();
         info!(bot = self.index, user = %ready.user.name, guilds = guilds.len(), "bot ready");
+        // A shard that (re)connects after startup starts from the builder's "Loading..." presence.
+        if lynx.booted.load(Ordering::Acquire) {
+            let (activity, status) = ready_presence(&lynx.config);
+            ctx.set_presence(activity, status);
+        }
         lynx.bots.on_ready(
             self.index,
             ready.user.id.get(),
@@ -296,7 +306,14 @@ impl EventHandler for Handler {
         }
         let old_channel = old.as_ref().and_then(|o| o.channel_id).map(|c| c.get());
         if old.is_some() && old_channel == new_channel {
-            return; // mute / deafen / stream change
+            // Mute / deafen / stream change. Deafened people don't vote to skip: tell the player
+            // so it rechecks the votes (the cache already has the new state).
+            if deafen_changed(old.as_ref(), &new) {
+                if let Some(p) = new_channel.and_then(|c| lynx.players.get(g, c)) {
+                    let _ = p.listeners_changed().await;
+                }
+            }
+            return;
         }
         lynx.bots.voice_moved(g, user);
         let targets = if old.is_none() {
@@ -322,6 +339,11 @@ impl EventHandler for Handler {
             interactions::handle_node(lynx, ctx.http.clone(), interaction).await;
         }
     }
+}
+
+/// Whether a voice state update in the same channel changed server or self deafen.
+fn deafen_changed(old: Option<&VoiceState>, new: &VoiceState) -> bool {
+    old.is_some_and(|o| (o.deaf, o.self_deaf) != (new.deaf, new.self_deaf))
 }
 
 /// A Lynx bot's own voice state changed: kicked, moved, or (re)joined.
@@ -353,4 +375,16 @@ async fn own_voice_state(lynx: &Lynx, index: usize, guild_id: u64, channel: Opti
         }
         Some(_) => {}
     }
+}
+
+/// Presence once Lynx is ready: online, with the activity from `BOT_ACTIVITY` / `BOT_ACTIVITY_TYPE`.
+pub fn ready_presence(config: &crate::config::Config) -> (Option<ActivityData>, OnlineStatus) {
+    let activity = config.bot_activity.as_deref().map(|text| match config.bot_activity_type.as_str() {
+        "playing" => ActivityData::playing(text),
+        "listening" => ActivityData::listening(text),
+        "watching" => ActivityData::watching(text),
+        "competing" => ActivityData::competing(text),
+        _ => ActivityData::custom(text),
+    });
+    (activity, OnlineStatus::Online)
 }

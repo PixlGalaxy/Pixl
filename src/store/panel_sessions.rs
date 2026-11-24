@@ -81,6 +81,15 @@ impl Store {
         Ok(())
     }
 
+    /// Delete every session of a user (sign-out everywhere, data wipe); returns how many were removed.
+    pub async fn delete_user_panel_sessions(&self, user_id: u64) -> Result<u64> {
+        let res = sqlx::query("DELETE FROM panel_sessions WHERE user_id = ?")
+            .bind(sf(user_id))
+            .execute(self.pool())
+            .await?;
+        Ok(res.rows_affected())
+    }
+
     /// Delete expired sessions; returns how many were removed.
     pub async fn sweep_panel_sessions(&self) -> Result<u64> {
         let res = sqlx::query("DELETE FROM panel_sessions WHERE expires_at <= ?")
@@ -124,5 +133,13 @@ mod tests {
         assert_eq!(store.sweep_panel_sessions().await.unwrap(), 1);
         store.delete_panel_session("live").await.unwrap();
         assert_eq!(store.panel_session("live").await.unwrap(), None);
+
+        store.put_panel_session(&row("a", now_secs() + 60)).await.unwrap();
+        store.put_panel_session(&row("b", now_secs() + 60)).await.unwrap();
+        let other = PanelSessionRow { user_id: 11, ..row("c", now_secs() + 60) };
+        store.put_panel_session(&other).await.unwrap();
+        assert_eq!(store.delete_user_panel_sessions(10).await.unwrap(), 2);
+        assert_eq!(store.panel_session("a").await.unwrap(), None);
+        assert_eq!(store.panel_session("c").await.unwrap(), Some(other));
     }
 }

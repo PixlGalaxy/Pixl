@@ -73,6 +73,7 @@ async fn app_state() -> AppState {
         ai,
         ytdlp_version: Default::default(),
         notices: NoticeBoard::default(),
+        limits: Default::default(),
         shutdown: CancellationToken::new(),
     }
 }

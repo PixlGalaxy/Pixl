@@ -44,6 +44,11 @@ pub fn play_error(e: PlayError) -> ApiError {
         PlayError::Source(SourceError::SpotifyDisabled) => {
             ApiError::invalid("Spotify links are not enabled on this bot")
         }
+        // Internal errors (I/O, process spawn) may carry paths: log them, show a generic text.
+        PlayError::Source(SourceError::Other(e)) => {
+            tracing::warn!(error = %e, "resolve failed");
+            ApiError::new(StatusCode::BAD_GATEWAY, "no_results", "Could not load that")
+        }
         PlayError::Source(e) => ApiError::new(StatusCode::BAD_GATEWAY, "no_results", e.to_string()),
         PlayError::Timeout => ApiError::new(StatusCode::GATEWAY_TIMEOUT, "no_results", "Resolving took too long"),
         PlayError::CannotJoin { .. } => ApiError::bot_unavailable("Lynx can't connect or speak in this channel"),
@@ -59,6 +64,8 @@ pub fn play_error(e: PlayError) -> ApiError {
             format!("The queue is full ({max} tracks)"),
         ),
         PlayError::Gone => ApiError::not_found("The player ended"),
+        PlayError::SettingsUnavailable => ApiError::bot_unavailable("Could not read the server settings, try again"),
+        PlayError::JamHostOnly { .. } => ApiError::jam_host_only(),
     }
 }
 
@@ -95,7 +102,13 @@ impl ApiState {
     pub async fn add_checks(&self, m: &Member, channel: u64) -> ApiResult<()> {
         self.maintenance_check()?;
         let actor = self.actor(m.guild_id, m.user_id(), Some(channel), false).await?;
-        let settings = self.app.store.guild_settings(m.guild_id).await.unwrap_or_default();
+        // Fail closed: without the settings the DJ mode cannot be checked.
+        let settings = self
+            .app
+            .store
+            .guild_settings(m.guild_id)
+            .await
+            .map_err(|e| ApiError::internal("could not read the server settings", e))?;
         if let Decision::Deny(d) = can(&actor, Action::Add, &settings) {
             return Err(ApiError::deny(d));
         }

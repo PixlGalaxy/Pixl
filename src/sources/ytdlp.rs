@@ -12,7 +12,10 @@ use serde_json::Value;
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
-use super::{SourceError, SourceResult, TrackInfo, TrackOrigin};
+use super::{
+    netguard::{self, LinkHosts},
+    SourceError, SourceResult, TrackInfo, TrackOrigin,
+};
 use crate::{
     procs::{ProcError, ProcOwner, ProcSpec, ProcessRegistry, StreamDirs},
     store::now_secs,
@@ -22,7 +25,32 @@ const FORMAT: &str = "bestaudio[acodec=opus]/bestaudio/best";
 /// Executable name (native Windows dev runs use the .exe release).
 const BIN_NAME: &str = if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" };
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
-const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Metadata of a user link, and stream resolves of non-YouTube links: short, so slow sites
+/// cannot hold a slot for long.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+const LINK_RESOLVE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Concurrent link probes (metadata of user links), bot-wide. Separate from the stream resolves
+/// of YouTube tracks (`MAX_CONCURRENT_EXTRACTIONS`), so links cannot starve playback.
+const PROBE_SLOTS: usize = 2;
+/// Concurrent stream resolves of non-YouTube links (also their own pool, for the same reason).
+const LINK_RESOLVE_SLOTS: usize = 2;
+/// Extractors yt-dlp may use (`--use-extractors`: full-match regexes, case-insensitive). Never the
+/// generic one, which fetches any page and follows whatever it embeds. Keep in step with
+/// `netguard::DEFAULT_LINK_HOSTS`. Override with `YTDLP_EXTRACTORS`.
+pub const DEFAULT_EXTRACTORS: &str = concat!(
+    "youtube,youtube:.*,youtubeytbe,youtubelivestreamembed,",
+    "soundcloud,soundcloud:.*,soundcloudembed,",
+    "bandcamp,bandcamp:.*,",
+    "vimeo,vimeo:.*,",
+    "twitch:.*,",
+    "mixcloud,mixcloud:.*,",
+    "dailymotion,dailymotion:.*,",
+    "audiomack,audiomack:.*,",
+    "audius,audius:.*,",
+    "archive.org,jamendo,jamendoalbum,hearthisat,newgrounds,newgrounds:.*",
+);
+/// Release asset with the SHA-256 of every yt-dlp release file.
+const SUMS_ASSET: &str = "SHA2-256SUMS";
 const VERSION_TIMEOUT: Duration = Duration::from_secs(20);
 const STREAM_CACHE_MAX: usize = 2048;
 /// Keys remembered as "resolve with yt-dlp's default clients" after a fast-client URL failed.
@@ -80,7 +108,16 @@ struct Inner {
     procs: ProcessRegistry,
     dirs: StreamDirs,
     http: reqwest::Client,
+    /// Stream resolves of YouTube tracks (playing, prefetching).
     sem: Semaphore,
+    /// Stream resolves of other links.
+    link_sem: Semaphore,
+    /// Link metadata probes.
+    probe_sem: Semaphore,
+    /// `--use-extractors` value.
+    extractors: String,
+    /// Sites a link may point to.
+    link_hosts: LinkHosts,
     cookies: Option<PathBuf>,
     /// `--limit-rate` for the piped fallback (HLS/live). Direct streams are already paced by songbird's
     /// 64 KiB read-ahead buffer, so they never download faster than they play.
@@ -117,6 +154,10 @@ impl Ytdlp {
                 dirs,
                 http,
                 sem: Semaphore::new(max_concurrent.max(1)),
+                link_sem: Semaphore::new(LINK_RESOLVE_SLOTS),
+                probe_sem: Semaphore::new(PROBE_SLOTS),
+                extractors: DEFAULT_EXTRACTORS.into(),
+                link_hosts: LinkHosts::default(),
                 cookies,
                 limit_rate: None,
                 cache_dir: None,
@@ -158,6 +199,37 @@ impl Ytdlp {
         self
     }
 
+    /// Extractors yt-dlp may use (`--use-extractors` syntax); `None` or empty keeps
+    /// [`DEFAULT_EXTRACTORS`]. Call right after `new`.
+    pub fn with_extractors(mut self, extractors: Option<String>) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            if let Some(e) = extractors.map(|e| e.trim().to_owned()).filter(|e| !e.is_empty()) {
+                inner.extractors = e;
+            }
+        }
+        self
+    }
+
+    /// Sites user links may point to. Call right after `new`.
+    pub fn with_link_hosts(mut self, hosts: LinkHosts) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.link_hosts = hosts;
+        }
+        self
+    }
+
+    /// Refuse a link yt-dlp must not open (see [`netguard::check_link`]). The watch URLs Lynx
+    /// builds itself for YouTube videos skip the DNS check.
+    async fn guard_link(&self, url: &str) -> SourceResult<()> {
+        if is_watch_url(url) {
+            return Ok(());
+        }
+        netguard::check_link(url, &self.inner.link_hosts).await.map(|_| ()).map_err(|b| {
+            info!(reason = %b, "link refused");
+            SourceError::Unsupported(netguard::LINK_ERROR.into())
+        })
+    }
+
     /// `DATA_DIR/bin/yt-dlp` when present, else `yt-dlp` from PATH.
     pub fn binary(&self) -> PathBuf {
         let local = self.inner.bin_dir.join(BIN_NAME);
@@ -173,6 +245,8 @@ impl Ytdlp {
             "--ignore-config".into(),
             "--no-warnings".into(),
             "--no-progress".into(),
+            "--use-extractors".into(),
+            self.inner.extractors.clone(),
             "--paths".into(),
             format!("temp:{}", work_dir.display()),
         ];
@@ -194,13 +268,26 @@ impl Ytdlp {
         if let Some(rate) = &self.inner.limit_rate {
             args.extend(["--limit-rate".into(), rate.clone()]);
         }
-        args.extend(["--quiet".into(), "-f".into(), FORMAT.into(), "-o".into(), "-".into(), page_url.into()]);
+        args.extend([
+            "--quiet".into(),
+            "-f".into(),
+            FORMAT.into(),
+            "-o".into(),
+            "-".into(),
+            "--".into(),
+            page_url.into(),
+        ]);
         ProcSpec::new(self.binary(), owner.clone(), max_duration).args(args).current_dir(work_dir)
     }
 
-    /// Run yt-dlp under the semaphore, in the owner's stream dir. Returns stdout.
-    async fn run(&self, owner: &ProcOwner, args: Vec<String>, timeout: Duration) -> SourceResult<Vec<u8>> {
-        let _permit = self.inner.sem.acquire().await.map_err(|_| SourceError::Other("shutting down".into()))?;
+    /// Run yt-dlp under the `pool`'s semaphore, in the owner's stream dir. Returns stdout.
+    async fn run(&self, owner: &ProcOwner, args: Vec<String>, timeout: Duration, pool: Pool) -> SourceResult<Vec<u8>> {
+        let sem = match pool {
+            Pool::Youtube => &self.inner.sem,
+            Pool::Link => &self.inner.link_sem,
+            Pool::Probe => &self.inner.probe_sem,
+        };
+        let _permit = sem.acquire().await.map_err(|_| SourceError::Other("shutting down".into()))?;
         let dir = self.inner.dirs.create_for(owner).await.map_err(|e| SourceError::Other(e.to_string()))?;
         let mut full = self.base_args(&dir);
         full.extend(args);
@@ -282,6 +369,7 @@ impl Ytdlp {
     /// One stream resolve: the fast player client first (when configured and not ruled out for
     /// this key), then yt-dlp's default clients.
     async fn fetch_stream(&self, url: &str, cache_key: &str, owner: &ProcOwner) -> SourceResult<StreamInfo> {
+        self.guard_link(url).await?;
         let fast = self
             .inner
             .player_client
@@ -312,7 +400,12 @@ impl Ytdlp {
             "--".into(),
             url.into(),
         ]);
-        let out = self.run(owner, args, RESOLVE_TIMEOUT).await?;
+        let (timeout, pool) = if is_watch_url(url) {
+            (RESOLVE_TIMEOUT, Pool::Youtube)
+        } else {
+            (LINK_RESOLVE_TIMEOUT, Pool::Link)
+        };
+        let out = self.run(owner, args, timeout, pool).await?;
         let line = String::from_utf8_lossy(&out);
         let line = line.lines().rev().find(|l| l.trim_start().starts_with('{')).unwrap_or("");
         let v: Value =
@@ -374,6 +467,7 @@ impl Ytdlp {
 
     /// Metadata for any yt-dlp supported URL (single item or flat playlist).
     pub async fn probe(&self, url: &str, limit: usize, owner: &ProcOwner) -> SourceResult<(Vec<TrackInfo>, Option<String>)> {
+        self.guard_link(url).await?;
         let args = vec![
             "--dump-single-json".into(),
             "--flat-playlist".into(),
@@ -382,7 +476,7 @@ impl Ytdlp {
             "--".into(),
             url.into(),
         ];
-        let out = self.run(owner, args, PROBE_TIMEOUT).await?;
+        let out = self.run(owner, args, PROBE_TIMEOUT, Pool::Probe).await?;
         let v: Value = serde_json::from_slice(&out).map_err(|_| SourceError::Other("yt-dlp returned invalid JSON".into()))?;
         let (mut tracks, name) = parse_probe(&v);
         tracks.truncate(limit);
@@ -426,12 +520,31 @@ impl Ytdlp {
         if current.as_deref() == Some(latest.as_str()) {
             return Ok(None);
         }
-        let url = rel["assets"]
-            .as_array()
-            .and_then(|a| a.iter().find(|x| x["name"].as_str() == Some(asset)))
-            .and_then(|x| x["browser_download_url"].as_str())
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("https://github.com/yt-dlp/yt-dlp/releases/download/{latest}/{asset}"));
+        let asset_url = |name: &str| {
+            rel["assets"]
+                .as_array()
+                .and_then(|a| a.iter().find(|x| x["name"].as_str() == Some(name)))
+                .and_then(|x| x["browser_download_url"].as_str())
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("https://github.com/yt-dlp/yt-dlp/releases/download/{latest}/{name}"))
+        };
+        let url = asset_url(asset);
+        // The checksums of the same release: a binary that does not match is never installed.
+        // (They come from the same GitHub release, so this guards against corrupted or swapped
+        // downloads, not against a compromised release; yt-dlp's GPG signature is not checked.)
+        let sums = self
+            .inner
+            .http
+            .get(asset_url(SUMS_ASSET))
+            .header(reqwest::header::USER_AGENT, super::USER_AGENT)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        let expected = expected_sha256(&sums, asset)
+            .ok_or_else(|| anyhow::anyhow!("{SUMS_ASSET} of {latest} has no entry for {asset}"))?;
 
         tokio::fs::create_dir_all(&self.inner.bin_dir).await?;
         let tmp = self.inner.bin_dir.join(format!(".yt-dlp.{}.tmp", uuid::Uuid::new_v4()));
@@ -439,6 +552,11 @@ impl Ytdlp {
         if let Err(e) = result {
             let _ = tokio::fs::remove_file(&tmp).await;
             return Err(e);
+        }
+        let actual = sha256_file(&tmp).await.ok();
+        if actual.as_deref() != Some(expected.as_str()) {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            anyhow::bail!("downloaded {asset} {latest} does not match its SHA-256 ({expected}); not installed");
         }
         // Sanity check the new binary before swapping it in.
         let spec = ProcSpec::new(&tmp, ProcOwner::system(), VERSION_TIMEOUT).arg("--version");
@@ -527,6 +645,46 @@ impl Drop for Flight {
     }
 }
 
+/// Which semaphore a yt-dlp run waits on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pool {
+    Youtube,
+    Link,
+    Probe,
+}
+
+/// A YouTube watch URL as Lynx builds it (`watch_url` in the facade).
+fn is_watch_url(url: &str) -> bool {
+    // The prefix pins the host to www.youtube.com (no userinfo or port can come before the path).
+    url.starts_with("https://www.youtube.com/watch?v=")
+}
+
+/// The hex SHA-256 of `asset` in a `sha256sum`-style list (`<hex>  <name>` lines).
+fn expected_sha256(sums: &str, asset: &str) -> Option<String> {
+    sums.lines().find_map(|l| {
+        let (hash, name) = l.trim().split_once(char::is_whitespace)?;
+        let name = name.trim().trim_start_matches('*');
+        (name == asset && hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| hash.to_ascii_lowercase())
+    })
+}
+
+async fn sha256_file(path: &Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncReadExt;
+    let mut f = tokio::fs::File::open(path).await?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = f.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// A failed fast-client resolve is repeated with yt-dlp's default clients unless that cannot
 /// help (cancelled, timed out, or the video is private).
 fn retry_with_default_client(e: &SourceError) -> bool {
@@ -593,6 +751,14 @@ pub fn short_reason(stderr: &str) -> String {
 
 pub(crate) fn parse_stream(v: &Value, now: i64) -> Option<StreamInfo> {
     let url = v["url"].as_str().filter(|u| !u.is_empty())?.to_owned();
+    // The player fetches this URL: it must be http(s) on a public host (see `netguard`).
+    let allowed = reqwest::Url::parse(&url)
+        .map_err(|_| netguard::Blocked::Scheme)
+        .and_then(|u| netguard::check_static(&u, false));
+    if let Err(b) = allowed {
+        warn!(reason = %b, "yt-dlp returned a stream URL that is not allowed");
+        return None;
+    }
     let mut http_headers: Vec<(String, String)> = v["http_headers"]
         .as_object()
         .map(|m| m.iter().filter_map(|(k, x)| x.as_str().map(|s| (k.clone(), s.to_owned()))).collect())
@@ -656,22 +822,24 @@ fn entry_to_track(e: &Value) -> Option<TrackInfo> {
     let extractor = e["ie_key"].as_str().or_else(|| e["extractor_key"].as_str()).unwrap_or("");
     let is_yt = extractor.eq_ignore_ascii_case("youtube");
     let id = e["id"].as_str();
-    let url = e["webpage_url"]
-        .as_str()
-        .or_else(|| e["url"].as_str())
+    // Only http(s) URLs become tracks: anything else would be handed back to yt-dlp later.
+    let web = |k: &str| e[k].as_str().filter(|u| u.starts_with("https://") || u.starts_with("http://"));
+    let url = web("webpage_url")
+        .or_else(|| web("url"))
         .map(str::to_owned)
         .or_else(|| is_yt.then(|| id.map(|i| format!("https://www.youtube.com/watch?v={i}"))).flatten())?;
-    let title = e["track"].as_str().or_else(|| e["title"].as_str()).unwrap_or(&url).to_owned();
+    // Titles and names from arbitrary sites: one line, no control or invisible characters.
+    let title = crate::text::sanitize_text(e["track"].as_str().or_else(|| e["title"].as_str()).unwrap_or(&url));
     let artists: Vec<String> = e["artists"]
         .as_array()
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect::<Vec<_>>())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(crate::text::sanitize_text)).collect::<Vec<_>>())
         .filter(|a| !a.is_empty())
         .or_else(|| {
             e["artist"]
                 .as_str()
                 .or_else(|| e["uploader"].as_str())
                 .or_else(|| e["channel"].as_str())
-                .map(|s| vec![s.to_owned()])
+                .map(|s| vec![crate::text::sanitize_text(s)])
         })
         .unwrap_or_default();
     Some(TrackInfo {
@@ -896,6 +1064,78 @@ echo '{{"id":"x","url":"https://x.invalid/videoplayback?expire=4102444800&itag=2
             assert_eq!(r.len(), 1);
             assert!(!r[0].contains("player_client"), "{client:?}: {}", r[0]);
             let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runs_only_allowed_extractors_and_refuses_private_links() {
+        let (y, root) = fake_ytdlp(None);
+        let owner = ProcOwner::system();
+        y.resolve_stream("https://www.youtube.com/watch?v=x", "x", &owner).await.unwrap();
+        let r = runs(&root);
+        assert!(r[0].contains(&format!("--use-extractors {DEFAULT_EXTRACTORS}")), "{}", r[0]);
+        assert!(r[0].ends_with("-- https://www.youtube.com/watch?v=x"), "{}", r[0]);
+        for url in [
+            "http://127.0.0.1:8080/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::1]/",
+            "http://localhost/x",
+            "https://soundcloud.com:8443/a",
+            "https://user@soundcloud.com/a",
+            "http://127.0.0.1#.bandcamp.com/track/x",
+            "https://example.com/not-in-link-hosts",
+            "file:///etc/passwd",
+        ] {
+            let e = y.probe(url, 1, &owner).await.unwrap_err();
+            assert!(matches!(&e, SourceError::Unsupported(m) if m == netguard::LINK_ERROR), "{url}: {e:?}");
+            let e = y.resolve_stream(url, url, &owner).await.unwrap_err();
+            assert!(matches!(&e, SourceError::Unsupported(_)), "{url}: {e:?}");
+        }
+        assert_eq!(runs(&root).len(), 1, "yt-dlp never saw a refused link");
+        let spec = y.stream_spec("https://soundcloud.com/a/b", &owner, &root, Duration::from_secs(1));
+        let args: Vec<String> = spec.args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(&args[args.len() - 2..], ["--", "https://soundcloud.com/a/b"]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sha256_sums_lookup() {
+        let h = "a".repeat(64);
+        let sums = format!("{h}  yt-dlp
+{}  yt-dlp.exe
+{}  yt-dlp_linux
+", "B".repeat(64), "c".repeat(63));
+        assert_eq!(expected_sha256(&sums, "yt-dlp").as_deref(), Some(h.as_str()));
+        assert_eq!(expected_sha256(&sums, "yt-dlp.exe"), Some("b".repeat(64)));
+        assert_eq!(expected_sha256(&sums, "yt-dlp_linux"), None, "malformed hash");
+        assert_eq!(expected_sha256(&sums, "yt-dlp_macos"), None);
+        assert_eq!(expected_sha256(&format!("{h} *yt-dlp
+"), "yt-dlp").as_deref(), Some(h.as_str()));
+    }
+
+    #[tokio::test]
+    async fn sha256_of_a_file() {
+        let path = std::env::temp_dir().join(format!("lynx-sha-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&path, b"abc").unwrap();
+        assert_eq!(
+            sha256_file(&path).await.unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn probe_entries_need_web_urls_and_streams_public_hosts() {
+        let v = json!({ "_type": "playlist", "entries": [
+            { "id": "a", "title": "A", "url": "file:///etc/passwd" },
+            { "id": "b", "title": "B", "webpage_url": "-o/tmp/x", "url": "https://soundcloud.com/b" },
+            { "id": "dQw4w9WgXcQ", "ie_key": "Youtube", "title": "C", "url": "dQw4w9WgXcQ" } ] });
+        let (t, _) = parse_probe(&v);
+        let urls: Vec<&str> = t.iter().map(|t| t.url.as_str()).collect();
+        assert_eq!(urls, ["https://soundcloud.com/b", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"]);
+        for url in ["http://127.0.0.1/a.mp3", "http://169.254.169.254/x", "file:///etc/passwd", "http://localhost/a"] {
+            assert!(parse_stream(&json!({ "url": url, "protocol": "https" }), 0).is_none(), "{url}");
         }
     }
 

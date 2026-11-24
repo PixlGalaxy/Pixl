@@ -16,6 +16,7 @@
     "queue_full": "The queue is full.",
     "no_results": "Nothing found for that search.",
     "rate_limited": "Slow down a little and try again.",
+    "not_eligible": "Deafened listeners can't vote to skip.",
     "bot_unavailable": "No Lynx bot is free for this channel right now.",
     "invalid": "That request was not valid.",
     "history_disabled": "Turn on your listening history in your account (top right) to use this.",

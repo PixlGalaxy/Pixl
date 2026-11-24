@@ -17,7 +17,7 @@ mod player;
 mod playlists;
 mod queue;
 mod search;
-mod session;
+pub(crate) mod session;
 mod settings;
 mod upstream;
 mod ws;
@@ -90,8 +90,10 @@ pub struct Inner {
     pub discord: Arc<dyn Discord>,
     pub sessions: Sessions,
     pub auth_limit: RateLimiter<String>,
-    pub search_limit: RateLimiter<u64>,
-    pub add_limit: RateLimiter<u64>,
+    /// Shared with the Discord commands (`AppState::limits`).
+    pub search_limit: Arc<RateLimiter<u64>>,
+    pub add_limit: Arc<RateLimiter<u64>>,
+    pub ai_limit: Arc<RateLimiter<u64>>,
     /// Saved-playlist refreshes (they reach Spotify / YouTube): see `playlists`.
     pub refresh_limit: playlists::RefreshLimiter,
     pub members: TtlCache<(u64, u64), MemberStatus>,
@@ -100,6 +102,8 @@ pub struct Inner {
     pub genres: TtlCache<String, Vec<String>>,
     /// Profiles being fetched in the background (deduplication).
     pub profile_pending: dashmap::DashSet<u64>,
+    /// Open WebSockets per user (cap, and closing them on sign-out).
+    pub sockets: ws::Sockets,
     pub events: broadcast::Sender<GuildEvent>,
     pub media: reqwest::Client,
     pub search_refused_logged: AtomicBool,
@@ -128,18 +132,21 @@ impl ApiState {
             .user_agent(crate::sources::USER_AGENT)
             .build()?;
         let store = app.store.clone();
+        let limits = app.limits.clone();
         Ok(Self(Arc::new(Inner {
             app,
             discord,
             sessions: Sessions::new(store, opts.session_ttl, MAX_SESSIONS),
             auth_limit: RateLimiter::new(10, Duration::from_secs(60), 20_000),
-            search_limit: RateLimiter::new(30, Duration::from_secs(60), 20_000),
-            add_limit: RateLimiter::new(15, Duration::from_secs(60), 20_000),
+            search_limit: limits.search.clone(),
+            add_limit: limits.add.clone(),
+            ai_limit: limits.ai.clone(),
             refresh_limit: playlists::RefreshLimiter::new(20_000),
             members: TtlCache::new(MEMBER_TTL, 50_000),
             profiles: TtlCache::new(PROFILE_TTL, 20_000),
             genres: TtlCache::new(GENRE_TTL, 20_000),
             profile_pending: dashmap::DashSet::new(),
+            sockets: ws::Sockets::default(),
             events: broadcast::channel(256).0,
             media,
             search_refused_logged: AtomicBool::new(false),
@@ -151,8 +158,7 @@ impl ApiState {
     fn sweep(&self) {
         let n = self.sessions.sweep();
         self.auth_limit.sweep();
-        self.search_limit.sweep();
-        self.add_limit.sweep();
+        self.app.limits.sweep();
         self.refresh_limit.sweep();
         self.members.sweep();
         self.profiles.sweep();
@@ -171,7 +177,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/health/bots/{index}", get(health::bot))
         .route("/api/public", get(auth::public))
         .route("/api/notices", get(notices::list))
-        .route("/api/auth", post(auth::login))
+        .route("/api/auth", post(auth::login).delete(auth::logout))
         .route("/api/player", get(player::state))
         .route("/api/player/pause", post(player::pause))
         .route("/api/player/resume", post(player::resume))

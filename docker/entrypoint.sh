@@ -12,6 +12,28 @@ export HTTP_HOST=127.0.0.1 HTTP_PORT=4000
 export ADMIN_HTTP_HOST=127.0.0.1 ADMIN_HTTP_PORT=4001
 unset ADMIN_WEB_DIR
 
+# Trusted front proxy (nginx.conf includes this file). TRUSTED_PROXIES: comma-separated addresses
+# or CIDRs of the reverse proxy in front of this container (Nginx Proxy Manager, Traefik,
+# Cloudflare...). Only requests arriving from them may say who the client is, through
+# REAL_IP_HEADER (default X-Forwarded-For; CF-Connecting-IP behind Cloudflare). Unset: the
+# connecting address is the client, and forwarded headers are ignored.
+REALIP_CONF=/tmp/nginx-realip.conf
+: > "$REALIP_CONF"
+if [ -n "${TRUSTED_PROXIES:-}" ]; then
+    for cidr in $(echo "$TRUSTED_PROXIES" | tr ',' ' '); do
+        case "$cidr" in
+            *[!0-9A-Fa-f:./]*) echo "[entrypoint] invalid TRUSTED_PROXIES entry: $cidr" >&2; exit 1 ;;
+        esac
+        echo "set_real_ip_from $cidr;" >> "$REALIP_CONF"
+    done
+    header="${REAL_IP_HEADER:-X-Forwarded-For}"
+    case "$header" in
+        ''|*[!A-Za-z0-9-]*) echo "[entrypoint] invalid REAL_IP_HEADER: $header" >&2; exit 1 ;;
+    esac
+    echo "real_ip_header $header;" >> "$REALIP_CONF"
+    echo "real_ip_recursive on;" >> "$REALIP_CONF"
+fi
+
 nginx -c /etc/nginx/nginx.conf -g 'daemon off;' &
 NGINX_PID=$!
 

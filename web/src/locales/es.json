@@ -16,6 +16,7 @@
     "queue_full": "La cola está llena.",
     "no_results": "No se encontró nada con esa búsqueda.",
     "rate_limited": "Ve un poco más despacio y vuelve a intentarlo.",
+    "not_eligible": "Quien está ensordecido no puede votar para saltar.",
     "bot_unavailable": "Ahora mismo no hay ningún bot de Lynx libre para este canal.",
     "invalid": "La petición no es válida.",
     "history_disabled": "Activa tu historial de escucha en tu cuenta (arriba a la derecha) para usar esto.",

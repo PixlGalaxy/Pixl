@@ -292,7 +292,10 @@
       "not_paused": { "title": "The music is not paused.", "body": "" },
       "nothing_to_replay": { "title": "That queue is gone.", "body": "Start something new with `/play`." },
       "radio_in_jam": { "title": "The radio does not work in a jam.", "body": "Leave the jam to start a radio in this channel." },
-      "jam_host_only": { "title": "Only the jam host channel can change the music.", "body": "The host of this jam lets only people in {channel} edit the shared queue." }
+      "jam_host_only": { "title": "Only the jam host channel can change the music.", "body": "The host of this jam lets only people in {channel} edit the shared queue." },
+      "rate_limited": { "title": "Slow down.", "body": "You are doing that too often. Try again in a minute." },
+      "vote_not_eligible": { "title": "Deafened listeners can't vote to skip.", "body": "Undeafen to vote, or ask someone with control to skip." },
+      "settings_unavailable": { "title": "Lynx could not check this server's settings.", "body": "Please try again in a moment." }
     },
     "reply": {
       "paused": "**Paused.** Use `/resume` or the Resume button to continue.",
