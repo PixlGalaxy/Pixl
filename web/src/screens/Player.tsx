@@ -19,6 +19,7 @@ import { AddBox } from '../components/AddBox'
 import { AiProgress } from '../components/AiProgress'
 import { JamCard, JamJoinPrompt } from '../components/JamCard'
 import { NowPlayingSource, SourceDot } from '../components/ListSource'
+import { AnnoyedFaces, Confetti } from '../components/Reactions'
 import { AiChip, AiTag, TrackReasonLine } from '../components/TrackBits'
 import { InfoPopover } from '../components/InfoPopover'
 import { useToast } from '../components/Toasts'
@@ -172,33 +173,67 @@ function SeekBar({ state }: { state: PlayerState }) {
 function FeedbackButtons({ track }: { track: Track }) {
   const { t } = useTranslation()
   const { channelId, run, setState } = useLynx()
+  // A new burst only when a vote is cast (not when it is taken back, nor for state from elsewhere).
+  const [likeBurst, setLikeBurst] = useState(0)
+  const [dislikeBurst, setDislikeBurst] = useState(0)
   const set = (value: Feedback | null) => {
     if (!channelId) return
+    if (value === 'like') setLikeBurst((n) => n + 1)
+    if (value === 'dislike') setDislikeBurst((n) => n + 1)
     setState((s) => (s?.current?.uid === track.uid ? { ...s, current: { ...s.current, feedback: value } } : s))
     void run(() => api.feedback(channelId, track.uid, value))
   }
   const liked = track.feedback === 'like'
   const disliked = track.feedback === 'dislike'
+  // Opaque fills (color-mix over the surface) so the particles behind never show through.
   return (
     <div className="flex items-center gap-2">
-      <Button
-        size="xs"
-        aria-pressed={liked}
-        icon={<ThumbsUp size={14} />}
-        onClick={() => set(liked ? null : 'like')}
-        className={liked ? '!border-emerald-500/40 !bg-emerald-500/10 !text-emerald-700 dark:!text-emerald-300' : ''}
-      >
-        {liked ? t('player.liked') : t('player.like')}
-      </Button>
-      <Button
-        size="xs"
-        aria-pressed={disliked}
-        icon={<ThumbsDown size={14} />}
-        onClick={() => set(disliked ? null : 'dislike')}
-        className={disliked ? '!border-red-500/30 !bg-red-500/10 !text-red-600 dark:!text-red-400' : ''}
-      >
-        {disliked ? t('player.disliked') : t('player.dislike')}
-      </Button>
+      <span className="relative inline-flex">
+        <Confetti burst={liked ? likeBurst : 0} />
+        <Button
+          size="xs"
+          aria-pressed={liked}
+          icon={
+            <ThumbsUp
+              key={likeBurst}
+              size={14}
+              fill={liked ? 'currentColor' : 'none'}
+              className={liked && likeBurst > 0 ? 'animate-[lynx-thumb-pop_.5s_ease-out] motion-reduce:animate-none' : ''}
+            />
+          }
+          onClick={() => set(liked ? null : 'like')}
+          className={cx(
+            'relative z-10',
+            liked &&
+              '!border-emerald-500/60 !bg-[color-mix(in_srgb,var(--color-emerald-500)_14%,var(--surface))] !text-emerald-700 dark:!text-emerald-300',
+          )}
+        >
+          {liked ? t('player.liked') : t('player.like')}
+        </Button>
+      </span>
+      <span className="relative inline-flex">
+        <AnnoyedFaces burst={disliked ? dislikeBurst : 0} />
+        <Button
+          size="xs"
+          aria-pressed={disliked}
+          icon={
+            <ThumbsDown
+              key={dislikeBurst}
+              size={14}
+              fill={disliked ? 'currentColor' : 'none'}
+              className={disliked && dislikeBurst > 0 ? 'animate-[lynx-thumb-shake_.5s_ease-out] motion-reduce:animate-none' : ''}
+            />
+          }
+          onClick={() => set(disliked ? null : 'dislike')}
+          className={cx(
+            'relative z-10',
+            disliked &&
+              '!border-red-500/50 !bg-[color-mix(in_srgb,var(--color-red-500)_12%,var(--surface))] !text-red-600 dark:!text-red-400',
+          )}
+        >
+          {disliked ? t('player.disliked') : t('player.dislike')}
+        </Button>
+      </span>
       <InfoPopover k="info.player.feedback" label={`${t('player.like')} / ${t('player.dislike')}`} />
     </div>
   )
