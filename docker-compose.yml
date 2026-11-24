@@ -8,6 +8,9 @@ services:
     env_file: .env
     ports:
       - "8080:8080"   # nginx: panel at /, backend at /backend/
+      # Admin panel (needs ADMIN_USERNAME + ADMIN_PASSWORD). Keep it off the internet: bind it to the LAN address
+      # of the host, or put it behind a reverse proxy with an access list.
+      # - "81:8081"
     volumes:
       - lynx-appdata:/appdata   # persistent app data (SQLite, yt-dlp updates)
       - lynx-data:/data         # heavy data (stream fragments, caches)

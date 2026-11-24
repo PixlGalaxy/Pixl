@@ -20,6 +20,8 @@ pub const FLAG_COMPONENTS_V2: u64 = 1 << 15;
 
 /// Total text Discord accepts across all text displays of one message.
 pub const MAX_TEXT_TOTAL: usize = 4000;
+/// Components (nested included) Discord accepts in one Components V2 message.
+pub const MAX_COMPONENTS: usize = 40;
 
 pub const COLOR_INFO: u32 = 0x0EA5E9;
 pub const COLOR_SUCCESS: u32 = 0x23A55A;
@@ -201,6 +203,25 @@ impl Component {
             _ => 0,
         }
     }
+
+    /// Components Discord counts toward its limit (nested ones included).
+    pub fn count(&self) -> usize {
+        match self {
+            Self::Container { children, .. } => 1 + children.iter().map(Self::count).sum::<usize>(),
+            Self::Section { texts, .. } => 2 + texts.len(),
+            Self::Row(buttons) => 1 + buttons.len().min(5),
+            Self::Text(_) | Self::Separator { .. } => 1,
+        }
+    }
+
+    fn contains_text(&self, needle: &str) -> bool {
+        match self {
+            Self::Container { children, .. } => children.iter().any(|c| c.contains_text(needle)),
+            Self::Section { texts, .. } => texts.iter().any(|t| t.contains(needle)),
+            Self::Text(t) => t.contains(needle),
+            _ => false,
+        }
+    }
 }
 
 /// A complete Components V2 message.
@@ -234,8 +255,24 @@ impl Message {
     /// Body for `POST /channels/{id}/messages`, message edits and followups.
     /// Mentions never ping anyone (requester lines use `<@id>`).
     /// Buttons get their icons from the application emojis synced at startup.
+    /// While an operator notice is visible (scheduled downtime...), its line is added at the end.
     pub fn to_json(&self) -> Value {
-        self.to_json_with(&super::emojis::emoji_id)
+        match crate::notices::current_discord_line() {
+            Some(line) => self.with_notice(&line).to_json_with(&super::emojis::emoji_id),
+            None => self.to_json_with(&super::emojis::emoji_id),
+        }
+    }
+
+    /// This message plus the notice line as a last text display, unless it already shows that
+    /// line or adding it would break Discord's limits (text total, 40 components).
+    pub fn with_notice(&self, line: &str) -> Message {
+        let mut m = self.clone();
+        let fits = self.text_len() + line.chars().count() <= MAX_TEXT_TOTAL
+            && self.components.iter().map(Component::count).sum::<usize>() < MAX_COMPONENTS;
+        if fits && !self.components.iter().any(|c| c.contains_text(line)) {
+            m.components.push(Component::Text(line.to_owned()));
+        }
+        m
     }
 
     /// `to_json` with an explicit emoji id lookup.
@@ -571,5 +608,69 @@ mod tests {
         assert_eq!(escape_line("one - two"), "one - two");
         assert_eq!(escape_line("3.14 is pi"), r"3\.14 is pi");
         assert_eq!(escape_line(""), "");
+    }
+}
+
+#[cfg(test)]
+mod notice_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::{
+        i18n::I18n,
+        notices::{self, test_util::notice, Kind, NoticeBoard},
+        store::now_secs,
+    };
+
+    fn texts(v: &Value) -> Vec<String> {
+        v["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["content"].as_str().map(String::from))
+            .collect()
+    }
+
+    #[test]
+    fn every_message_carries_the_visible_notice() {
+        notices::uninstall();
+        let msg = Message::new(vec![Component::Container {
+            accent: None,
+            children: vec![Component::text("Paused.")],
+        }]);
+        assert!(texts(&msg.to_json()).is_empty(), "no board, no line");
+
+        let board = NoticeBoard::default();
+        notices::install(board.clone(), Arc::new(I18n::load("en").unwrap()));
+        let now = now_secs();
+        board.set_notices(vec![notice(1, Kind::Maintenance, now + 3600, 10, now - 5)]);
+        let v = msg.to_json();
+        let lines = texts(&v);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with(&format!("-# Scheduled downtime on <t:{}:F>", now + 3600)));
+        assert_eq!(v["allowed_mentions"], json!({ "parse": [] }), "mentions stay off");
+        // Callbacks (command replies, button updates) go through the same path.
+        assert_eq!(texts(&msg.to_callback(callback::MESSAGE)["data"]).len(), 1);
+        // A message that already shows the line (maintenance refusal) does not get it twice.
+        let line = notices::current_discord_line().unwrap();
+        let shown = Message::new(vec![Component::text(line.clone())]);
+        assert_eq!(texts(&shown.to_json()), vec![line]);
+
+        // Not announced yet / ended: nothing.
+        board.set_notices(vec![notice(2, Kind::Info, now + 7200, 10, now + 3600)]);
+        assert!(texts(&msg.to_json()).is_empty());
+        board.set_notices(vec![notice(3, Kind::Info, now - 7200, 10, now - 9000)]);
+        assert!(texts(&msg.to_json()).is_empty());
+        notices::uninstall();
+    }
+
+    #[test]
+    fn notice_respects_discord_limits() {
+        let full = Message::new(vec![Component::text("x".repeat(MAX_TEXT_TOTAL - 5))]);
+        assert_eq!(full.with_notice("-# a long notice").components.len(), 1, "text total");
+        let many = Message::new((0..MAX_COMPONENTS).map(|_| Component::separator()).collect());
+        assert_eq!(many.with_notice("-# n").components.len(), MAX_COMPONENTS, "component count");
+        let ok = Message::new(vec![Component::text("hi")]);
+        assert_eq!(ok.with_notice("-# n").components.len(), 2);
     }
 }

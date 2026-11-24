@@ -249,7 +249,16 @@
       "title": "Your history is turned off",
       "body": "Like, Dislike and the radio use your listening history. Turn it on in the panel, under Privacy."
     },
+    "announcement": {
+      "line": "{label} {when}: {text}",
+      "line_bare": "{label} {when}.",
+      "upcoming": "on {start} ({relative}) for about {duration}",
+      "active": "until {end} ({relative})",
+      "label": { "maintenance": "Scheduled downtime", "maintenance_active": "Maintenance in progress", "info": "Notice", "warning": "Warning" },
+      "duration": { "minute": "1 minute", "minutes": "{n} minutes", "hour": "1 hour", "hours": "{n} hours", "mixed": "{h} h {m} min" }
+    },
     "error": {
+      "maintenance": { "title": "Lynx is in maintenance.", "body": "New songs can not be added right now. Music that is already playing keeps going." },
       "generic": { "title": "Something went wrong.", "body": "Please try again in a moment." },
       "guild_only": { "title": "This only works in a server.", "body": "Use Lynx from a server text channel." },
       "not_in_voice": { "title": "Join a voice channel first.", "body": "I play music in the voice channel you are in." },

@@ -7,6 +7,10 @@ set -eu
 # nginx proxies /backend/ to 127.0.0.1:4000, so the bot's HTTP server must listen there whatever
 # the env file says (HTTP_HOST / HTTP_PORT only matter when running the binary without Docker).
 export HTTP_HOST=127.0.0.1 HTTP_PORT=4000
+# Same for the admin listener: nginx serves the admin UI on 8081 and proxies only its /api/ to
+# 127.0.0.1:4001. It is never bound to another interface inside the image.
+export ADMIN_HTTP_HOST=127.0.0.1 ADMIN_HTTP_PORT=4001
+unset ADMIN_WEB_DIR
 
 # Trusted front proxy (nginx.conf includes this file). TRUSTED_PROXIES: comma-separated addresses
 # or CIDRs of the reverse proxy in front of this container (Nginx Proxy Manager, Traefik,

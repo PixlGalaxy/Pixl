@@ -11,12 +11,23 @@ COPY web/ ./
 COPY locales/ /locales/
 RUN pnpm build
 
+# --- Admin panel UI (admin/web, its own app) ----------------------------------
+FROM node:24-bookworm-slim@sha256:190bcf5115694c9d3c4d654a1aa88177d77600a06d67972fd7bf4cf224f7692c AS admin-web
+WORKDIR /admin-web
+RUN corepack enable
+COPY admin/web/package.json admin/web/pnpm-lock.yaml* ./
+RUN pnpm install --frozen-lockfile
+COPY admin/web/ ./
+RUN pnpm build
+
 # --- Bot (Rust) -------------------------------------------------------------
 FROM rust:1-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS bot
 RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config libopus-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY src/ src/
+# Admin backend sources (compiled into the bot: src/main.rs includes admin/server/mod.rs).
+COPY admin/server/ admin/server/
 COPY migrations/ migrations/
 COPY assets/ assets/
 COPY locales/ locales/
@@ -51,9 +62,12 @@ RUN useradd --system --uid 10001 --home /appdata lynx \
 WORKDIR /app
 COPY --from=bot /app/target/release/lynx /app/lynx
 COPY --from=web /web/dist /app/web
+# Admin UI (served by nginx on 8081 only; see nginx.conf).
+COPY --from=admin-web /admin-web/dist /app/admin
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY docker/nginx-headers.conf /etc/nginx/lynx-headers.conf
 COPY docker/nginx-backend-headers.conf /etc/nginx/lynx-backend-headers.conf
+COPY docker/nginx-admin-headers.conf /etc/nginx/lynx-admin-headers.conf
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 # nginx listens on 8080 (panel at /, backend at /backend/); the bot's HTTP server stays internal.
@@ -61,5 +75,7 @@ ENV APPDATA_DIR=/appdata DATA_DIR=/data HTTP_HOST=127.0.0.1 HTTP_PORT=4000
 USER lynx
 VOLUME ["/appdata", "/data"]
 EXPOSE 8080
+# Admin panel (status, activity, logs, notices, tweaks). Off unless ADMIN_USERNAME and a password are set; keep it LAN-only.
+EXPOSE 8081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD curl -fsS http://127.0.0.1:8080/backend/healthz || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--", "/app/entrypoint.sh"]

@@ -271,7 +271,12 @@ impl<K: Eq + Hash + Clone> RateLimiter<K> {
             *e = (Instant::now(), 0);
         }
         e.1 += 1;
-        e.1 <= self.limit
+        let ok = e.1 <= self.limit;
+        if !ok {
+            // Every refusal (panel, Discord commands, sign-ins) shows in the admin activity summary.
+            crate::stats::count(crate::stats::Counter::RateLimited);
+        }
+        ok
     }
 
     pub fn sweep(&self) {

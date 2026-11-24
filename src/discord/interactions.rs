@@ -92,6 +92,24 @@ impl<'a> Inv<'a> {
         cards::error_key(key, args, &self.lynx.i18n)
     }
 
+    /// Maintenance mode (admin panel): new songs are refused, with the visible notice.
+    fn maintenance(&self) -> Option<Message> {
+        self.lynx
+            .notices
+            .maintenance_mode()
+            .then(|| cards::maintenance(crate::notices::current_discord_line().as_deref(), &self.lynx.i18n))
+    }
+
+    /// Launch the Activity. A launch carries no message, so a visible notice follows as a private
+    /// note (the panel shows it too).
+    async fn launch_panel(&self) {
+        self.callback(bare_callback(callback::LAUNCH_ACTIVITY)).await;
+        if let Some(line) = crate::notices::current_discord_line() {
+            let note = Message::new(vec![ui::Component::text(line)]).ephemeral(true);
+            respond::followup(self.http, self.token, &note.to_json_with(&|_| None)).await;
+        }
+    }
+
     async fn defer(&self, ephemeral: bool) {
         if respond::respond(self.http, self.id, self.token, &defer_callback(ephemeral)).await {
             self.deferred.store(true, Ordering::Release);
@@ -308,6 +326,7 @@ async fn command(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
         cmd.member.as_deref(),
         &cmd.user,
     );
+    crate::stats::command(&cmd.data.name);
     if inv.guild_id == 0 {
         return inv.send(inv.err("guild_only", &[])).await;
     }
@@ -329,9 +348,12 @@ async fn command(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
         return inv.send(inv.err("restarting", &[])).await;
     }
     if cmd.data.name == "panel" {
-        return inv.callback(bare_callback(callback::LAUNCH_ACTIVITY)).await;
+        return inv.launch_panel().await;
     }
     if cmd.data.name == "ai" {
+        if let Some(m) = inv.maintenance() {
+            return inv.send(m).await;
+        }
         if radio_ui::USE_MODAL && lynx.config.ai_enabled {
             return inv.callback(radio_ui::radio_modal(&lynx.i18n)).await;
         }
@@ -403,6 +425,7 @@ fn int_opt(cmd: &CommandInteraction, name: &str) -> i64 {
 }
 
 async fn autocomplete(lynx: &Lynx, http: &Http, cmd: &CommandInteraction) {
+    crate::stats::count(crate::stats::Counter::Autocomplete);
     let choices = match cmd.data.autocomplete() {
         Some(opt) if cmd.data.name == "play" => {
             let q = opt.value.trim();
@@ -533,6 +556,9 @@ async fn play(inv: &Inv<'_>, query: &str) -> Message {
     };
     if query.is_empty() {
         return inv.err("no_results", &[]);
+    }
+    if let Some(m) = inv.maintenance() {
+        return m;
     }
     if let Err(m) = voice_allowed(inv, vc).await {
         return m;
@@ -989,13 +1015,20 @@ async fn component(lynx: &Lynx, http: &Http, c: &ComponentInteraction) {
         return;
     }
     let Some(id) = CustomId::parse(&c.data.custom_id) else {
+        crate::stats::button("other");
         return;
     };
+    crate::stats::button(match &id {
+        CustomId::NowPlaying { .. } => "now_playing",
+        CustomId::QueuePage { .. } => "queue_page",
+        CustomId::Replay { .. } => "replay",
+        CustomId::StartRadio { .. } | CustomId::StopRadio { .. } | CustomId::CancelRadio { .. } => "radio",
+    });
     match id {
         CustomId::NowPlaying {
             action: NpAction::Panel,
             ..
-        } => inv.callback(bare_callback(callback::LAUNCH_ACTIVITY)).await,
+        } => inv.launch_panel().await,
         CustomId::NowPlaying {
             action,
             voice_channel_id,
@@ -1176,6 +1209,9 @@ async fn replay(inv: &Inv<'_>, original_vc: u64) -> Message {
     };
     if lynx.players.get(inv.guild_id, vc).is_some() {
         return inv.err("generic", &[]);
+    }
+    if let Some(m) = inv.maintenance() {
+        return m;
     }
     let Some(restore) = lynx.players.take_ended(inv.guild_id, original_vc) else {
         return inv.err("nothing_to_replay", &[]);

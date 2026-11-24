@@ -8,10 +8,11 @@ mod ai;
 mod auth;
 mod error;
 mod follow;
-mod health;
+pub(crate) mod health;
 mod jam;
 mod me;
 mod media;
+mod notices;
 mod player;
 mod playlists;
 mod queue;
@@ -65,6 +66,8 @@ pub enum GuildEvent {
     Settings(u64, serde_json::Value),
     /// Something only one user sees changed (their votes, their DJ role): resend state and permissions.
     User(u64),
+    /// Operator notices changed (every socket): the ready `notices` message.
+    Notices(serde_json::Value),
 }
 
 pub struct Options {
@@ -173,6 +176,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/health/", get(health::health))
         .route("/health/bots/{index}", get(health::bot))
         .route("/api/public", get(auth::public))
+        .route("/api/notices", get(notices::list))
         .route("/api/auth", post(auth::login).delete(auth::logout))
         .route("/api/player", get(player::state))
         .route("/api/player/pause", post(player::pause))
@@ -224,8 +228,17 @@ pub fn router(state: ApiState) -> Router {
         .route("/ws", get(ws::upgrade))
         .route("/cdn/{*path}", get(media::cdn))
         .route("/img", get(media::img))
+        // Activity counters for the admin panel (matched routes only, so the groups stay bounded).
+        .route_layer(axum::middleware::from_fn(count_request))
         .fallback(|| async { error::ApiError::not_found("no such route") })
         .with_state(state)
+}
+
+async fn count_request(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    if let Some(p) = req.extensions().get::<axum::extract::MatchedPath>() {
+        crate::stats::api(crate::stats::api_group(p.as_str()));
+    }
+    next.run(req).await
 }
 
 pub async fn serve(state: AppState) -> Result<()> {
@@ -244,6 +257,7 @@ pub async fn serve(state: AppState) -> Result<()> {
             }
         });
     }
+    tokio::spawn(notices::forward(api.clone(), state.shutdown.clone()));
     let app = router(api);
     let addr: SocketAddr = format!("{}:{}", state.config.http_host, state.config.http_port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;

@@ -8,6 +8,7 @@
   },
   "errors": {
     "generic": "Algo salió mal. Inténtalo de nuevo.",
+    "maintenance": "Lynx está en mantenimiento: ahora no se pueden añadir canciones nuevas. La música que ya suena sigue sonando.",
     "network": "No se pudo conectar con Lynx. Revisa tu conexión.",
     "not_in_channel": "Entra al canal de voz para hacer eso.",
     "no_permission": "No tienes permiso para hacer eso aquí.",
@@ -353,6 +354,20 @@
     "policy": "Leer la política de privacidad",
     "noHistoryNote": "Solo se guardan tus ajustes del panel y tus playlists guardadas.",
     "tasteMoved": "Tus gustos (géneros principales y canciones más escuchadas) están al final de la pestaña Radio."
+  },
+  "notice": {
+    "maintenance": "Mantenimiento programado",
+    "maintenanceActive": "Mantenimiento en curso",
+    "info": "Aviso",
+    "warning": "Advertencia",
+    "until": "hasta {{time}} ({{relative}})",
+    "about": "unos {{duration}}",
+    "minutes_one": "{{count}} minuto",
+    "minutes_other": "{{count}} minutos",
+    "hours_one": "{{count}} hora",
+    "hours_other": "{{count}} horas",
+    "hoursMinutes": "{{h}} h {{m}} min",
+    "dismiss": "Ocultar este aviso"
   },
   "health": {
     "title": "Reconectando con Lynx",

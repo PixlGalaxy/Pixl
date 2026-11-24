@@ -4,7 +4,10 @@ import { useToast } from '../components/Toasts'
 import { ApiError, api } from './api'
 import type { Connection } from './discord'
 import { useLivePlayer, type PositionAnchor } from './live'
-import type { GuildSettings, Permissions, PlayerState, PublicConfig, User } from './types'
+import type { GuildSettings, NoticesInfo, Permissions, PlayerState, PublicConfig, User } from './types'
+
+/** Notices are also polled (the socket may be down; a reopened panel catches up on focus). */
+const NOTICES_POLL_MS = 5 * 60_000
 
 type LynxContext = {
   config: PublicConfig
@@ -37,6 +40,8 @@ type LynxContext = {
   run: <T>(fn: () => Promise<T>, success?: string) => Promise<T | null>
   /** Translated message for an API error code. */
   errorText: (error: unknown) => string
+  /** Operator notices (scheduled downtime...) and maintenance mode. */
+  notices: NoticesInfo
 }
 
 const Ctx = createContext<LynxContext | null>(null)
@@ -55,7 +60,27 @@ export function LynxProvider({ conn, children }: { conn: Connection; children: R
   const [pendingJamId, setPendingJamId] = useState<string | null>(conn.jamId)
   const clearPendingJam = useCallback(() => setPendingJamId(null), [])
 
-  const live = useLivePlayer(conn.channel, { onSettings: setSettings, onPermissions: setPermissions })
+  const [notices, setNotices] = useState<NoticesInfo>(() => ({
+    notices: conn.config.notices ?? [],
+    maintenance: conn.config.maintenance === true,
+  }))
+
+  const live = useLivePlayer(conn.channel, {
+    onSettings: setSettings,
+    onPermissions: setPermissions,
+    onNotices: setNotices,
+  })
+
+  useEffect(() => {
+    const load = () => api.notices().then(setNotices, (e) => console.warn('[lynx] notices', e))
+    const id = setInterval(() => document.visibilityState === 'visible' && void load(), NOTICES_POLL_MS)
+    const onVisible = () => document.visibilityState === 'visible' && void load()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
 
   useEffect(() => {
     if (!conn.auth.guild) return
@@ -122,8 +147,9 @@ export function LynxProvider({ conn, children }: { conn: Connection; children: R
       refresh: live.refresh,
       run,
       errorText,
+      notices,
     }),
-    [conn, shared, permissions, pendingJamId, clearPendingJam, settings, live, run, errorText],
+    [conn, shared, permissions, pendingJamId, clearPendingJam, settings, live, run, errorText, notices],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

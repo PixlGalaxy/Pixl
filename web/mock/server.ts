@@ -657,8 +657,10 @@ async function handle(req: IncomingMessage, url: URL, f: Flags, session: string 
         privacy: 'https://lynx.example.com/privacy',
         support: 'https://lynx.example.com/support',
       },
+      ...mockNotices(),
     }
   }
+  if (path === '/notices') return mockNotices()
   // Mock-only controls, driven by the keys in mock/discord-sdk.ts.
   if (method === 'POST' && path === '/mock/voice') {
     const order = ['100', '101', null]
@@ -1228,5 +1230,24 @@ export function mockApi(): Plugin {
         })
       })
     },
+  }
+}
+
+/** A scheduled downtime two hours from now (the banner under the tab bar). */
+function mockNotices() {
+  const start = Math.ceil((Date.now() + 2 * 3_600_000) / 600_000) * 600_000
+  return {
+    notices: [
+      {
+        id: 1,
+        kind: 'maintenance',
+        title: 'Server upgrade',
+        message: 'Lynx moves to a faster machine.',
+        startsAt: start,
+        endsAt: start + 10 * 60_000,
+        phase: 'upcoming',
+      },
+    ],
+    maintenance: false,
   }
 }

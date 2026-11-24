@@ -1,6 +1,8 @@
 target
 web/node_modules
 web/dist
+admin/web/node_modules
+admin/web/dist
 data
 plan
 .env

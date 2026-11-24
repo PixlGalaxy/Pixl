@@ -100,6 +100,7 @@ impl ApiState {
     /// Everything `/api/queue/add` checks before resolving: the Add permission (DJ mode), the
     /// voice channel restriction, the jam's host-only rule, the per-user add limit and a free bot.
     pub async fn add_checks(&self, m: &Member, channel: u64) -> ApiResult<()> {
+        self.maintenance_check()?;
         let actor = self.actor(m.guild_id, m.user_id(), Some(channel), false).await?;
         // Fail closed: without the settings the DJ mode cannot be checked.
         let settings = self

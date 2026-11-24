@@ -42,6 +42,7 @@ pub async fn start(State(st): State<ApiState>, m: Member, Body(b): Body<StartBod
     if b.prompt.as_deref().is_some_and(|p| p.len() > 500) {
         return Err(ApiError::invalid("prompt is too long"));
     }
+    st.maintenance_check()?;
     if !st.ai_limit.allow(m.user_id()) {
         return Err(ApiError::rate_limited());
     }

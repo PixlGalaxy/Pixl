@@ -177,7 +177,7 @@ fn clean_version(v: &str) -> Option<String> {
         .then(|| v.to_owned())
 }
 
-fn ytdlp_report(line: YtdlpLine) -> YtdlpReport {
+pub fn ytdlp_report(line: YtdlpLine) -> YtdlpReport {
     match line {
         YtdlpLine::Known(v) => YtdlpReport {
             ok: true,

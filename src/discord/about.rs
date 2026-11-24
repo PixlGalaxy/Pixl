@@ -88,8 +88,7 @@ impl YtdlpVersion {
         }
     }
 
-    /// Set the cached answer directly (tests).
-    #[cfg(test)]
+    /// Set the cached answer directly (tests, a manual update check in the admin panel).
     pub fn set(&self, version: Option<String>) {
         if let Ok(mut c) = self.cached.lock() {
             *c = Some((Instant::now(), version));

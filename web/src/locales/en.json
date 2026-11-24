@@ -8,6 +8,7 @@
   },
   "errors": {
     "generic": "Something went wrong. Please try again.",
+    "maintenance": "Lynx is in maintenance: new songs can not be added right now. Music that is already playing keeps going.",
     "network": "Could not reach Lynx. Check your connection.",
     "not_in_channel": "Join the voice channel to do that.",
     "no_permission": "You don't have permission to do that here.",
@@ -353,6 +354,20 @@
     "policy": "Read the privacy policy",
     "noHistoryNote": "Only your panel settings and your saved playlists are stored.",
     "tasteMoved": "Your taste (top genres and most played songs) is at the bottom of the Radio tab."
+  },
+  "notice": {
+    "maintenance": "Scheduled downtime",
+    "maintenanceActive": "Maintenance in progress",
+    "info": "Notice",
+    "warning": "Warning",
+    "until": "until {{time}} ({{relative}})",
+    "about": "about {{duration}}",
+    "minutes_one": "{{count}} minute",
+    "minutes_other": "{{count}} minutes",
+    "hours_one": "{{count}} hour",
+    "hours_other": "{{count}} hours",
+    "hoursMinutes": "{{h}} h {{m}} min",
+    "dismiss": "Hide this notice"
   },
   "health": {
     "title": "Reconnecting to Lynx",

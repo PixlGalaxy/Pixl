@@ -1322,6 +1322,7 @@ impl Player {
     }
 
     async fn failed(&mut self, entry: Entry, reason: &str) {
+        crate::stats::count(crate::stats::Counter::TracksFailed);
         if let Some(link) = &self.jam {
             // Silent until the next shared track; the jam skips only when no channel can play it.
             warn!(guild = self.guild_id, track = %entry.info.url, %reason, "jam track failed here");
@@ -1373,6 +1374,7 @@ impl Player {
                         self.reconcile_at = Some(Instant::now() + RECONCILE_SOON);
                     }
                     if let Some((timings, begun)) = p.startup.take() {
+                        record_start_stats(&timings, begun);
                         let id = p.playable.played_youtube_id.as_deref().unwrap_or(&p.playable.page_url);
                         info!(
                             guild = self.guild_id,
@@ -2762,6 +2764,20 @@ impl Player {
         self.manager.remove(self.key(), self.generation);
         let _ = self.events.send(PlayerEvent::Closed);
     }
+}
+
+/// Admin activity counters for a track that just became playable.
+fn record_start_stats(t: &crate::sources::startup::PrepareTimings, begun: Instant) {
+    use crate::stats::{self, Counter, Timing};
+    stats::count(Counter::TracksStarted);
+    if t.cache_hit {
+        stats::count(Counter::ResolvesCached);
+    } else {
+        stats::count(Counter::Resolves);
+        stats::timing(Timing::Resolve, t.resolve);
+    }
+    let from = if t.prefetch { begun } else { t.requested };
+    stats::timing(Timing::Start, Instant::now().saturating_duration_since(from));
 }
 
 #[cfg(test)]

@@ -63,6 +63,8 @@ pub struct Lynx {
     pub limits: Arc<crate::limits::UserLimits>,
     /// yt-dlp version shown by `/about`.
     pub ytdlp_version: Arc<about::YtdlpVersion>,
+    /// Operator notices and maintenance mode (admin panel).
+    pub notices: crate::notices::NoticeBoard,
     /// Startup finished (guilds loaded, nodes reconciled, sessions resumed).
     pub booted: AtomicBool,
 }

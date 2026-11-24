@@ -1,13 +1,19 @@
+// The admin panel backend lives in admin/server (with its UI in admin/web).
+#[path = "../admin/server/mod.rs"]
+mod admin;
 mod ai;
 mod api;
 mod config;
 mod discord;
 mod i18n;
 mod limits;
+mod logs;
+mod notices;
 mod perms;
 mod player;
 mod procs;
 mod sources;
+mod stats;
 mod store;
 mod text;
 
@@ -22,6 +28,7 @@ use crate::{
     config::Config,
     discord::{about::YtdlpVersion, jam::JamInvites, registry::BotRegistry, Bots, Lynx},
     i18n::I18n,
+    notices::NoticeBoard,
     player::{PlayerDeps, PlayerManager},
     procs::ProcessRegistry,
     sources::Sources,
@@ -47,6 +54,8 @@ pub struct AppState {
     pub ai: AiEngine,
     /// Cached yt-dlp version (`/about` and the health endpoint).
     pub ytdlp_version: Arc<YtdlpVersion>,
+    /// Operator notices and runtime flags (admin panel).
+    pub notices: NoticeBoard,
     /// Per-user rate limits shared by the panel and the Discord commands.
     pub limits: Arc<limits::UserLimits>,
     pub shutdown: CancellationToken,
@@ -54,13 +63,22 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // `lynx hash-admin-password`: print an Argon2 hash for ADMIN_PASSWORD_HASH and exit.
+    if std::env::args().nth(1).as_deref() == Some("hash-admin-password") {
+        return admin::hash_password_cli();
+    }
     discord::about::mark_start();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("LOG_LEVEL")
-                .unwrap_or_else(|_| "info,serenity=warn,songbird=warn,sqlx=warn".into()),
-        )
-        .init();
+    {
+        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+        let filter = tracing_subscriber::EnvFilter::try_from_env("LOG_LEVEL")
+            .unwrap_or_else(|_| "info,serenity=warn,songbird=warn,sqlx=warn".into());
+        // stdout as before, plus the admin panel's live log tee (bounded, never blocks).
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(logs::TeeLayer)
+            .init();
+    }
 
     let config = Arc::new(Config::from_env()?);
     tokio::fs::create_dir_all(&config.appdata_dir).await?;
@@ -75,6 +93,11 @@ async fn main() -> Result<()> {
     let procs = ProcessRegistry::new();
     let sources = Sources::new(&config, store.clone(), procs.clone())?;
     let (sessions, session_task) = SessionWriter::spawn(store.clone());
+    let notices = NoticeBoard::load(&store).await?;
+    sources.ytdlp().set_updates_paused(notices.flags().ytdlp_updates_paused);
+    notices::install(notices.clone(), i18n.clone());
+    let notice_task = notices.spawn_ticker(store.clone(), shutdown.clone());
+    let admin_config = admin::AdminConfig::from_env()?;
 
     // Background housekeeping.
     let maintenance = store::spawn_maintenance(
@@ -122,6 +145,7 @@ async fn main() -> Result<()> {
         players: players.clone(),
         ai: ai.clone(),
         ytdlp_version: ytdlp_version.clone(),
+        notices: notices.clone(),
         limits: limits.clone(),
         shutdown: shutdown.clone(),
     };
@@ -135,6 +159,7 @@ async fn main() -> Result<()> {
         players: players.clone(),
         jam: JamInvites::new(),
         ytdlp_version,
+        notices: notices.clone(),
         booted: Default::default(),
     });
     lynx.ytdlp_version.refresh_if_stale(&lynx.sources);
@@ -151,6 +176,11 @@ async fn main() -> Result<()> {
             }
         })
     };
+
+    // Admin panel: its own listener (127.0.0.1:4001 by default, nginx serves it on 8081) on its own
+    // thread and runtime, only when ADMIN_USERNAME and a password are set. It can fail or be flooded
+    // without touching the bot; the Activity listener above never routes anything admin.
+    let admin = admin::start(state.clone(), admin_config);
 
     wait_for_signal().await;
     info!("shutdown requested");
@@ -170,6 +200,10 @@ async fn main() -> Result<()> {
     let _ = tokio::time::timeout(Duration::from_secs(10), async {
         let _ = gateways.await;
         let _ = api.await;
+        if let Some(admin) = admin {
+            let _ = tokio::task::spawn_blocking(move || admin.join()).await;
+        }
+        let _ = notice_task.await;
         let _ = maintenance.await;
         for t in ai_tasks {
             let _ = t.await;

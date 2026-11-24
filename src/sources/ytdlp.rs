@@ -134,6 +134,8 @@ struct Inner {
     /// Keys whose stream URL was invalidated (refused, failed): resolved with the default clients.
     default_client_keys: Mutex<HashSet<String>>,
     update_lock: tokio::sync::Mutex<()>,
+    /// Admin panel switch: the periodic self-update is skipped (a manual check still runs).
+    updates_paused: std::sync::atomic::AtomicBool,
 }
 
 impl Ytdlp {
@@ -164,6 +166,7 @@ impl Ytdlp {
                 inflight: Mutex::new(HashMap::new()),
                 default_client_keys: Mutex::new(HashSet::new()),
                 update_lock: tokio::sync::Mutex::new(()),
+                updates_paused: std::sync::atomic::AtomicBool::new(false),
             }),
         }
     }
@@ -445,6 +448,23 @@ impl Ytdlp {
         }
     }
 
+    /// Forget every cached stream URL (admin panel); the next play resolves again.
+    pub fn clear_stream_cache(&self) -> usize {
+        let mut cache = self.inner.cache.lock().unwrap();
+        let n = cache.len();
+        cache.clear();
+        self.inner.default_client_keys.lock().unwrap().clear();
+        n
+    }
+
+    pub fn set_updates_paused(&self, paused: bool) {
+        self.inner.updates_paused.store(paused, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn updates_paused(&self) -> bool {
+        self.inner.updates_paused.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Metadata for any yt-dlp supported URL (single item or flat playlist).
     pub async fn probe(&self, url: &str, limit: usize, owner: &ProcOwner) -> SourceResult<(Vec<TrackInfo>, Option<String>)> {
         self.guard_link(url).await?;
@@ -591,6 +611,10 @@ impl Ytdlp {
                 tokio::select! {
                     _ = stop.cancelled() => break,
                     _ = tick.tick() => {}
+                }
+                if this.updates_paused() {
+                    info!("yt-dlp self-update is paused (admin panel)");
+                    continue;
                 }
                 match this.update().await {
                     Ok(Some(_)) => {}
