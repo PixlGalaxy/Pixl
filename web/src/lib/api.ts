@@ -11,6 +11,7 @@ import type {
   LoopMode,
   Lyrics,
   Member,
+  NoticesInfo,
   PlayerState,
   PlaylistTracks,
   PublicConfig,
@@ -145,6 +146,7 @@ const q = (params: Record<string, string>) => new URLSearchParams(params).toStri
 export const api = {
   // Auth
   publicConfig: () => request<PublicConfig>('/public'),
+  notices: () => request<NoticesInfo>('/notices'),
   auth: (code: string, guildId: string | null, channelId: string | null) =>
     request<AuthResult>('/auth', 'POST', { code, guildId, channelId }),
 

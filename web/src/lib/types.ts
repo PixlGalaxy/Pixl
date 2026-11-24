@@ -1,7 +1,27 @@
 // Mirrors plan/api.md (the shared contract with the Rust backend). Snowflakes are strings.
 
 export type PublicLinks = { landing?: string; terms?: string; privacy?: string; support?: string }
-export type PublicConfig = { clientId: string; features: { ai: boolean }; links: PublicLinks }
+/** Operator notice (scheduled downtime...), as the server lets anyone see it. Times are epoch ms. */
+export type PublicNotice = {
+  id: number
+  kind: 'maintenance' | 'info' | 'warning'
+  title: string
+  message: string
+  startsAt: number
+  endsAt: number
+  phase: 'upcoming' | 'active'
+}
+export type NoticesInfo = { notices: PublicNotice[]; maintenance: boolean }
+
+export type PublicConfig = {
+  clientId: string
+  features: { ai: boolean }
+  links: PublicLinks
+  /** Visible operator notices, soonest first (older servers omit them). */
+  notices?: PublicNotice[]
+  /** New songs are refused for now (maintenance mode). */
+  maintenance?: boolean
+}
 
 export type User = { id: string; username: string; globalName: string | null; avatarUrl: string | null }
 export type GuildInfo = { id: string; name: string; iconUrl: string | null }
@@ -289,3 +309,5 @@ export type ServerMessage =
   | { type: 'channel'; channel: ChannelRef | null }
   /** The channel's jam changed (also sent right after `state`). */
   | { type: 'jam'; jam: Jam | null }
+  /** Operator notices changed (sent to every open panel). */
+  | { type: 'notices'; notices: PublicNotice[]; maintenance: boolean }

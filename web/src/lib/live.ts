@@ -3,7 +3,7 @@ import { api, BACKEND, getSession } from './api'
 import { onBackendRecovered, reportBackendTrouble } from './health'
 import { useLayoutMode } from './layout'
 import { acceptState, anchorFrom as anchorAt, freshFetch, shouldPoll, type PositionAnchor } from './sync'
-import type { AiState, ChannelRef, GuildSettings, Permissions, PlayerState, ServerMessage } from './types'
+import type { AiState, ChannelRef, GuildSettings, NoticesInfo, Permissions, PlayerState, ServerMessage } from './types'
 
 export type { PositionAnchor } from './sync'
 
@@ -23,6 +23,8 @@ export function localAnchor(positionMs: number): PositionAnchor {
 type Handlers = {
   onSettings: (s: GuildSettings) => void
   onPermissions: (p: Permissions) => void
+  /** Operator notices changed (admin panel). */
+  onNotices?: (n: NoticesInfo) => void
 }
 
 /**
@@ -135,6 +137,9 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
             break
           case 'permissions':
             handlersRef.current.onPermissions(msg.permissions)
+            break
+          case 'notices':
+            handlersRef.current.onNotices?.({ notices: msg.notices ?? [], maintenance: msg.maintenance === true })
             break
         }
       }

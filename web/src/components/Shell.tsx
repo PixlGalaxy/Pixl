@@ -15,6 +15,7 @@ import { RadioScreen } from '../screens/Radio'
 import { SettingsScreen } from '../screens/Settings'
 import { AccountButton, AccountPanel, saveAppearance, useAppearance } from './Account'
 import { LynxMark } from './Logo'
+import { NoticeBanner } from './NoticeBanner'
 import { NoVoiceCard } from './NoVoice'
 
 export type TabId = 'player' | 'queue' | 'playlists' | 'lyrics' | 'radio' | 'settings' | 'help'
@@ -142,6 +143,7 @@ export function Shell({ tab, onTab }: { tab: TabId; onTab: (id: TabId) => void }
 
       <div className="mx-auto flex w-full max-w-6xl flex-1 gap-5 px-3 py-4 sm:px-4 sm:py-6">
         <main className="min-w-0 flex-1">
+          <NoticeBanner />
           {noVoice && <NoVoiceCard />}
           {!noVoice && active === 'player' && <PlayerScreen onOpenQueue={() => setTab('queue')} />}
           {!noVoice && active === 'queue' && <QueueScreen />}
