@@ -27,7 +27,7 @@
   },
   "off": {
     "title": "El panel de administración no está disponible",
-    "body": "Lynx no está en marcha o el panel de administración está desactivado. Define ADMIN_USERNAME y ADMIN_PASSWORD (12 caracteres como mínimo) o ADMIN_PASSWORD_HASH en el entorno y reinicia Lynx.",
+    "body": "Lynx no está en marcha o el panel de administración está desactivado. Define ADMIN_USERNAME y ADMIN_PASSWORD o ADMIN_PASSWORD_HASH en el entorno y reinicia Lynx.",
     "retry": "Reintentar"
   },
   "login": {

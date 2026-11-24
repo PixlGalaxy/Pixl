@@ -103,7 +103,7 @@ An operator panel on its own port, separate from the Activity: status of every b
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `ADMIN_USERNAME` | empty | Required to turn the admin panel on. |
-| `ADMIN_PASSWORD` | empty | Plain password, at least 12 characters (shorter keeps the panel off, with a warning in the log). Leading and trailing spaces are ignored. |
+| `ADMIN_PASSWORD` | empty | Plain password (any non-empty value). Leading and trailing spaces are ignored. |
 | `ADMIN_PASSWORD_HASH` | empty | Argon2 hash of the password instead of the plain one (wins when both are set). Make it with `docker compose run --rm -T --entrypoint /app/lynx lynx hash-admin-password` (or `lynx hash-admin-password` outside Docker), type the password, and put the output in `.env` **inside single quotes** (it contains `$`). |
 | `ADMIN_HTTP_HOST` / `ADMIN_HTTP_PORT` | `127.0.0.1` / `4001` | Internal admin listener. Only matters without Docker: the image always uses `127.0.0.1:4001`. |
 | `ADMIN_COOKIE_SECURE` | `auto` | `auto`: the session cookie is `Secure` when the request came over HTTPS (`X-Forwarded-Proto: https` from your proxy). `true` / `false` force it. |

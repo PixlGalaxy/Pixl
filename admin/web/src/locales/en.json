@@ -27,7 +27,7 @@
   },
   "off": {
     "title": "The admin panel is not available",
-    "body": "Lynx is not running, or the admin panel is turned off. Set ADMIN_USERNAME and ADMIN_PASSWORD (at least 12 characters) or ADMIN_PASSWORD_HASH in the environment and restart Lynx.",
+    "body": "Lynx is not running, or the admin panel is turned off. Set ADMIN_USERNAME and ADMIN_PASSWORD or ADMIN_PASSWORD_HASH in the environment and restart Lynx.",
     "retry": "Try again"
   },
   "login": {

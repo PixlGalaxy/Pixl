@@ -192,8 +192,8 @@ async fn admin_is_off_without_username_and_password() {
         "no password"
     );
     assert!(
-        AdminState::new(deps(state), &cfg(Some(USER), Some("short"))).is_none(),
-        "too short"
+        AdminState::new(deps(state), &cfg(Some(USER), Some("short"))).is_some(),
+        "any non-empty password is accepted"
     );
     assert!(!cfg(None, None).enabled());
     assert!(cfg(Some(USER), Some(PASSWORD)).enabled());

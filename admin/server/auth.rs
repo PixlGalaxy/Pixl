@@ -24,7 +24,7 @@ use tracing::{info, warn};
 
 use super::{
     error::{AdminError, Body},
-    AdminState, MIN_PASSWORD_CHARS, SESSION_TTL,
+    AdminState, SESSION_TTL,
 };
 
 pub const COOKIE: &str = "lynx_admin";
@@ -96,14 +96,8 @@ impl Credentials {
                 }
                 Secret::Argon2(h)
             }
-            (None, Some(p)) if p.chars().count() >= MIN_PASSWORD_CHARS => Secret::Plain(digest(&p)),
-            (None, Some(_)) => {
-                warn!(
-                    min = MIN_PASSWORD_CHARS,
-                    "ADMIN_PASSWORD is too short; the admin panel stays off"
-                );
-                return None;
-            }
+            // Any non-empty password is accepted (the owner's choice); empty means unset.
+            (None, Some(p)) => Secret::Plain(digest(&p)),
             (None, None) => {
                 warn!("ADMIN_PASSWORD or ADMIN_PASSWORD_HASH is not set; the admin panel stays off");
                 return None;
@@ -416,7 +410,7 @@ mod tests {
         let s = |v: &str| Some(v.to_owned());
         assert!(Credentials::from_parts(None, s("a long enough password"), None).is_none());
         assert!(Credentials::from_parts(s("admin"), None, None).is_none());
-        assert!(Credentials::from_parts(s("admin"), s("short"), None).is_none());
+        assert!(Credentials::from_parts(s("admin"), s("short"), None).is_some(), "any non-empty password");
         assert!(Credentials::from_parts(s("admin"), None, s("not a hash")).is_none());
         assert!(Credentials::from_parts(s("admin"), None, s("$pbkdf2-sha256$i=1$c2FsdA$aGFzaA")).is_none());
         assert!(Credentials::from_parts(s("admin"), s("a long enough password"), None).is_some());

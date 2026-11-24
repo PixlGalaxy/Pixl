@@ -48,7 +48,6 @@ use limit::LimitedListener;
 pub use snapshot::Snapshot;
 
 /// Shortest `ADMIN_PASSWORD` accepted; a shorter one keeps the admin panel off.
-pub const MIN_PASSWORD_CHARS: usize = 12;
 pub const SESSION_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 /// Sign-in attempts per client address per minute, and for everyone together.
 pub const LOGIN_PER_IP: u32 = 5;
@@ -387,13 +386,10 @@ async fn serve(state: AdminState, cfg: &AdminConfig) -> Result<()> {
 /// `ADMIN_PASSWORD_HASH`.
 pub fn hash_password_cli() -> Result<()> {
     let mut line = String::new();
-    eprintln!("Password (at least {MIN_PASSWORD_CHARS} characters), then Enter:");
+    eprintln!("Password, then Enter:");
     std::io::stdin().read_line(&mut line)?;
     let password = line.trim_end_matches(['\r', '\n']);
-    anyhow::ensure!(
-        password.chars().count() >= MIN_PASSWORD_CHARS,
-        "the password must have at least {MIN_PASSWORD_CHARS} characters"
-    );
+    anyhow::ensure!(!password.is_empty(), "the password must not be empty");
     println!("{}", auth::hash_password(password)?);
     Ok(())
 }
