@@ -20,15 +20,26 @@
 //! nothing for a while is treated as broken (and reopened once at the current byte), and the
 //! synchronous side waits a bounded time for the async side before failing the read or seek.
 //!
-//! A prefetched track may come with its first bytes on disk ([`HeadFile`], see `heads`): those
-//! are read from the file (probing and the first seconds need no network), and the rest comes from
-//! range requests starting where the file ends. Seeks back into the head read the file again.
+//! A prefetched track may come with its first bytes on disk ([`HeadFile`], see `heads`): the file
+//! is read into memory when the input is created (heads are at most 512 KiB), so probing and the
+//! first seconds need no network, and the rest comes from one range request starting where the
+//! head ends, opened only when a read gets there.
+//!
+//! The demuxer's probe seeks back and forth within the first few hundred bytes (seen live: 0, 116,
+//! 175, 259, 48). Each seek used to cost a range request (~100 ms), so the source keeps the bytes
+//! it already has (the head or the first 256 KiB, and the last 512 KiB the body sent) and serves
+//! seeks into them from memory; a seek a short way ahead skips bytes on the open body. Only a seek
+//! elsewhere opens a new range request.
 
 use std::{
+    collections::VecDeque,
     io::{self, Read, Seek, SeekFrom},
     path::PathBuf,
     pin::Pin,
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex,
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -55,6 +66,13 @@ use tracing::{debug, warn};
 /// Read-ahead between the HTTP body and symphonia: `READ_AHEAD_CHUNKS` chunks of `CHUNK` bytes.
 const CHUNK: usize = 16 * 1024;
 const READ_AHEAD_CHUNKS: usize = 16;
+/// The first bytes of the stream kept in memory when there is no head (seeks into them are free).
+const PREFIX_CACHE: usize = 256 * 1024;
+/// The last bytes the body sent, kept in memory: more than the read-ahead holds, so a seek back
+/// into anything the read-ahead or the demuxer had is free.
+const WINDOW_CACHE: usize = 512 * 1024;
+/// A seek at most this far ahead of the open body reads and drops the bytes instead of reopening.
+const FORWARD_SKIP: u64 = 64 * 1024;
 
 /// How long each step may take before it counts as failed.
 #[derive(Clone, Copy, Debug)]
@@ -86,6 +104,8 @@ struct RangeRequest {
     headers: HeaderMap,
     len: u64,
     timeouts: Timeouts,
+    /// Range requests made for this input (shared by clones), logged with each one.
+    opened: Arc<AtomicU32>,
 }
 
 pub(super) type Body = BoxStream<'static, io::Result<Bytes>>;
@@ -105,6 +125,7 @@ pub(super) async fn fetch_range(client: Client, url: String, headers: HeaderMap,
         headers,
         len: total,
         timeouts: Timeouts::default(),
+        opened: Arc::default(),
     }
     .open_span(at, last)
     .await
@@ -123,6 +144,7 @@ impl RangeRequest {
     async fn open_span(self, at: u64, last: u64) -> io::Result<Body> {
         let limit = self.timeouts.open;
         let len = self.len;
+        let request = self.opened.fetch_add(1, Ordering::Relaxed) + 1;
         let started = std::time::Instant::now();
         let res = match tokio::time::timeout(limit, self.open_now(at, last)).await {
             Ok(res) => res,
@@ -133,8 +155,8 @@ impl RangeRequest {
         };
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match &res {
-            Ok(_) => debug!(from = at, len, elapsed_ms, "stream range request answered"),
-            Err(e) => warn!(from = at, len, elapsed_ms, error = %e, "stream range request failed"),
+            Ok(_) => debug!(from = at, len, elapsed_ms, request, "stream range request answered"),
+            Err(e) => warn!(from = at, len, elapsed_ms, request, error = %e, "stream range request failed"),
         }
         res
     }
@@ -189,27 +211,6 @@ fn stall_guarded(body: BoxStream<'static, reqwest::Result<Bytes>>, stall: Durati
     .boxed()
 }
 
-/// Seek the head file to `pos` when needed, then read at most `max` bytes into `h.buf`.
-fn poll_head_file(h: &mut Head, pos: u64, max: usize, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
-    if h.at != Some(pos) {
-        if !h.seeking {
-            Pin::new(&mut h.file).start_seek(SeekFrom::Start(pos))?;
-            h.seeking = true;
-        }
-        let done = std::task::ready!(Pin::new(&mut h.file).poll_complete(cx));
-        h.seeking = false;
-        h.at = Some(done?);
-        if h.at != Some(pos) {
-            h.at = None;
-            return Poll::Ready(Err(io::Error::other("the head file did not seek to the asked byte")));
-        }
-    }
-    let want = ((h.len - pos) as usize).min(max).min(h.buf.len());
-    let mut rb = ReadBuf::new(&mut h.buf[..want]);
-    std::task::ready!(Pin::new(&mut h.file).poll_read(cx, &mut rb))?;
-    Poll::Ready(Ok(rb.filled().len()))
-}
-
 /// First byte of a `Content-Range: bytes a-b/len` value.
 fn content_range_start(v: &str) -> Option<u64> {
     let range = v.trim().strip_prefix("bytes")?.trim_start();
@@ -220,70 +221,61 @@ fn content_range_start(v: &str) -> Option<u64> {
 /// only ever accessed through `get_mut` (songbird requires `Sync` sources).
 #[derive(Default)]
 struct Pending {
+    /// The open body; its next byte is `SeekableHttpSource::net_at`.
     body: Option<Body>,
-    /// A range request in flight, with the byte it starts at.
+    /// A range request in flight, with the byte it starts at (always `net_at`).
     opening: Option<(u64, BoxFuture<'static, io::Result<Body>>)>,
 }
 
-/// The first `len` bytes of the stream, read from a file on disk.
-struct Head {
-    file: tokio::fs::File,
-    len: u64,
-    /// Where the file cursor is (`None` while unknown).
-    at: Option<u64>,
-    /// A file seek was started and not completed yet.
-    seeking: bool,
-    buf: Vec<u8>,
-}
-
-/// What one poll of the head file gave.
-enum HeadRead {
-    Pending,
-    Read,
-    /// The file failed or ended early: the head is dropped, the rest comes from the network.
-    Gone,
-}
-
-/// Async, seekable HTTP stream of a known length. Reads advance `pos`; a seek to another position
-/// replaces the body with a new range request. A broken body is retried once from `pos`.
-/// With a [`Head`], bytes below its length come from the file and the body only ever covers the
-/// rest (invariant: no body while `pos` is inside the head).
+/// Async, seekable HTTP stream of a known length. Reads advance `pos`.
+///
+/// Bytes already at hand are served from memory and never requested again: the `prefix` (the
+/// head file, or the first [`PREFIX_CACHE`] bytes the network sent) and the `window` (the last
+/// [`WINDOW_CACHE`] bytes the body sent, ending at `net_at`, which covers everything the
+/// read-ahead and the demuxer may still want). A read past them continues the open body, skipping
+/// up to [`FORWARD_SKIP`] bytes on it; only a read or seek elsewhere opens a new range request.
+/// A broken body is retried once from `net_at`.
 pub struct SeekableHttpSource {
     req: RangeRequest,
     pos: u64,
-    /// Rest of the last body chunk.
-    chunk: Bytes,
-    seek_to: Option<u64>,
+    /// Bytes `0..prefix.len()` of the stream.
+    prefix: Vec<u8>,
+    /// Body chunks covering `net_at - window_len .. net_at`.
+    window: VecDeque<Bytes>,
+    window_len: u64,
+    /// The byte the open (or opening) body delivers next.
+    net_at: u64,
+    /// A seek in progress: the target, and whether it waits for its own range request.
+    seek_to: Option<(u64, bool)>,
     /// The body broke and was reopened; reset by the next successful chunk.
     retried: bool,
-    head: Option<Head>,
     pending: Mutex<Pending>,
 }
 
 impl SeekableHttpSource {
+    /// At `pos`, with `body` (if any) delivering from `pos`.
     fn new(req: RangeRequest, pos: u64, body: Option<Body>) -> Self {
         Self {
             req,
             pos,
-            chunk: Bytes::new(),
+            prefix: Vec::new(),
+            window: VecDeque::new(),
+            window_len: 0,
+            net_at: pos,
             seek_to: None,
             retried: false,
-            head: None,
             pending: Mutex::new(Pending { body, opening: None }),
         }
     }
 
-    /// At the start of the stream, serving the first `len` bytes from `file` (no request yet).
-    fn with_head(req: RangeRequest, file: tokio::fs::File, len: u64) -> Self {
-        let len = len.min(req.len);
+    /// At the start of the stream, serving `head` (its first bytes) from memory: no request until
+    /// a read goes past it.
+    fn with_head(req: RangeRequest, mut head: Vec<u8>) -> Self {
+        head.truncate(req.len.min(head.len() as u64) as usize);
+        let at = head.len() as u64;
         let mut src = Self::new(req, 0, None);
-        src.head = Some(Head {
-            file,
-            len,
-            at: Some(0),
-            seeking: false,
-            buf: vec![0; CHUNK],
-        });
+        src.prefix = head;
+        src.net_at = at;
         src
     }
 
@@ -291,47 +283,73 @@ impl SeekableHttpSource {
         self.req.len
     }
 
-    fn head_len(&self) -> u64 {
-        self.head.as_ref().map_or(0, |h| h.len)
-    }
-
-    /// Read from the head file at `pos` (which is inside it) into `out`.
-    fn poll_head(&mut self, cx: &mut Context<'_>, out: &mut ReadBuf<'_>) -> HeadRead {
-        let pos = self.pos;
-        let Some(h) = self.head.as_mut() else { return HeadRead::Gone };
-        let res = poll_head_file(h, pos, out.remaining(), cx);
-        match res {
-            Poll::Pending => HeadRead::Pending,
-            Poll::Ready(Ok(0)) => {
-                warn!(pos, len = h.len, "the head file ended early; going on from the network");
-                self.head = None;
-                HeadRead::Gone
-            }
-            Poll::Ready(Ok(n)) => {
-                out.put_slice(&h.buf[..n]);
-                h.at = Some(pos + n as u64);
-                self.pos += n as u64;
-                HeadRead::Read
-            }
-            Poll::Ready(Err(e)) => {
-                warn!(pos, error = %e, "reading the head file failed; going on from the network");
-                self.head = None;
-                HeadRead::Gone
-            }
-        }
-    }
-
     fn pending(&mut self) -> &mut Pending {
         self.pending.get_mut().unwrap_or_else(|p| p.into_inner())
     }
 
-    /// Make sure a range request from `at` is in flight (dropping the current body).
+    /// The bytes at hand from `pos` on (prefix or window), if `pos` is in them.
+    fn cached(&self, pos: u64) -> Option<&[u8]> {
+        if pos < self.prefix.len() as u64 {
+            return Some(&self.prefix[pos as usize..]);
+        }
+        let mut at = self.net_at - self.window_len;
+        if pos < at || pos >= self.net_at {
+            return None;
+        }
+        for c in &self.window {
+            let end = at + c.len() as u64;
+            if pos < end {
+                return Some(&c[(pos - at) as usize..]);
+            }
+            at = end;
+        }
+        None
+    }
+
+    /// The open (or opening) body gets to `pos` by reading at most [`FORWARD_SKIP`] bytes.
+    fn net_reaches(&mut self, pos: u64) -> bool {
+        let net_at = self.net_at;
+        let p = self.pending();
+        let open = p.body.is_some() || matches!(&p.opening, Some((at, _)) if *at == net_at);
+        open && pos >= net_at && pos - net_at <= FORWARD_SKIP
+    }
+
+    /// Keep a body chunk (it starts at `net_at`).
+    fn push(&mut self, mut bytes: Bytes) {
+        // Never hand out more than the announced length.
+        let room = self.len().saturating_sub(self.net_at);
+        bytes.truncate(room.min(bytes.len() as u64) as usize);
+        if bytes.is_empty() {
+            return;
+        }
+        if self.net_at == self.prefix.len() as u64 && self.prefix.len() < PREFIX_CACHE {
+            let take = (PREFIX_CACHE - self.prefix.len()).min(bytes.len());
+            self.prefix.extend_from_slice(&bytes[..take]);
+        }
+        self.net_at += bytes.len() as u64;
+        self.window_len += bytes.len() as u64;
+        self.window.push_back(bytes);
+        while self.window_len > WINDOW_CACHE as u64 && self.window.len() > 1 {
+            if let Some(front) = self.window.pop_front() {
+                self.window_len -= front.len() as u64;
+            }
+        }
+    }
+
+    /// Make sure a range request from `at` is in flight (dropping the current body). The window
+    /// is kept when the request continues where it ends.
     fn ensure_opening(&mut self, at: u64) {
         let req = self.req.clone();
         let pending = self.pending();
-        if !matches!(&pending.opening, Some((from, _)) if *from == at) {
-            pending.body = None;
-            pending.opening = Some((at, req.open(at).boxed()));
+        if matches!(&pending.opening, Some((from, _)) if *from == at) {
+            return;
+        }
+        pending.body = None;
+        pending.opening = Some((at, req.open(at).boxed()));
+        if at != self.net_at {
+            self.window.clear();
+            self.window_len = 0;
+            self.net_at = at;
         }
     }
 
@@ -354,25 +372,17 @@ impl AsyncRead for SeekableHttpSource {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         loop {
-            if !this.chunk.is_empty() {
-                let n = this.chunk.len().min(buf.remaining());
-                buf.put_slice(&this.chunk[..n]);
-                this.chunk.advance(n);
-                this.pos += n as u64;
-                return Poll::Ready(Ok(()));
-            }
-            if this.pos >= this.len() || buf.remaining() == 0 {
-                return Poll::Ready(Ok(()));
-            }
-            if this.pos < this.head_len() {
-                match this.poll_head(cx, buf) {
-                    HeadRead::Pending => return Poll::Pending,
-                    HeadRead::Read => return Poll::Ready(Ok(())),
-                    HeadRead::Gone => continue,
-                }
-            }
             let pos = this.pos;
-            if this.pending().body.is_none() {
+            if pos >= this.len() || buf.remaining() == 0 {
+                return Poll::Ready(Ok(()));
+            }
+            if let Some(at_hand) = this.cached(pos) {
+                let n = at_hand.len().min(buf.remaining());
+                buf.put_slice(&at_hand[..n]);
+                this.pos = pos + n as u64;
+                return Poll::Ready(Ok(()));
+            }
+            if !this.net_reaches(pos) {
                 this.ensure_opening(pos);
             }
             if let Err(e) = std::task::ready!(this.poll_opening(cx)) {
@@ -380,10 +390,8 @@ impl AsyncRead for SeekableHttpSource {
             }
             let Some(body) = &mut this.pending().body else { continue };
             let err = match std::task::ready!(body.poll_next_unpin(cx)) {
-                Some(Ok(mut bytes)) => {
-                    // Never hand out more than the announced length.
-                    bytes.truncate((this.len() - pos).min(bytes.len() as u64) as usize);
-                    this.chunk = bytes;
+                Some(Ok(bytes)) => {
+                    this.push(bytes);
                     this.retried = false;
                     continue;
                 }
@@ -395,9 +403,10 @@ impl AsyncRead for SeekableHttpSource {
                 warn!(error = %err, pos, "stream read failed again after reopening it");
                 return Poll::Ready(Err(err));
             }
-            warn!(error = %err, pos, "stream read failed; reopening it at the current position");
+            let at = this.net_at;
+            warn!(error = %err, pos, at, "stream read failed; reopening it where it broke");
             this.retried = true;
-            this.ensure_opening(pos);
+            this.ensure_opening(at);
         }
     }
 }
@@ -413,48 +422,27 @@ impl AsyncSeek for SeekableHttpSource {
         let Some(target) = target else {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "seek before the start"));
         };
-        this.seek_to = Some(target);
+        this.seek_to = Some((target, false));
         Ok(())
     }
 
     fn poll_complete(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
         let this = self.get_mut();
-        let Some(target) = this.seek_to else {
+        let Some((target, requested)) = this.seek_to else {
             return Poll::Ready(Ok(this.pos));
         };
-        let pos = this.pos;
-        // Already there, or inside the chunk we hold.
-        if target >= pos && target - pos <= this.chunk.len() as u64 {
-            this.chunk.advance((target - pos) as usize);
+        // At the end, in the bytes at hand, or a short way ahead on the open body: no request.
+        if !requested && (target >= this.len() || this.cached(target).is_some() || this.net_reaches(target)) {
             this.pos = target;
             this.seek_to = None;
             return Poll::Ready(Ok(target));
         }
-        // Inside the head: the next read reads the file there; no request.
-        if target < this.head_len() {
-            let pending = this.pending();
-            pending.body = None;
-            pending.opening = None;
-            this.chunk.clear();
-            this.pos = target;
-            this.seek_to = None;
-            this.retried = false;
-            return Poll::Ready(Ok(target));
-        }
-        if target >= this.len() {
-            let pending = this.pending();
-            pending.body = None;
-            pending.opening = None;
-            this.chunk.clear();
-            this.pos = target;
-            this.seek_to = None;
-            return Poll::Ready(Ok(target));
-        }
+        // Elsewhere: the seek waits for its range request, so a refused one fails the seek.
+        this.seek_to = Some((target, true));
         this.ensure_opening(target);
         let res = std::task::ready!(this.poll_opening(cx));
         this.seek_to = None;
-        // The old body is gone either way; the next read reopens at `pos` after a failure.
-        this.chunk.clear();
+        // On failure the next read reopens at `pos`.
         Poll::Ready(res.map(|()| {
             this.pos = target;
             this.retried = false;
@@ -786,6 +774,7 @@ impl SeekableHttpRequest {
                 headers,
                 len,
                 timeouts: Timeouts::default(),
+                opened: Arc::default(),
             },
             head: None,
         }
@@ -797,13 +786,21 @@ impl SeekableHttpRequest {
         self
     }
 
-    /// The async source at the start of the stream: on the head file when there is one (no
-    /// request yet), else with the first range request already answered.
+    /// The async source at the start of the stream: on the head when there is one (read from its
+    /// file; no request yet), else with the first range request already answered.
     async fn source(&self) -> io::Result<SeekableHttpSource> {
         if let Some(head) = &self.head {
-            match tokio::fs::File::open(&head.path).await {
-                Ok(file) => return Ok(SeekableHttpSource::with_head(self.req.clone(), file, head.len)),
-                Err(e) => warn!(path = %head.path.display(), error = %e, "could not open the head file; reading from the network"),
+            match tokio::fs::read(&head.path).await {
+                Ok(mut data) => {
+                    if (data.len() as u64) < head.len {
+                        warn!(path = %head.path.display(), len = data.len(), expected = head.len, "the head file is short; the network takes over where it ends");
+                    }
+                    data.truncate(head.len.min(data.len() as u64) as usize);
+                    if !data.is_empty() {
+                        return Ok(SeekableHttpSource::with_head(self.req.clone(), data));
+                    }
+                }
+                Err(e) => warn!(path = %head.path.display(), error = %e, "could not read the head file; reading from the network"),
             }
         }
         let body = self.req.clone().open(0).await?;
@@ -938,20 +935,21 @@ mod tests {
 
     #[tokio::test]
     async fn async_source_seeks_with_bounded_ranges() {
-        const SIZE: usize = 300_000;
+        const SIZE: usize = 2_000_000;
         let (url, server) = start(SIZE).await;
         let mut src = request(&url, SIZE as u64).source().await.unwrap();
         assert!(AsyncMediaSource::is_seekable(&src));
         assert_eq!(src.byte_len().await, Some(SIZE as u64));
 
-        let mut buf = [0u8; 100];
-        src.read_exact(&mut buf).await.unwrap();
-        assert_eq!(buf.to_vec(), server.data[..100]);
+        let mut first = vec![0u8; 10_000];
+        src.read_exact(&mut first).await.unwrap();
+        assert_eq!(first, server.data[..10_000]);
 
-        // Forward far away, then backward.
-        assert_eq!(src.seek(SeekFrom::Start(200_000)).await.unwrap(), 200_000);
+        // Forward far away (a request), then back into the first bytes (kept in memory).
+        let mut buf = [0u8; 100];
+        assert_eq!(src.seek(SeekFrom::Start(1_500_000)).await.unwrap(), 1_500_000);
         src.read_exact(&mut buf).await.unwrap();
-        assert_eq!(buf.to_vec(), server.data[200_000..200_100]);
+        assert_eq!(buf.to_vec(), server.data[1_500_000..1_500_100]);
         assert_eq!(src.seek(SeekFrom::Start(5_000)).await.unwrap(), 5_000);
         src.read_exact(&mut buf).await.unwrap();
         assert_eq!(buf.to_vec(), server.data[5_000..5_100]);
@@ -963,19 +961,50 @@ mod tests {
         let mut rest = Vec::new();
         src.read_to_end(&mut rest).await.unwrap();
         assert_eq!(rest, server.data[SIZE - 10..]);
+        // Far back, outside everything kept: a request.
+        assert_eq!(src.seek(SeekFrom::Start(600_000)).await.unwrap(), 600_000);
+        src.read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf.to_vec(), server.data[600_000..600_100]);
 
         let last = SIZE - 1;
         assert_eq!(
             ranges(&server),
             vec![
                 format!("bytes=0-{last}"),
-                format!("bytes=200000-{last}"),
-                format!("bytes=5000-{last}"),
-                format!("bytes=5050-{last}"),
+                format!("bytes=1500000-{last}"),
                 format!("bytes={}-{last}", SIZE - 10),
+                format!("bytes=600000-{last}"),
             ]
         );
         assert!(src.seek(SeekFrom::Current(-(SIZE as i64) - 1)).await.is_err());
+    }
+
+    /// A seek a short way ahead of the open body reads and drops the bytes on it (no request);
+    /// a far one opens a new range.
+    #[tokio::test]
+    async fn short_forward_seek_skips_on_the_open_body() {
+        const SIZE: usize = 2_000_000;
+        let (url, server) = start(SIZE).await;
+        let req = request(&url, SIZE as u64).req;
+        let body = req.clone().open(0).await.unwrap();
+        // Nothing read yet: the body is at byte 0 and nothing is kept.
+        let mut src = SeekableHttpSource::new(req, 0, Some(body));
+        let mut buf = [0u8; 100];
+        assert_eq!(src.seek(SeekFrom::Start(30_000)).await.unwrap(), 30_000);
+        src.read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf.to_vec(), server.data[30_000..30_100]);
+        assert_eq!(ranges(&server).len(), 1);
+        assert_eq!(src.seek(SeekFrom::Start(1_500_000)).await.unwrap(), 1_500_000);
+        src.read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf.to_vec(), server.data[1_500_000..1_500_100]);
+        assert_eq!(src.seek(SeekFrom::Start(1_550_000)).await.unwrap(), 1_550_000);
+        src.read_exact(&mut buf).await.unwrap();
+        assert_eq!(buf.to_vec(), server.data[1_550_000..1_550_100]);
+        let last = SIZE - 1;
+        assert_eq!(
+            ranges(&server),
+            vec![format!("bytes=0-{last}"), format!("bytes=1500000-{last}")]
+        );
     }
 
     #[tokio::test]
@@ -992,6 +1021,7 @@ mod tests {
                 headers: HeaderMap::new(),
                 len: 1_000,
                 timeouts: Timeouts::default(),
+                opened: Arc::default(),
             },
             0,
             None,
@@ -1174,17 +1204,15 @@ mod tests {
         })
         .await
         .unwrap();
+        // The seeks back to 20 000 and 0 are served from the first bytes kept in memory; reading
+        // on past them may continue from where that memory ends.
         let last = SIZE - 1;
-        assert_eq!(
-            ranges(&server),
-            vec![
-                format!("bytes=0-{last}"),
-                format!("bytes=600000-{last}"),
-                format!("bytes=20000-{last}"),
-                format!("bytes={}-{last}", SIZE - 500),
-                format!("bytes=0-{last}"),
-            ]
-        );
+        let r = ranges(&server);
+        assert_eq!(r[..2], [format!("bytes=0-{last}"), format!("bytes=600000-{last}")], "{r:?}");
+        let end = format!("bytes={}-{last}", SIZE - 500);
+        let after_prefix = format!("bytes={PREFIX_CACHE}-{last}");
+        assert!(r.contains(&end), "{r:?}");
+        assert!(r[2..].iter().all(|x| *x == end || *x == after_prefix), "{r:?}");
     }
 
     /// The read-ahead is bounded: a paused reader does not download the whole file.
@@ -1354,12 +1382,92 @@ mod tests {
         })
         .await
         .unwrap();
-        let last = SIZE - 1;
-        assert_eq!(
-            ranges(&server),
-            vec![format!("bytes=200000-{last}"), format!("bytes=400000-{last}")]
-        );
+        // Both seeks land in bytes already at hand (the head, then the last bytes the body sent).
+        assert_eq!(ranges(&server), vec![format!("bytes=200000-{}", SIZE - 1)]);
         let _ = std::fs::remove_file(head.path);
+    }
+
+    /// The seeks symphonia's WebM probe does (seen live: 0, 116, 175, 259, 48), through the sync
+    /// side on a plain thread; ends at byte 112.
+    fn probe_like(stream: &mut Box<dyn MediaSource>, data: &[u8]) {
+        let mut buf = vec![0u8; 4096];
+        stream.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, data[..4096]);
+        for at in [116u64, 175, 259, 48] {
+            assert_eq!(stream.seek(SeekFrom::Start(at)).unwrap(), at);
+            let mut small = [0u8; 64];
+            stream.read_exact(&mut small).unwrap();
+            assert_eq!(small, data[at as usize..at as usize + 64]);
+        }
+        // Let the read-ahead fill up.
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
+    /// With a head, the probe makes no request at all; the network starts once, where the head
+    /// ends; a far seek still opens a new range.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn probe_seeks_in_a_head_make_no_request() {
+        const SIZE: usize = 2_000_000;
+        // Longer than the read-ahead, so nothing needs the network while probing.
+        const HEAD: usize = 600_000;
+        let (url, server) = start(SIZE).await;
+        let head = head_of(&server.data, HEAD);
+        let req = request(&url, SIZE as u64).with_head(Some(head.clone()));
+        let AudioStream { input: mut stream, .. } = req.clone().create_async().await.unwrap();
+        let (data, s) = (server.data.clone(), server.clone());
+        on_plain_thread(move || {
+            probe_like(&mut stream, &data);
+            assert_eq!(ranges(&s), Vec::<String>::new(), "the probe is served from the head");
+            let mut more = vec![0u8; 700_000 - 112];
+            stream.read_exact(&mut more).unwrap();
+            assert_eq!(more, data[112..700_000]);
+            let last = SIZE - 1;
+            assert_eq!(ranges(&s), vec![format!("bytes={HEAD}-{last}")]);
+            let mut rest = Vec::new();
+            stream.read_to_end(&mut rest).unwrap();
+            assert_eq!(rest, data[700_000..]);
+            assert_eq!(ranges(&s), vec![format!("bytes={HEAD}-{last}")]);
+            assert_eq!(stream.seek(SeekFrom::Start(700_000)).unwrap(), 700_000);
+            let mut buf = vec![0u8; 1000];
+            stream.read_exact(&mut buf).unwrap();
+            assert_eq!(buf, data[700_000..701_000]);
+            assert_eq!(
+                ranges(&s),
+                vec![format!("bytes={HEAD}-{last}"), format!("bytes=700000-{last}")]
+            );
+        })
+        .await
+        .unwrap();
+        let _ = std::fs::remove_file(head.path);
+    }
+
+    /// Without a head, the probe and the whole track need exactly one request.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn probe_seeks_without_a_head_make_one_request() {
+        const SIZE: usize = 2_000_000;
+        let (url, server) = start(SIZE).await;
+        let req = request(&url, SIZE as u64);
+        let AudioStream { input: mut stream, .. } = req.clone().create_async().await.unwrap();
+        let (data, s) = (server.data.clone(), server.clone());
+        on_plain_thread(move || {
+            probe_like(&mut stream, &data);
+            let last = SIZE - 1;
+            assert_eq!(ranges(&s), vec![format!("bytes=0-{last}")]);
+            let mut rest = Vec::new();
+            stream.read_to_end(&mut rest).unwrap();
+            assert_eq!(rest, data[112..]);
+            assert_eq!(ranges(&s), vec![format!("bytes=0-{last}")]);
+            assert_eq!(stream.seek(SeekFrom::Start(1_000_000)).unwrap(), 1_000_000);
+            let mut buf = vec![0u8; 1000];
+            stream.read_exact(&mut buf).unwrap();
+            assert_eq!(buf, data[1_000_000..1_001_000]);
+            assert_eq!(
+                ranges(&s),
+                vec![format!("bytes=0-{last}"), format!("bytes=1000000-{last}")]
+            );
+        })
+        .await
+        .unwrap();
     }
 
     /// Live: a real YouTube stream through songbird/symphonia, seeking forward 60 s and back to 5 s.
