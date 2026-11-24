@@ -422,7 +422,9 @@ impl ReadAhead {
 
     /// Wait for `fut` (driven by the runtime) for at most `wait`.
     fn wait_for<F: std::future::Future>(rt: &Handle, wait: Duration, fut: F) -> io::Result<F::Output> {
-        rt.block_on(tokio::time::timeout(wait, fut)).map_err(|_| {
+        // The timer must be created inside `block_on` (which enters the runtime): songbird calls
+        // this from its own non-Tokio threads, where `timeout()` itself would panic.
+        rt.block_on(async move { tokio::time::timeout(wait, fut).await }).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("the stream did not answer in {wait:?}"),
@@ -956,10 +958,20 @@ mod tests {
 
     /// The synchronous side (songbird's shared mixer thread) never waits for good: a read or a
     /// seek that gets no answer fails after `wait`, and the input stays failed.
+    /// Run `f` on a plain OS thread with no Tokio context, like songbird's mixer and decode
+    /// threads (`spawn_blocking` would enter the runtime and hide context bugs).
+    async fn on_plain_thread<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, &'static str> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.await.map_err(|_| "the plain thread panicked")
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn read_ahead_waits_a_bounded_time() {
         let mut stream = ReadAhead::with_wait(Box::new(Never), Duration::from_millis(200));
-        tokio::task::spawn_blocking(move || {
+        on_plain_thread(move || {
             let started = std::time::Instant::now();
             let mut buf = [0u8; 10];
             let err = stream.read(&mut buf).unwrap_err();
@@ -982,7 +994,7 @@ mod tests {
         let AudioStream { input: mut stream, .. } = req.clone().create_async().await.unwrap();
         assert!(stream.is_seekable());
         let data = server.data.clone();
-        tokio::task::spawn_blocking(move || {
+        on_plain_thread(move || {
             assert_eq!(stream.byte_len(), Some(SIZE as u64));
             let mut buf = vec![0u8; 1000];
             stream.read_exact(&mut buf).unwrap();
@@ -1134,7 +1146,7 @@ mod tests {
             panic!("not parsed");
         };
         assert!(parsed.supports_backseek);
-        let elapsed = tokio::task::spawn_blocking(move || {
+        let elapsed = on_plain_thread(move || {
             let mut times = Vec::new();
             for secs in [60.0, 5.0, 120.0, 0.5] {
                 let t = Instant::now();
