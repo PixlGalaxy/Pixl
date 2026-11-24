@@ -804,17 +804,18 @@ fn entry_to_track(e: &Value) -> Option<TrackInfo> {
         .or_else(|| web("url"))
         .map(str::to_owned)
         .or_else(|| is_yt.then(|| id.map(|i| format!("https://www.youtube.com/watch?v={i}"))).flatten())?;
-    let title = e["track"].as_str().or_else(|| e["title"].as_str()).unwrap_or(&url).to_owned();
+    // Titles and names from arbitrary sites: one line, no control or invisible characters.
+    let title = crate::text::sanitize_text(e["track"].as_str().or_else(|| e["title"].as_str()).unwrap_or(&url));
     let artists: Vec<String> = e["artists"]
         .as_array()
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect::<Vec<_>>())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(crate::text::sanitize_text)).collect::<Vec<_>>())
         .filter(|a| !a.is_empty())
         .or_else(|| {
             e["artist"]
                 .as_str()
                 .or_else(|| e["uploader"].as_str())
                 .or_else(|| e["channel"].as_str())
-                .map(|s| vec![s.to_owned()])
+                .map(|s| vec![crate::text::sanitize_text(s)])
         })
         .unwrap_or_default();
     Some(TrackInfo {

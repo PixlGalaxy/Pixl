@@ -101,7 +101,13 @@ impl ApiState {
     /// voice channel restriction, the jam's host-only rule, the per-user add limit and a free bot.
     pub async fn add_checks(&self, m: &Member, channel: u64) -> ApiResult<()> {
         let actor = self.actor(m.guild_id, m.user_id(), Some(channel), false).await?;
-        let settings = self.app.store.guild_settings(m.guild_id).await.unwrap_or_default();
+        // Fail closed: without the settings the DJ mode cannot be checked.
+        let settings = self
+            .app
+            .store
+            .guild_settings(m.guild_id)
+            .await
+            .map_err(|e| ApiError::internal("could not read the server settings", e))?;
         if let Decision::Deny(d) = can(&actor, Action::Add, &settings) {
             return Err(ApiError::deny(d));
         }
