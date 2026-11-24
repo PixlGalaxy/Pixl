@@ -29,7 +29,9 @@ use super::{
     },
     lifecycle::{deadline_epoch_ms, EmptyAction, EmptyChannel, QUEUE_END_LEAVE_AFTER},
     messages::{jam_line, Messenger, MessengerDeps, NpData, OwnedNotice},
+    heads::{Fetched, HeadKey},
     playback::{http_input, track_events, ytdlp_input, TrackNotifier, TrackSignal},
+    prefetch::{Plan, Prefetcher, Resolved, Role, Taken, Want},
     queue::{Entry, PushError, PushResult, Queue, QueueEntry},
     radio::{self, Job, JobKind, Radio, RadioSpec, RadioTicket, StartRefused},
     state::{epoch_ms, PausedReason, PlayerEvent, PlayerSnapshot, Status},
@@ -40,14 +42,10 @@ use crate::{
     ai::{RadioPick, RadioRequest},
     discord::registry::BotInfo,
     procs::ProcOwner,
-    sources::{LateMusic, MetaTiming, MusicMeta, Playable, PrepareTimings, SourceError},
+    sources::{HeadFrom, LateMusic, MusicMeta, Playable, PrepareTimings, SourceError},
     store::{track_key, GuildSettings, LoopMode, SessionKey, SessionRecord, MAX_VOLUME, MIN_VOLUME},
 };
 
-/// Prefetch the next track this long before the current one ends.
-/// The next track is prepared shortly after the current one starts (stream URLs last hours), so
-/// skips and track changes start at once instead of waiting for yt-dlp and YouTube's `available_at`.
-const PREFETCH_AFTER_START: Duration = Duration::from_secs(3);
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_FAILURES: u32 = 3;
 const POSITION_TICK: Duration = Duration::from_secs(10);
@@ -308,6 +306,23 @@ fn jam_may_seek(became_playable: bool, gave_up: bool) -> bool {
     became_playable && !gave_up
 }
 
+/// The id a stream is cached and its head is keyed under: the video that plays, or the page URL.
+fn played_id(p: &Playable) -> &str {
+    p.played_youtube_id.as_deref().unwrap_or(&p.page_url)
+}
+
+/// A prefetched track's YouTube Music metadata that arrived meanwhile: apply it before the
+/// track starts, so the now-playing card has it at once.
+fn settle_late_music(p: &mut Playable) {
+    let Some(music) = p.late_music.as_ref().and_then(LateMusic::try_now) else {
+        return;
+    };
+    p.late_music = None;
+    if let Some(m) = music {
+        p.track.music = Some(m);
+    }
+}
+
 struct Player {
     manager: PlayerManager,
     deps: Arc<PlayerDeps>,
@@ -332,9 +347,9 @@ struct Player {
     playing: Option<Playing>,
     /// Entry being prepared to play now.
     loading: Option<Uuid>,
-    prefetched: Option<(Uuid, Playable)>,
-    prefetching: Option<Uuid>,
-    prefetch_at: Option<Instant>,
+    /// Look-ahead prefetching of the next tracks (see `prefetch`), and the task of its running job.
+    prefetch: Prefetcher,
+    prefetch_task: Option<(u64, tokio::task::AbortHandle)>,
     idle_leave_at: Option<Instant>,
     next_tick: Instant,
     /// Next position checkpoint (armed only while a track is running). Every session write moves it.
@@ -394,9 +409,8 @@ pub async fn run(s: Spawn) {
         messenger,
         playing: None,
         loading: None,
-        prefetched: None,
-        prefetching: None,
-        prefetch_at: None,
+        prefetch: Prefetcher::new(deps.config.prefetch_tracks),
+        prefetch_task: None,
         idle_leave_at: None,
         next_tick: Instant::now() + POSITION_TICK,
         checkpoint_at: Instant::now() + CHECKPOINT_EVERY,
@@ -531,7 +545,7 @@ impl Player {
                     }
                 }
                 _ = until(self.idle_leave_at) => self.ending = Some(EndReason::QueueEnded),
-                _ = until(self.prefetch_at) => self.start_prefetch(),
+                _ = until(self.prefetch.deadline()) => self.prefetch_tick(),
                 _ = until(checkpoint) => self.persist(false),
                 alive = jam_changed(&mut jam_rx) => {
                     if alive {
@@ -637,7 +651,7 @@ impl Player {
             }
             Command::Loop { mode, reply } => {
                 self.queue.loop_mode = mode;
-                self.refresh_prefetch();
+                self.prefetch.queue_changed(Instant::now());
                 self.persist(false);
                 self.publish();
                 let _ = reply.send(());
@@ -718,6 +732,12 @@ impl Player {
             Command::Moved(to) => self.moved(to).await,
             Command::End(reason) => self.ending = Some(reason),
             Command::Prepared { uid, prefetch, result } => self.on_prepared(uid, prefetch, *result).await,
+            Command::PrefetchDone { job } => {
+                if self.prefetch_task.as_ref().is_some_and(|(j, _)| *j == job) {
+                    self.prefetch_task = None;
+                }
+                self.prefetch.done(job, Instant::now());
+            }
             Command::MusicMeta { uid, music } => self.on_music_meta(uid, music),
             Command::Track { handle_id, signal } => self.on_track_signal(handle_id, signal).await,
             Command::StartRadio { spec, reply } => {
@@ -803,7 +823,8 @@ impl Player {
                     self.play_current().await;
                 }
             } else {
-                self.refresh_prefetch();
+                // New tracks (radio refills too) may be among the next ones.
+                self.prefetch.queue_changed(Instant::now());
             }
             self.publish();
         }
@@ -923,7 +944,7 @@ impl Player {
     }
 
     fn after_queue_edit(&mut self) {
-        self.refresh_prefetch();
+        self.prefetch.queue_changed(Instant::now());
         self.persist(true);
         self.publish();
     }
@@ -939,64 +960,77 @@ impl Player {
         };
         self.votes.reset();
         self.idle_leave_at = None;
-        if let Some((uid, playable)) = self.prefetched.take() {
-            if uid == entry.uid && playable.stream.expires_at > crate::store::now_secs() + 60 {
+        match self.prefetch.take(entry.uid, crate::store::now_secs()) {
+            Taken::Fresh(playable) => {
+                let mut playable = *playable;
+                settle_late_music(&mut playable);
                 let entry = self.adopt_prepared(entry, &playable);
                 self.begin(entry, playable).await;
                 return;
             }
-            if uid != entry.uid {
-                self.cleanup_track(uid);
+            // The running prefetch of this track starts it (see `on_prepared`).
+            Taken::Pending => {
+                self.loading = Some(entry.uid);
+                self.publish();
+                return;
             }
+            // Resolved again below; a head of the same encode stays usable.
+            Taken::Stale | Taken::None => {}
         }
         self.loading = Some(entry.uid);
-        self.spawn_prepare(&entry, false);
+        self.spawn_prepare(&entry);
         self.publish();
     }
 
-    fn spawn_prepare(&self, entry: &Entry, prefetch: bool) {
+    /// Prepare `entry` to play now (its result arrives as `Command::Prepared`).
+    fn spawn_prepare(&self, entry: &Entry) {
         let sources = self.deps.sources.clone();
         let owner = self.owner(Some(entry.uid));
         let tx = self.tx.clone();
         let info = entry.info.clone();
         let uid = entry.uid;
         tokio::spawn(async move {
-            let mut result = match tokio::time::timeout(PREPARE_TIMEOUT, sources.prepare(&info, &owner)).await {
+            let result = match tokio::time::timeout(PREPARE_TIMEOUT, sources.prepare(&info, &owner)).await {
                 Ok(r) => r,
                 Err(_) => Err(SourceError::Timeout),
             };
-            if let Ok(p) = &mut result {
-                p.timings.prefetch = prefetch;
-                // Nothing waits for a prefetch: let it carry the full metadata.
-                if let Some(late) = p.late_music.as_ref().filter(|_| prefetch).and_then(LateMusic::take) {
-                    p.late_music = None;
-                    let (music, took) = late.await;
-                    p.timings.meta = MetaTiming::Ready(took);
-                    if music.is_some() {
-                        p.track.music = music;
-                    }
-                }
-            }
             let cmd = Command::Prepared {
                 uid,
-                prefetch,
+                prefetch: None,
                 result: Box::new(result),
             };
             let _ = tokio::time::timeout(Duration::from_secs(10), tx.send(cmd)).await;
         });
     }
 
-    async fn on_prepared(&mut self, uid: Uuid, prefetch: bool, result: Result<Playable, SourceError>) {
-        if prefetch {
-            if self.prefetching == Some(uid) {
-                self.prefetching = None;
-                match result {
-                    Ok(p) => self.prefetched = Some((uid, p)),
-                    Err(e) => debug!(%uid, error = %e, "prefetch failed; will retry when the track starts"),
+    async fn on_prepared(&mut self, uid: Uuid, prefetch: Option<u64>, result: Result<Playable, SourceError>) {
+        let result = match prefetch {
+            None => result,
+            Some(job) => match self.prefetch.resolved(job, uid, result) {
+                Resolved::Stored | Resolved::Ignored => return,
+                Resolved::Claimed(result) if self.loading == Some(uid) => match *result {
+                    Ok(mut p) => {
+                        settle_late_music(&mut p);
+                        Ok(p)
+                    }
+                    Err(e) => {
+                        // Same as a prefetch that failed earlier: prepare it normally now.
+                        debug!(%uid, error = %e, "prefetch of the waiting track failed; preparing it again");
+                        if let Some(entry) = self.queue.current().filter(|e| e.uid == uid).cloned() {
+                            self.spawn_prepare(&entry);
+                        }
+                        return;
+                    }
+                },
+                // Claimed, but another track was asked for meanwhile: keep it for later.
+                Resolved::Claimed(result) => {
+                    if let Ok(p) = *result {
+                        self.prefetch.store(uid, p);
+                    }
+                    return;
                 }
-            }
-            return;
-        }
+            },
+        };
         if self.loading != Some(uid) {
             return;
         }
@@ -1070,7 +1104,10 @@ impl Player {
         // Taken here so the copy kept for seeks / retries does not hold it.
         let late_music = playable.late_music.take().and_then(|l| l.take());
         let handle = match self.start_input(&entry, &playable).await {
-            Ok(h) => h,
+            Ok((h, head)) => {
+                playable.timings.head = head;
+                h
+            }
             Err(reason) => return self.failed(entry, &reason).await,
         };
         self.playable_deadline = Some(Instant::now() + PLAYABLE_TIMEOUT);
@@ -1084,7 +1121,7 @@ impl Player {
             became_playable: false,
             startup,
         });
-        self.schedule_prefetch();
+        self.prefetch.track_started(Instant::now(), !paused);
         self.persist(false);
         self.publish();
         self.messenger.now_playing(self.np_data(&entry));
@@ -1127,19 +1164,26 @@ impl Player {
     }
 
     /// Build the songbird input of `playable` and play it, with the track events, volume and pause
-    /// state attached.
-    async fn start_input(&mut self, entry: &Entry, playable: &Playable) -> Result<TrackHandle, String> {
-        let input = if playable.ytdlp_fallback {
-            ytdlp_input(
+    /// state attached. A prefetched head of the same encode (this player's, or the jam host's)
+    /// serves the first bytes from disk.
+    async fn start_input(&mut self, entry: &Entry, playable: &Playable) -> Result<(TrackHandle, HeadFrom), String> {
+        let (input, head) = if playable.ytdlp_fallback {
+            let input = ytdlp_input(
                 &self.deps.sources,
                 &self.deps.procs,
                 playable,
                 &self.owner(Some(entry.uid)),
             )
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            (input, HeadFrom::Pipe)
         } else {
-            http_input(self.deps.http.clone(), &playable.stream)
+            let head = match HeadKey::of(played_id(playable), &playable.stream) {
+                Some(key) => self.manager.heads().lookup(&key).await,
+                None => None,
+            };
+            let from = if head.is_some() { HeadFrom::Disk } else { HeadFrom::Net };
+            (http_input(self.deps.http.clone(), &playable.stream, head), from)
         };
         let call = self.call.clone();
         let handle = match tokio::time::timeout(VOICE_TIMEOUT, call.lock()).await {
@@ -1166,7 +1210,7 @@ impl Player {
         // songbird only readies a lazy input while the track plays: ask for it now, so a track held
         // paused (jam start, empty channel) is ready to play and to seek when it is released.
         let _ = handle.make_playable();
-        Ok(handle)
+        Ok((handle, head))
     }
 
     fn np_data(&self, entry: &Entry) -> NpData {
@@ -1181,7 +1225,7 @@ impl Player {
     /// Stop the songbird track (if any), count the play and free its resources.
     fn end_track(&mut self) {
         self.loading = None;
-        self.prefetch_at = None;
+        self.prefetch.stopped();
         self.playable_deadline = None;
         let Some(p) = self.playing.take() else { return };
         let _ = p.handle.stop();
@@ -1325,7 +1369,7 @@ impl Player {
     fn on_queue_end(&mut self) {
         self.playing = None;
         self.loading = None;
-        self.prefetch_at = None;
+        self.prefetch.stopped();
         self.messenger.clear_now_playing();
         self.messenger.notice(OwnedNotice::QueueFinished);
         self.idle_leave_at = Some(Instant::now() + QUEUE_END_LEAVE_AFTER);
@@ -1358,11 +1402,13 @@ impl Player {
         });
     }
 
-    /// Kill the processes and remove the temp dir of one track, in the background.
+    /// Kill the processes and remove the temp dir (with its prefetched head) of one track, in the
+    /// background.
     fn cleanup_track(&self, uid: Uuid) {
         let procs = self.deps.procs.clone();
         let dirs = self.deps.sources.stream_dirs().clone();
         let (g, c) = (self.guild_id, self.voice_channel_id);
+        self.manager.heads().forget_dir(&dirs.track_path(g, c, uid));
         tokio::spawn(async move {
             procs.kill_track(g, c, uid).await;
             dirs.remove_track(g, c, uid).await;
@@ -1381,7 +1427,8 @@ impl Player {
                 p.start_clock();
             }
         }
-        self.schedule_prefetch();
+        let running = self.playing.as_ref().is_some_and(Playing::running);
+        self.prefetch.set_running(Instant::now(), running);
         self.persist(false);
         self.publish();
         if let Some(p) = &self.playing {
@@ -1454,7 +1501,6 @@ impl Player {
             Ok(Ok(_)) => {
                 p.clock.set_position(target);
                 let pos = p.position_ms();
-                self.schedule_prefetch();
                 self.persist(false);
                 self.publish();
                 let _ = self.events.send(PlayerEvent::Position {
@@ -1552,7 +1598,7 @@ impl Player {
         let (entry, playable) = (p.entry.clone(), p.playable.clone());
         let _ = p.handle.stop();
         let handle = match self.start_input(&entry, &playable).await {
-            Ok(h) => h,
+            Ok((h, _)) => h,
             Err(reason) => {
                 warn!(guild = self.guild_id, channel = self.voice_channel_id, track = %entry.info.url, %reason, "could not restart the track");
                 self.failed(entry, &reason).await;
@@ -1587,7 +1633,7 @@ impl Player {
         if let Some(t) = target {
             self.resume_at = Some(PendingResume::at(entry.uid, t));
         }
-        self.spawn_prepare(entry, false);
+        self.spawn_prepare(entry);
         self.publish();
     }
 
@@ -1928,10 +1974,9 @@ impl Player {
             r.stop();
         }
         self.end_track();
-        if let Some((uid, _)) = self.prefetched.take() {
-            self.cleanup_track(uid);
-        }
-        self.prefetching = None;
+        // The host prefetches the shared queue; the own prefetches are of no use there.
+        let plan = self.prefetch.clear();
+        self.apply_prefetch_plan(plan);
         self.idle_leave_at = None;
         self.resume_at = None;
         self.waiting_start = false;
@@ -1991,6 +2036,8 @@ impl Player {
     fn jam_notices(&mut self, prev: &JamView, view: &JamView, me: SessionKey) {
         let count = view.members.len();
         if prev.host != view.host {
+            // Only the host prefetches the shared queue.
+            self.prefetch.queue_changed(Instant::now());
             let channel = view.host_member().map(|m| m.name.clone()).unwrap_or_default();
             self.messenger.notice(OwnedNotice::JamHost {
                 channel,
@@ -2031,7 +2078,7 @@ impl Player {
         }
         if new_queue {
             self.queue = Queue::mirror(view.tracks.to_vec(), view.index, view.active, view.loop_mode);
-            self.refresh_prefetch();
+            self.prefetch.queue_changed(Instant::now());
         }
         let paused = view.phase.paused();
         if self.user_paused != paused {
@@ -2180,10 +2227,9 @@ impl Player {
         match link.saved {
             Some(saved) => {
                 self.end_track();
-                if let Some((uid, _)) = self.prefetched.take() {
-                    self.cleanup_track(uid);
-                }
-                self.prefetching = None;
+                let plan = self.prefetch.clear();
+                self.apply_prefetch_plan(plan);
+                self.prefetch.queue_changed(Instant::now());
                 self.queue = Queue::restore(saved.tracks, saved.index, saved.loop_mode);
                 self.user_paused = saved.paused;
                 if saved.paused {
@@ -2212,7 +2258,12 @@ impl Player {
                     self.play_current().await;
                 }
             }
-            None => self.sync_pause(),
+            None => {
+                // The host keeps the queue and its prefetches; a channel that became host-less
+                // starts prefetching its own queue again.
+                self.prefetch.queue_changed(Instant::now());
+                self.sync_pause();
+            }
         }
         self.votes.reset();
         self.messenger.notice(match kind {
@@ -2229,46 +2280,110 @@ impl Player {
 
     // ---- prefetch --------------------------------------------------------------------------
 
-    fn schedule_prefetch(&mut self) {
-        self.prefetch_at = self
+    /// Only the jam host prefetches the shared queue (URLs and heads); members reuse them.
+    fn prefetch_role(&self) -> Role {
+        match &self.jam {
+            None => Role::Own,
+            Some(j) if j.view.host == self.key() => Role::Host,
+            Some(_) => Role::Member,
+        }
+    }
+
+    fn prefetch_tick(&mut self) {
+        let depth = self.deps.config.prefetch_tracks;
+        let wanted: Vec<Want> = self
+            .queue
+            .peek_ahead(depth)
+            .iter()
+            .map(|e| Want {
+                uid: e.uid,
+                duration_ms: e.info.duration_ms,
+            })
+            .collect();
+        let left_ms = self
             .playing
             .as_ref()
-            .and_then(|p| p.running().then(|| Instant::now() + PREFETCH_AFTER_START));
+            .map(|p| p.entry.info.duration_ms.unwrap_or(0).saturating_sub(p.position_ms()))
+            .unwrap_or(0);
+        let role = self.prefetch_role();
+        let plan = self
+            .prefetch
+            .tick(Instant::now(), &wanted, left_ms, crate::store::now_secs(), role);
+        self.apply_prefetch_plan(plan);
     }
 
-    fn start_prefetch(&mut self) {
-        self.prefetch_at = None;
-        let Some(next) = self.queue.peek_next().cloned() else {
-            return;
-        };
-        if self.queue.current().is_some_and(|c| c.uid == next.uid)
-            || self.prefetching == Some(next.uid)
-            || self.prefetched.as_ref().is_some_and(|(u, _)| *u == next.uid)
-        {
-            return;
+    fn apply_prefetch_plan(&mut self, plan: Plan) {
+        if let Some(job) = plan.abort {
+            if let Some((_, task)) = self.prefetch_task.take_if(|(j, _)| *j == job) {
+                task.abort();
+            }
         }
-        self.prefetching = Some(next.uid);
-        self.spawn_prepare(&next, true);
-    }
-
-    /// The next track may have changed: drop a prefetch that no longer matches.
-    fn refresh_prefetch(&mut self) {
-        let next = self.queue.peek_next().map(|e| e.uid);
-        if let Some((uid, _)) = &self.prefetched {
-            if Some(*uid) != next {
-                let uid = *uid;
-                self.prefetched = None;
+        let current = self.playing.as_ref().map(|p| p.entry.uid);
+        for uid in plan.discard {
+            // Never the dir of the track that plays or loads.
+            if Some(uid) != current && Some(uid) != self.loading {
                 self.cleanup_track(uid);
             }
         }
-        if self.prefetching.is_some() && self.prefetching != next {
-            self.prefetching = None;
+        if let Some(uid) = plan.retry.filter(|u| self.loading == Some(*u)) {
+            if let Some(entry) = self.queue.current().filter(|e| e.uid == uid).cloned() {
+                warn!(guild = self.guild_id, %uid, "prefetch of the waiting track was lost; preparing it again");
+                self.spawn_prepare(&entry);
+            }
         }
-        // Queue edits (add, move, remove, skip) can change the next track: prepare it soon.
-        if next.is_some() && self.prefetched.is_none() && self.prefetching.is_none() && self.prefetch_at.is_none() {
-            self.schedule_prefetch();
+        if let Some((uid, job)) = plan.start {
+            match self.queue.all().iter().find(|e| e.uid == uid).cloned() {
+                Some(entry) => self.spawn_prefetch(&entry, job),
+                None => self.prefetch.done(job, Instant::now()),
+            }
         }
-        self.schedule_prefetch();
+    }
+
+    /// One prefetch job: prepare the track (reported as `Command::Prepared`), then make sure the
+    /// head of its stream is on disk, then `Command::PrefetchDone`.
+    fn spawn_prefetch(&mut self, entry: &Entry, job: u64) {
+        let sources = self.deps.sources.clone();
+        let heads = self.manager.heads().clone();
+        let client = self.deps.http.clone();
+        let owner = self.owner(Some(entry.uid));
+        let dir = self
+            .deps
+            .sources
+            .stream_dirs()
+            .track_path(self.guild_id, self.voice_channel_id, entry.uid);
+        let tx = self.tx.clone();
+        let info = entry.info.clone();
+        let uid = entry.uid;
+        let guild = self.guild_id;
+        let task = tokio::spawn(async move {
+            let mut result = match tokio::time::timeout(PREPARE_TIMEOUT, sources.prepare(&info, &owner)).await {
+                Ok(r) => r,
+                Err(_) => Err(SourceError::Timeout),
+            };
+            let head = match &mut result {
+                Ok(p) => {
+                    p.timings.prefetch = true;
+                    HeadKey::of(played_id(p), &p.stream).map(|key| (key, p.stream.clone()))
+                }
+                Err(_) => None,
+            };
+            let cmd = Command::Prepared {
+                uid,
+                prefetch: Some(job),
+                result: Box::new(result),
+            };
+            let _ = tokio::time::timeout(Duration::from_secs(10), tx.send(cmd)).await;
+            if let Some((key, stream)) = head {
+                match heads.fetch(&client, &stream, &key, &dir).await {
+                    Ok(Fetched::Downloaded(h)) => debug!(guild, %uid, bytes = h.len, "prefetch: head downloaded"),
+                    Ok(Fetched::Existing(_)) => debug!(guild, %uid, "prefetch: head already on disk"),
+                    Ok(Fetched::Busy) => debug!(guild, %uid, "prefetch: head downloading elsewhere"),
+                    Err(e) => debug!(guild, %uid, error = %e, "prefetch: head download failed; the track starts from the network"),
+                }
+            }
+            let _ = tokio::time::timeout(Duration::from_secs(10), tx.send(Command::PrefetchDone { job })).await;
+        });
+        self.prefetch_task = Some((job, task.abort_handle()));
     }
 
     // ---- state -----------------------------------------------------------------------------
@@ -2439,7 +2554,11 @@ impl Player {
                 self.record_play(&p);
             }
         }
-        self.prefetched = None;
+        // The channel dirs (heads included) are removed below.
+        let _ = self.prefetch.clear();
+        if let Some((_, task)) = self.prefetch_task.take() {
+            task.abort();
+        }
 
         if reason == EndReason::Shutdown {
             // Exact position at shutdown; main flushes the writer once every player has ended.
@@ -2462,7 +2581,9 @@ impl Player {
 
         for c in self.old_channels.iter().copied().chain([self.voice_channel_id]) {
             self.deps.procs.kill_channel(self.guild_id, c).await;
-            self.deps.sources.stream_dirs().remove_channel(self.guild_id, c).await;
+            let dirs = self.deps.sources.stream_dirs();
+            self.manager.heads().forget_dir(&dirs.channel_path(self.guild_id, c));
+            dirs.remove_channel(self.guild_id, c).await;
         }
 
         let minutes = self.deps.config.empty_channel_timeout_secs.div_ceil(60).max(1);

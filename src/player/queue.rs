@@ -243,6 +243,32 @@ impl Queue {
         }
     }
 
+    /// The next `n` distinct tracks that skips (or the current track ending) reach, in order, without
+    /// the current one. A track loop still skips to the following tracks; a queue loop wraps.
+    pub fn peek_ahead(&self, n: usize) -> Vec<Entry> {
+        let len = self.tracks.len();
+        let current = self.current().map(|e| e.uid);
+        let mut out: Vec<Entry> = Vec::new();
+        let mut i = self.upcoming_start();
+        for _ in 0..len {
+            if out.len() >= n {
+                break;
+            }
+            if i >= len {
+                if self.loop_mode != LoopMode::Queue {
+                    break;
+                }
+                i = 0;
+            }
+            let e = &self.tracks[i];
+            if Some(e.uid) != current && !out.iter().any(|o| o.uid == e.uid) {
+                out.push(e.clone());
+            }
+            i += 1;
+        }
+        out
+    }
+
     /// Go back one track. Returns the new current track.
     pub fn previous(&mut self) -> Option<Entry> {
         if self.pos == 0 || self.tracks.is_empty() {
@@ -352,6 +378,24 @@ mod tests {
         q.current()
             .map(|e| e.info.youtube_id.clone().unwrap())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn peek_ahead_follows_skips_and_loops() {
+        let mut q = Queue::new();
+        q.push(entries(4), 10).unwrap();
+        q.start();
+        assert_eq!(titles(&q.peek_ahead(2)), vec!["t1", "t2"]);
+        assert_eq!(titles(&q.peek_ahead(10)), vec!["t1", "t2", "t3"]);
+        assert!(q.peek_ahead(0).is_empty());
+        q.advance(false);
+        q.advance(false);
+        assert_eq!(titles(&q.peek_ahead(2)), vec!["t3"], "end of the queue");
+        q.loop_mode = LoopMode::Queue;
+        assert_eq!(titles(&q.peek_ahead(2)), vec!["t3", "t0"], "wraps");
+        assert_eq!(titles(&q.peek_ahead(9)), vec!["t3", "t0", "t1"], "never the current one, no repeats");
+        q.loop_mode = LoopMode::Track;
+        assert_eq!(titles(&q.peek_ahead(2)), vec!["t3"], "a skip leaves the looped track");
     }
 
     #[test]

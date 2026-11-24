@@ -7,11 +7,13 @@
 
 pub mod actor;
 pub mod checkpoint;
+pub mod heads;
 pub mod http_seek;
 pub mod jam;
 pub mod lifecycle;
 pub mod messages;
 pub mod playback;
+pub mod prefetch;
 pub mod queue;
 pub mod radio;
 pub mod state;
@@ -184,8 +186,13 @@ pub enum Command {
     // Internal
     Prepared {
         uid: Uuid,
-        prefetch: bool,
+        /// The prefetch job that prepared it (`None`: the track is waiting for it).
+        prefetch: Option<u64>,
         result: Box<Result<Playable, SourceError>>,
+    },
+    /// A prefetch job finished (URL and head).
+    PrefetchDone {
+        job: u64,
     },
     /// YouTube Music metadata of a track that started before its lookup finished.
     MusicMeta {
@@ -480,6 +487,8 @@ struct ManagerInner {
     /// Woken whenever a player starts in or moves into a channel (panel sockets waiting for one).
     appeared: Notify,
     jams: jam::Jams,
+    /// Prefetched stream heads on disk, shared by every player (jam members open the host's).
+    heads: heads::Heads,
 }
 
 impl PlayerManager {
@@ -494,6 +503,7 @@ impl PlayerManager {
                 generation: AtomicU64::new(1),
                 appeared: Notify::new(),
                 jams: jam::Jams::new(),
+                heads: heads::Heads::new(),
             }),
         }
     }
@@ -505,6 +515,11 @@ impl PlayerManager {
     /// Live jams (in memory only; see `jam`).
     pub fn jams(&self) -> &jam::Jams {
         &self.inner.jams
+    }
+
+    /// Prefetched stream heads (see `heads`).
+    pub fn heads(&self) -> &heads::Heads {
+        &self.inner.heads
     }
 
     pub fn is_closing(&self) -> bool {
@@ -749,15 +764,16 @@ impl PlayerManager {
         })
     }
 
-    /// For the stream disk limit: never delete the dirs of the current or next track.
+    /// For the stream disk limit: never delete the dirs of the current or the prefetched tracks.
     pub fn protects_dir(&self, guild_id: u64, voice_channel_id: u64, track: &str) -> bool {
         let Some(p) = self.get(guild_id, voice_channel_id) else {
             return false;
         };
         let s = p.snapshot();
+        let ahead = self.inner.deps.config.prefetch_tracks.max(1);
         s.current
             .iter()
-            .chain(s.upcoming.iter().take(1))
+            .chain(s.upcoming.iter().take(ahead))
             .any(|e| e.uid.to_string() == track)
     }
 

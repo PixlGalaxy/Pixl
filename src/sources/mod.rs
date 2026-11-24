@@ -39,7 +39,7 @@ use crate::{
 use detect::Input;
 pub use lists::{CachedList, ListRef};
 pub use lyrics::Lyrics;
-pub use startup::{LateMusic, MetaTiming, PrepareTimings};
+pub use startup::{HeadFrom, LateMusic, MetaTiming, PrepareTimings};
 use startup::{MetaLookup, MetaOutcome};
 use ytdlp::ResolveStats;
 pub use ytdlp::StreamInfo;
@@ -882,6 +882,7 @@ mod tests {
             empty_channel_timeout_secs: 0,
             max_concurrent_extractions: 2,
             stream_cache_max_mb: 100,
+            prefetch_tracks: 2,
             cache_ttl_days: 7,
             max_stored_playlists: 20,
             landing_url: None,

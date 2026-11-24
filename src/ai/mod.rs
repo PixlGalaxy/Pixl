@@ -519,6 +519,7 @@ pub(crate) mod test_util {
             empty_channel_timeout_secs: 0,
             max_concurrent_extractions: 1,
             stream_cache_max_mb: 10,
+            prefetch_tracks: 2,
             cache_ttl_days: 7,
             max_stored_playlists: 20,
             landing_url: None,
