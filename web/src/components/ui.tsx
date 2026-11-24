@@ -463,3 +463,24 @@ export function SectionLabel({ children, right }: { children: ReactNode; right?:
     </div>
   )
 }
+
+/**
+ * Small hover / focus label for icon buttons (native `title` tooltips are slow and unreliable in
+ * Discord's webview). The wrapper takes the hover, so it also works on disabled buttons.
+ */
+export function Tip({ text, side = 'top', children }: { text: string; side?: 'top' | 'left'; children: ReactNode }) {
+  return (
+    <span className="group/tip relative inline-flex">
+      {children}
+      <span
+        role="tooltip"
+        className={cx(
+          'pointer-events-none absolute z-30 rounded-md bg-fg px-2 py-1 text-[11px] font-medium whitespace-nowrap text-bg opacity-0 shadow-md transition-opacity duration-150 group-focus-within/tip:opacity-100 group-hover/tip:opacity-100',
+          side === 'top' ? 'bottom-full left-1/2 mb-1.5 -translate-x-1/2' : 'top-1/2 right-full mr-1.5 -translate-y-1/2',
+        )}
+      >
+        {text}
+      </span>
+    </span>
+  )
+}

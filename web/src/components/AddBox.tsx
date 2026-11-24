@@ -6,7 +6,7 @@ import { fmtTime } from '../lib/format'
 import { useLynx } from '../lib/lynx'
 import type { AddPosition, SearchResult } from '../lib/types'
 import { useToast } from './Toasts'
-import { Artwork, Button, IconButton, Spinner, inputCls } from './ui'
+import { Artwork, Button, IconButton, Spinner, Tip, inputCls } from './ui'
 
 const isUrl = (s: string) => /^https?:\/\/\S+$/i.test(s.trim())
 
@@ -112,15 +112,16 @@ export function AddBox() {
         >
           <span className="hidden min-[420px]:inline">{t('queue.add')}</span>
         </Button>
-        <Button
-          type="button"
-          size="md"
-          icon={adding === 'next:form' ? <Spinner size={14} /> : <ListStart size={15} />}
-          disabled={!trimmed || !canNext || adding !== null}
-          title={canNext ? t('queue.addNext') : t('queue.addNextDjOnly')}
-          aria-label={t('queue.addNext')}
-          onClick={() => trimmed && void add(trimmed, 'form', 'next')}
-        />
+        <Tip text={canNext ? t('queue.addNext') : t('queue.addNextDjOnly')}>
+          <Button
+            type="button"
+            size="md"
+            icon={adding === 'next:form' ? <Spinner size={14} /> : <ListStart size={15} />}
+            disabled={!trimmed || !canNext || adding !== null}
+            aria-label={t('queue.addNext')}
+            onClick={() => trimmed && void add(trimmed, 'form', 'next')}
+          />
+        </Tip>
       </form>
 
       {searching && !results && (
@@ -146,22 +147,26 @@ export function AddBox() {
                     <div className="mt-0.5 truncate text-xs text-muted">{r.artists.join(', ')}</div>
                   </div>
                   <span className="font-mono text-[11px] text-muted tabular-nums">{fmtTime(r.durationMs)}</span>
-                  <IconButton
-                    label={t('queue.addThisNext', { title: r.title })}
-                    title={canNext ? t('queue.addNext') : t('queue.addNextDjOnly')}
-                    disabled={adding !== null || !canNext}
-                    onClick={() => add(r.url, r.url, 'next')}
-                  >
-                    {adding === `next:${r.url}` ? <Spinner size={14} /> : <ListStart size={16} />}
-                  </IconButton>
-                  <IconButton
-                    label={t('queue.addThis', { title: r.title })}
-                    title={t('queue.addEnd')}
-                    disabled={adding !== null}
-                    onClick={() => add(r.url, r.url, 'end')}
-                  >
-                    {adding === `end:${r.url}` ? <Spinner size={14} /> : <Plus size={16} />}
-                  </IconButton>
+                  <Tip side="left" text={canNext ? t('queue.addNext') : t('queue.addNextDjOnly')}>
+                    <IconButton
+                      label={t('queue.addThisNext', { title: r.title })}
+                      title={undefined}
+                      disabled={adding !== null || !canNext}
+                      onClick={() => add(r.url, r.url, 'next')}
+                    >
+                      {adding === `next:${r.url}` ? <Spinner size={14} /> : <ListStart size={16} />}
+                    </IconButton>
+                  </Tip>
+                  <Tip side="left" text={t('queue.addEnd')}>
+                    <IconButton
+                      label={t('queue.addThis', { title: r.title })}
+                      title={undefined}
+                      disabled={adding !== null}
+                      onClick={() => add(r.url, r.url, 'end')}
+                    >
+                      {adding === `end:${r.url}` ? <Spinner size={14} /> : <Plus size={16} />}
+                    </IconButton>
+                  </Tip>
                 </li>
               ))}
             </ul>
