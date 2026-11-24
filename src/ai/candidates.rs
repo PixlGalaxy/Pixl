@@ -120,10 +120,18 @@ pub fn score_all(cands: &mut [Candidate], target: &TasteVector, prompt_weight: f
     }
 }
 
-/// Share of each source in a batch.
+/// Share of each source in a batch. With a prompt the Prompt source carries the batch; the other
+/// sources only bring tracks that match the prompt too (see [`focus_on_prompt`]), so they
+/// personalise it instead of diluting it.
 pub fn quotas(prompt: bool, cold_start: bool) -> Vec<(Source, f64)> {
     match (prompt, cold_start) {
-        (_, true) => vec![
+        (true, true) => vec![
+            (Source::Prompt, 0.85),
+            (Source::Favorite, 0.1),
+            (Source::Similar, 0.05),
+            (Source::Discover, 0.0),
+        ],
+        (false, true) => vec![
             (Source::Prompt, 0.7),
             (Source::Favorite, 0.2),
             (Source::Similar, 0.1),
@@ -131,9 +139,9 @@ pub fn quotas(prompt: bool, cold_start: bool) -> Vec<(Source, f64)> {
         ],
         (true, false) => {
             vec![
-                (Source::Prompt, 0.35),
-                (Source::Discover, 0.3),
-                (Source::Similar, 0.2),
+                (Source::Prompt, 0.6),
+                (Source::Discover, 0.15),
+                (Source::Similar, 0.1),
                 (Source::Favorite, 0.15),
             ]
         }
@@ -146,6 +154,55 @@ pub fn quotas(prompt: bool, cold_start: bool) -> Vec<(Source, f64)> {
             ]
         }
     }
+}
+
+/// Minimum tag weight (the heaviest tag of a track is 1.0) for a track to count as "in" a genre.
+const PROMPT_MATCH_WEIGHT: f64 = 0.4;
+
+/// How well a candidate fits the prompt: 2 = tagged with a requested genre (or found for the
+/// prompt), 1 = tagged with a broader related genre, 0 = no overlap or no tags at all.
+pub fn prompt_tier(c: &Candidate, direct: &[&str], related: &[&str]) -> u8 {
+    if c.source == Source::Prompt {
+        return 2;
+    }
+    let strong = |set: &[&str]| {
+        c.genres
+            .iter()
+            .any(|(g, w)| *w >= PROMPT_MATCH_WEIGHT && set.contains(&g.as_str()))
+    };
+    if strong(direct) {
+        2
+    } else if strong(related) || c.genres.iter().any(|(g, _)| direct.contains(&g.as_str())) {
+        1
+    } else {
+        0
+    }
+}
+
+/// Keep a prompt radio on the prompt: candidates tagged with a requested genre stay; when they
+/// are fewer than `n`, the best partial matches top them up. Tracks with no overlap (someone's
+/// favorites in another genre, untagged ones) are dropped, unless nothing matches at all.
+pub fn focus_on_prompt(cands: Vec<Candidate>, direct: &[&str], related: &[&str], n: usize) -> Vec<Candidate> {
+    if direct.is_empty() {
+        return cands;
+    }
+    let (mut keep, mut partial, mut off) = (Vec::new(), Vec::new(), Vec::new());
+    for c in cands {
+        match prompt_tier(&c, direct, related) {
+            2 => keep.push(c),
+            1 => partial.push(c),
+            _ => off.push(c),
+        }
+    }
+    if keep.len() < n {
+        partial.sort_by(|a, b| b.score.total_cmp(&a.score));
+        let missing = n - keep.len();
+        keep.extend(partial.into_iter().take(missing));
+    }
+    if keep.is_empty() {
+        return off;
+    }
+    keep
 }
 
 /// Apply the `/ai` "Mix" to the source shares: Favorites leans on the user's own tracks, Discover
@@ -464,6 +521,51 @@ pub(crate) mod tests {
         let mut v = vec![a, b, c];
         score_all(&mut v, &target, 1.0);
         assert!(v[0].score > v[2].score && v[2].score > v[1].score);
+    }
+
+    #[test]
+    fn prompt_focus_drops_off_prompt_tracks() {
+        let tagged = |key: &str, source: Source, genres: &[(&str, f64)], score: f64| {
+            let mut c = cand(key, key, source, score);
+            c.genres = genres.iter().map(|(g, w)| ((*g).to_owned(), *w)).collect();
+            c
+        };
+        let direct = ["synthpop", "latin pop"];
+        let related = ["pop", "electronic", "latin"];
+        let list = vec![
+            tagged("p1", Source::Prompt, &[], 0.5),
+            tagged("f1", Source::Favorite, &[("latin pop", 1.0)], 0.9),
+            tagged("f2", Source::Favorite, &[("rock", 1.0)], 0.99),
+            tagged("f3", Source::Favorite, &[("reggaeton", 1.0), ("latin pop", 0.2)], 0.95),
+            tagged("f4", Source::Favorite, &[], 0.97),
+            tagged("d1", Source::Discover, &[("latin", 1.0)], 0.8),
+            tagged("s1", Source::Similar, &[("electronic", 1.0)], 0.7),
+        ];
+        let keys = |v: &[Candidate]| v.iter().map(|c| c.key.clone().unwrap()).collect::<Vec<_>>();
+        // Enough direct matches: only those.
+        assert_eq!(keys(&focus_on_prompt(list.clone(), &direct, &related, 2)), vec!["p1", "f1"]);
+        // Few direct matches: the best partial ones top them up; no-overlap and untagged never.
+        assert_eq!(
+            keys(&focus_on_prompt(list.clone(), &direct, &related, 4)),
+            vec!["p1", "f1", "f3", "d1"]
+        );
+        assert_eq!(focus_on_prompt(list.clone(), &direct, &related, 50).len(), 5);
+        // No recognised genres: nothing to focus on.
+        assert_eq!(focus_on_prompt(list.clone(), &[], &[], 2).len(), list.len());
+        // Nothing matches at all: keep everything rather than an empty radio.
+        let off = vec![tagged("x", Source::Favorite, &[("metal", 1.0)], 0.5)];
+        assert_eq!(focus_on_prompt(off, &direct, &related, 2).len(), 1);
+    }
+
+    #[test]
+    fn prompt_quotas_favor_the_prompt() {
+        let share = |q: &[(Source, f64)], s: Source| q.iter().find(|(x, _)| *x == s).unwrap().1;
+        for cold in [false, true] {
+            let q = quotas(true, cold);
+            assert!(share(&q, Source::Prompt) >= 0.6, "{q:?}");
+            assert!((q.iter().map(|(_, v)| v).sum::<f64>() - 1.0).abs() < 1e-9);
+        }
+        assert!(share(&quotas(true, true), Source::Favorite) <= 0.1);
     }
 
     #[test]

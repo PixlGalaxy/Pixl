@@ -96,6 +96,8 @@ pub enum ReasonKey {
     SimilarListeners,
     YourFavorite,
     MatchesPrompt,
+    /// A favorite of another listener blended into the radio (never names them).
+    ListenerFavorite,
 }
 
 /// "Why this song": `{ key, params }` (`Track.reason` in the API contract; the panel translates).

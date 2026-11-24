@@ -512,12 +512,18 @@ const PROMPT_HINTS: &[(&str, &[&str])] = &[
     ("mexicana", &["regional mexican"]),
     ("mexicanas", &["regional mexican"]),
     ("rock", &["rock"]),
+    ("synth", &["synthpop"]),
+    ("synths", &["synthpop"]),
+    ("sintetizador", &["synthpop"]),
+    ("sintetizadores", &["synthpop"]),
 ];
 
 struct Tables {
     synonyms: HashMap<&'static str, &'static [&'static str]>,
     words: HashMap<&'static str, &'static str>,
     junk: std::collections::HashSet<&'static str>,
+    /// Multi-word synonyms and canonical names as word lists, longest first (prompt parsing).
+    phrases: Vec<(Vec<&'static str>, &'static [&'static str])>,
 }
 
 fn tables() -> &'static Tables {
@@ -529,10 +535,23 @@ fn tables() -> &'static Tables {
             let n: &'static str = Box::leak(normalize(g).into_boxed_str());
             synonyms.entry(n).or_insert_with(|| std::slice::from_ref(g));
         }
+        let mut phrases: Vec<(Vec<&'static str>, &'static [&'static str])> = SYNONYMS
+            .iter()
+            .filter(|(s, _)| s.contains(' '))
+            .map(|(s, gs)| (s.split(' ').collect(), *gs))
+            .collect();
+        for g in GENRES {
+            let n: &'static str = Box::leak(normalize(g).into_boxed_str());
+            if n.contains(' ') && !phrases.iter().any(|(p, _)| p.join(" ") == n) {
+                phrases.push((n.split(' ').collect(), std::slice::from_ref(g)));
+            }
+        }
+        phrases.sort_by_key(|(p, _)| std::cmp::Reverse(p.len()));
         Tables {
             synonyms,
             words: WORDS.iter().copied().collect(),
             junk: JUNK.iter().copied().collect(),
+            phrases,
         }
     })
 }
@@ -643,35 +662,77 @@ pub fn lastfm_tag(genre: &str) -> &str {
     }
 }
 
+/// Broader genres a canonical genre belongs to ("latin pop" -> latin, pop). Used to give partial
+/// credit to tracks tagged only with the parent of a requested genre.
+pub fn related(genre: &str) -> &'static [&'static str] {
+    match genre {
+        "latin pop" => &["latin", "pop"],
+        "synthpop" => &["pop", "electronic"],
+        "k-pop" | "j-pop" => &["pop"],
+        "classic rock" | "hard rock" | "grunge" => &["rock"],
+        "rock en espanol" => &["rock", "latin"],
+        "latin trap" => &["latin", "trap"],
+        "reggaeton" | "dembow" => &["latin", "latin trap"],
+        "bachata" | "salsa" | "merengue" | "cumbia" | "vallenato" | "regional mexican" | "bolero" | "tango" => {
+            &["latin"]
+        }
+        "edm" | "house" | "techno" | "trance" | "drum and bass" | "dubstep" => &["electronic"],
+        "lo-fi" => &["chillout", "hip hop"],
+        "chillout" => &["ambient", "lo-fi"],
+        "ambient" => &["chillout"],
+        "trap" | "drill" => &["hip hop"],
+        "punk" | "emo" => &["rock"],
+        "indie" => &["alternative"],
+        "alternative" => &["indie", "rock"],
+        "dancehall" => &["reggae"],
+        "bossa nova" | "samba" | "sertanejo" | "brazilian funk" => &["world"],
+        _ => &[],
+    }
+}
+
 /// Genres mentioned in a free-text prompt (keywords and mood hints), in order of appearance.
+///
+/// Multi-word names win over the words inside them: "synth latin pop" is synthpop + latin pop,
+/// not also the generic "pop" and "latin" that would let almost any pop or latin track match.
 pub fn genres_in_text(text: &str) -> Vec<&'static str> {
     let n = normalize(text);
+    let words: Vec<&str> = n.split(' ').filter(|w| !w.is_empty()).collect();
+    let t = tables();
+    // (position, genres) of every match, sorted by position at the end.
+    let mut found: Vec<(usize, &'static [&'static str])> = Vec::new();
+    let mut covered = vec![false; words.len()];
+
+    // Multi-word synonyms and canonical names, longest first ("lo fi hip hop" before "hip hop").
+    for (p, gs) in &t.phrases {
+        if p.len() > words.len() {
+            continue;
+        }
+        for start in 0..=words.len() - p.len() {
+            let span = start..start + p.len();
+            if words[span.clone()] == p[..] && !covered[span.clone()].iter().all(|c| *c) {
+                found.push((start, *gs));
+                covered[span].iter_mut().for_each(|c| *c = true);
+            }
+        }
+    }
+    for (i, word) in words.iter().enumerate() {
+        if covered[i] {
+            continue;
+        }
+        if let Some(gs) = t.synonyms.get(*word) {
+            found.push((i, gs));
+        } else if let Some(g) = t.words.get(*word) {
+            found.push((i, std::slice::from_ref(g)));
+        }
+        if let Some((_, gs)) = PROMPT_HINTS.iter().find(|(w, _)| w == word) {
+            found.push((i, gs));
+        }
+    }
+    found.sort_by_key(|(i, _)| *i);
     let mut out: Vec<&'static str> = Vec::new();
-    let mut push = |g: &'static str| {
+    for g in found.into_iter().flat_map(|(_, gs)| gs.iter().copied()) {
         if !out.contains(&g) {
             out.push(g);
-        }
-    };
-    let t = tables();
-    // Multi-word synonyms first ("rock en espanol", "regional mexicano", "hip hop").
-    for (syn, gs) in SYNONYMS.iter().filter(|(s, _)| s.contains(' ')) {
-        if contains_phrase(&n, syn) {
-            gs.iter().for_each(|g| push(g));
-        }
-    }
-    for g in GENRES.iter().filter(|g| normalize(g).contains(' ')) {
-        if contains_phrase(&n, &normalize(g)) {
-            push(g);
-        }
-    }
-    for word in n.split(' ') {
-        if let Some(gs) = t.synonyms.get(word) {
-            gs.iter().for_each(|g| push(g));
-        } else if let Some(g) = t.words.get(word) {
-            push(g);
-        }
-        if let Some((_, gs)) = PROMPT_HINTS.iter().find(|(w, _)| *w == word) {
-            gs.iter().for_each(|g| push(g));
         }
     }
     out
@@ -703,6 +764,11 @@ mod tests {
         }
         for (_, x) in WORDS.iter().chain(PHRASES) {
             assert!(GENRES.contains(x), "{x}");
+        }
+        for g in GENRES {
+            for x in related(g) {
+                assert!(GENRES.contains(x) && x != g, "{g} -> {x}");
+            }
         }
         for (_, gs) in PROMPT_HINTS {
             for x in *gs {
@@ -810,6 +876,17 @@ mod tests {
         let p = genres_in_text("reggaetón viejo y un poco de rock en español");
         assert!(p.contains(&"reggaeton") && p.contains(&"rock en espanol"), "{p:?}");
         assert!(genres_in_text("hola").is_empty());
+        // Compound names win over the words inside them, in order of appearance.
+        assert_eq!(genres_in_text("synth latin pop"), vec!["synthpop", "latin pop"]);
+        assert_eq!(genres_in_text("Synthpop latino"), vec!["synthpop", "latin"]);
+        assert_eq!(genres_in_text("reggaeton viejo"), vec!["reggaeton"]);
+        assert_eq!(genres_in_text("Reggaetón viejo"), vec!["reggaeton"]);
+        assert_eq!(genres_in_text("lofi para estudiar"), vec!["lo-fi", "ambient", "classical"]);
+        assert_eq!(genres_in_text("rock en español 80s"), vec!["rock en espanol"]);
+        assert_eq!(genres_in_text("lo-fi hip hop"), vec!["lo-fi"]);
+        assert_eq!(genres_in_text("pop latino y bachata"), vec!["latin pop", "bachata"]);
+        assert_eq!(genres_in_text("trap latino"), vec!["latin trap"]);
+        assert_eq!(genres_in_text("pop"), vec!["pop"]);
         assert_eq!(canonical("R&B"), Some("r&b"));
         assert_eq!(canonical("Latin Pop"), Some("latin pop"));
         assert_eq!(canonical("nope"), None);

@@ -504,3 +504,150 @@ async fn radio_live() {
         assert!(!picks.is_empty());
     }
 }
+
+/// Tracks of `genre` played by other users (so they are popular in the bot), 2 per artist.
+async fn genre_tracks(store: &Store, prefix: &str, genre: &str, count: usize, first_user: u64) {
+    for i in 0..count {
+        play(
+            store,
+            first_user + i as u64,
+            &format!("{prefix}{i}"),
+            &format!("{prefix} Artist {}", i / 2),
+            genre,
+            2,
+        )
+        .await;
+    }
+}
+
+/// "Galaxy" (61): long history in genres other than the prompt, plus two latin pop tracks.
+async fn rich_listener(store: &Store) {
+    for (i, g) in ["electronic", "reggaeton", "rock"].iter().enumerate() {
+        for j in 0..4 {
+            play(store, 61, &format!("gx{i}{j}"), &format!("Galaxy Fav {i}{j}"), g, 6).await;
+        }
+    }
+    play(store, 61, "gxlp0", "Galaxy LP 0", "latin pop", 3).await;
+    play(store, 61, "gxlp1", "Galaxy LP 1", "latin pop", 3).await;
+}
+
+fn all_picks(first: Option<RadioPick>, rest: Vec<RadioPick>) -> Vec<RadioPick> {
+    first.into_iter().chain(rest).collect()
+}
+
+#[tokio::test]
+async fn new_user_prompt_radio_is_not_a_listeners_favorites() {
+    // The live bug: a brand-new owner (60) starts "synth latin pop" with blend on while a listener
+    // with a long history is in the channel.
+    let store = Store::open_in_memory().await.unwrap();
+    rich_listener(&store).await;
+    genre_tracks(&store, "sp", "synthpop", 8, 100).await;
+    genre_tracks(&store, "lp", "latin pop", 8, 200).await;
+    let engine = engine_with(&store, |_| {}).await;
+    let mut req = request(60);
+    req.listener_ids = vec![61];
+    req.recent_keys.clear();
+    req.prompt = Some("synth latin pop".into());
+    let mut job = engine.start_radio(req);
+    let first = job.first_pick().await;
+    let all = all_picks(first, job.result().await.unwrap());
+    let show: Vec<_> = all.iter().map(|p| (key(p), p.reason.key, p.genres.clone())).collect();
+    assert!(all.len() >= 10, "{show:?}");
+    assert!(
+        all.iter().all(|p| p.reason.key != ReasonKey::YourFavorite),
+        "the new user has no favorites: {show:?}"
+    );
+    assert!(
+        all.iter()
+            .all(|p| p.genres.iter().any(|g| g == "synthpop" || g == "latin pop")),
+        "every pick matches the prompt: {show:?}"
+    );
+    assert!(
+        !all.iter().any(|p| key(p).starts_with("gx") && !key(p).starts_with("gxlp")),
+        "the listener's off-prompt favorites stay out: {show:?}"
+    );
+}
+
+#[tokio::test]
+async fn blended_listener_favorites_are_labelled_as_such() {
+    let store = Store::open_in_memory().await.unwrap();
+    rich_listener(&store).await;
+    // The owner shares one of the listener's tracks: that one is the owner's favorite.
+    play(&store, 60, "gx00", "Galaxy Fav 00", "electronic", 1).await;
+    let engine = engine_with(&store, |_| {}).await;
+    let mut req = request(60);
+    req.listener_ids = vec![61];
+    let cands = local_candidates(engine.inner(), &req, &[60, 61], true, None, &[])
+        .await
+        .unwrap();
+    let favs: Vec<&Candidate> = cands.iter().filter(|c| c.source == Source::Favorite).collect();
+    assert!(favs.len() >= 14, "{}", favs.len());
+    for c in favs {
+        let expected = if c.key.as_deref() == Some("gx00") {
+            ReasonKey::YourFavorite
+        } else {
+            ReasonKey::ListenerFavorite
+        };
+        assert_eq!(c.reason.key, expected, "{:?}", c.key);
+    }
+
+    // Whole radio, no prompt: the group's taste is used, never as "your favorite".
+    let mut req = request(60);
+    req.listener_ids = vec![61];
+    req.recent_keys.clear();
+    let store2 = Store::open_in_memory().await.unwrap();
+    rich_listener(&store2).await;
+    let engine = engine_with(&store2, |_| {}).await;
+    let mut job = engine.start_radio(req);
+    let first = job.first_pick().await;
+    let all = all_picks(first, job.result().await.unwrap());
+    assert!(!all.is_empty());
+    assert!(all.iter().all(|p| p.reason.key != ReasonKey::YourFavorite));
+}
+
+/// Owner 1 has a rock history (see [`fixture`]); the prompts ask for something else.
+#[tokio::test]
+async fn prompt_picks_are_dominated_by_the_prompt_genres() {
+    let store = fixture().await;
+    let genres = [
+        ("rg", "reggaeton"),
+        ("lf", "lo-fi"),
+        ("am", "ambient"),
+        ("re", "rock en espanol"),
+        ("sp", "synthpop"),
+        ("lp", "latin pop"),
+        ("me", "metal"),
+        ("ed", "edm"),
+    ];
+    for (i, (prefix, g)) in genres.iter().enumerate() {
+        genre_tracks(&store, prefix, g, 12, 1000 + 100 * i as u64).await;
+    }
+    // One reggaeton favorite of the owner: it fits the prompt, so it may stay as "your favorite".
+    play(&store, 1, "ownreg", "Owner Reggaeton", "reggaeton", 4).await;
+    let engine = engine_with(&store, |_| {}).await;
+    for (prompt, want) in [
+        ("synth latin pop", &["synthpop", "latin pop"][..]),
+        ("reggaeton viejo", &["reggaeton"][..]),
+        ("lofi para estudiar", &["lo-fi", "ambient", "classical"][..]),
+        ("rock en español 80s", &["rock en espanol"][..]),
+    ] {
+        assert_eq!(taxonomy::genres_in_text(prompt), want, "{prompt}");
+        let mut req = request(1);
+        req.prompt = Some(prompt.into());
+        let mut job = engine.start_radio(req);
+        let first = job.first_pick().await;
+        let all = all_picks(first, job.result().await.unwrap());
+        let show: Vec<_> = all.iter().map(|p| (key(p), p.reason.key, p.genres.clone())).collect();
+        assert!(all.len() >= 10, "{prompt}: {show:?}");
+        let matching = all
+            .iter()
+            .filter(|p| p.genres.iter().any(|g| want.contains(&g.as_str())))
+            .count();
+        assert_eq!(matching, all.len(), "{prompt}: {show:?}");
+        for p in &all {
+            if p.reason.key == ReasonKey::YourFavorite {
+                assert_eq!(key(p), "ownreg", "{prompt}: only the on-prompt favorite");
+            }
+        }
+    }
+}

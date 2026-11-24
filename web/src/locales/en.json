@@ -203,6 +203,7 @@
     "similar_listeners": "Popular with listeners like you",
     "your_favorite": "One of your favorites",
     "matches_prompt": "Matches \"{{prompt}}\"",
+    "listener_favorite": "Popular with listeners here",
     "ai": "AI",
     "selectedByAi": "Selected by AI"
   },

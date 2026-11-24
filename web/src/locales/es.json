@@ -203,6 +203,7 @@
     "similar_listeners": "Popular entre gente con tus gustos",
     "your_favorite": "Una de tus favoritas",
     "matches_prompt": "Encaja con \"{{prompt}}\"",
+    "listener_favorite": "Popular entre quienes escuchan aquí",
     "ai": "IA",
     "selectedByAi": "Elegida por la IA"
   },
