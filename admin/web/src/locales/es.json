@@ -17,7 +17,7 @@
   },
   "errors": {
     "generic": "Algo salió mal. Inténtalo de nuevo.",
-    "network": "No se pudo conectar con Lynx. Comprueba que el bot está en marcha.",
+    "network": "No se pudo conectar con Lynx. Verifica que el bot esté funcionando.",
     "rate_limited": "Demasiados intentos. Espera un minuto y vuelve a intentarlo.",
     "csrf": "Se rechazó la solicitud. Recarga la página.",
     "unauthorized": "Tu sesión terminó. Vuelve a iniciar sesión.",
@@ -27,7 +27,7 @@
   },
   "off": {
     "title": "El panel de administración no está disponible",
-    "body": "Lynx no está en marcha o el panel de administración está desactivado. Define ADMIN_USERNAME y ADMIN_PASSWORD o ADMIN_PASSWORD_HASH en el entorno y reinicia Lynx.",
+    "body": "Lynx no está funcionando o el panel de administración está desactivado. Define ADMIN_USERNAME y ADMIN_PASSWORD o ADMIN_PASSWORD_HASH en el entorno y reinicia Lynx.",
     "retry": "Reintentar"
   },
   "login": {
@@ -47,7 +47,7 @@
     "commit": "Commit",
     "uptime": "Tiempo activo",
     "memory": "Memoria",
-    "checkedAt": "Comprobado",
+    "checkedAt": "Verificado",
     "bots": "Bots",
     "bot": "Bot",
     "role": "Función",
@@ -77,7 +77,7 @@
     "listeners": "Escuchando",
     "updatesPaused": "Actualización automática en pausa",
     "updatesOn": "Actualización automática activada",
-    "lastCheck": "Última comprobación: {{outcome}}",
+    "lastCheck": "Última verificación: {{outcome}}",
     "snapshotAt": "Actualizado {{time}}",
     "connected": "Conectado",
     "disconnected": "Desconectado",
@@ -134,19 +134,19 @@
   "tweaks": {
     "intro": "Interruptores en tiempo real. Se aplican al momento, sin reiniciar, y se mantienen tras un reinicio.",
     "maintenance": "Modo mantenimiento",
-    "maintenanceHint": "Rechaza canciones nuevas (/play, /ai, añadir desde el panel) con el aviso actual. La música que ya suena sigue sonando.",
+    "maintenanceHint": "Rechaza canciones nuevas (/play, /ai, agregar desde el panel) con el aviso actual. La música que ya suena sigue sonando.",
     "pauseYtdlp": "Pausar la actualización automática de yt-dlp",
-    "pauseYtdlpHint": "Omite la actualización diaria. La comprobación manual de abajo sigue funcionando.",
+    "pauseYtdlpHint": "Omite la actualización diaria. La verificación manual de abajo sigue funcionando.",
     "ytdlpTitle": "yt-dlp",
     "ytdlpVersion": "Versión instalada",
     "checkNow": "Buscar una actualización ahora",
-    "checking": "Comprobando...",
+    "checking": "Verificando...",
     "outcome": {
       "updated": "Actualizado a {{version}}.",
       "up_to_date": "Ya está al día.",
-      "failed": "La comprobación falló (mira los registros)."
+      "failed": "La verificación falló (revisa los registros)."
     },
-    "lastCheck": "Última comprobación: {{time}}",
+    "lastCheck": "Última verificación: {{time}}",
     "caches": "Cachés",
     "clearStream": "Vaciar la caché de URLs de audio",
     "clearStreamHint": "Olvida las URLs de audio guardadas en memoria; las siguientes canciones se resuelven de nuevo.",
@@ -190,7 +190,7 @@
     "timings": "Tiempos",
     "resolveTime": "Resolución de yt-dlp",
     "startTime": "Tiempo hasta el primer audio",
-    "avg": "Media",
+    "avg": "Promedio",
     "p95": "p95 (aprox.)",
     "samples": "Muestras",
     "perMinute": "{{count}} a las {{time}}",
@@ -202,8 +202,8 @@
     "refresh": "Actualizar"
   },
   "logs": {
-    "intro": "Registro en directo del bot: las últimas {{count}} líneas y las nuevas según llegan. Los secretos se ocultan.",
-    "live": "En directo",
+    "intro": "Registro en vivo del bot: las últimas {{count}} líneas y las nuevas según llegan. Los secretos se ocultan.",
+    "live": "En vivo",
     "offline": "Reconectando...",
     "pause": "Pausar",
     "resume": "Reanudar",
