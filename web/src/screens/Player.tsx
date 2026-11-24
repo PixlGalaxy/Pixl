@@ -12,9 +12,6 @@ import {
   ThumbsDown,
   ThumbsUp,
   Timer,
-  Volume1,
-  Volume2,
-  VolumeX,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -94,35 +91,6 @@ function SeekBar({ state }: { state: PlayerState }) {
         }}
       />
       <span className="w-11 font-mono text-[11px] text-muted tabular-nums">{fmtTime(duration)}</span>
-    </div>
-  )
-}
-
-function VolumeControl({ state }: { state: PlayerState }) {
-  const { t } = useTranslation()
-  const { channelId, channelPermissions: permissions, run, setState } = useLynx()
-  const [drag, setDrag] = useState<number | null>(null)
-  const value = drag ?? state.volume
-  const Icon = value <= 10 ? VolumeX : value < 70 ? Volume1 : Volume2
-  return (
-    <div className="flex items-center gap-2.5">
-      <Icon size={16} className="shrink-0 text-muted" />
-      <Slider
-        value={value}
-        min={10}
-        max={100}
-        step={5}
-        label={t('player.volume')}
-        disabled={!permissions.canControl}
-        onInput={setDrag}
-        onCommit={(v) => {
-          setDrag(null)
-          if (!channelId) return
-          setState((s) => (s ? { ...s, volume: v } : s))
-          void run(() => api.volume(channelId, v))
-        }}
-      />
-      <span className="w-10 text-right font-mono text-[11px] text-muted tabular-nums">{value}%</span>
     </div>
   )
 }
@@ -361,7 +329,6 @@ export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
         <div className="space-y-4 border-t border-line p-4 sm:px-5">
           <SeekBar state={state} />
           <Controls state={state} />
-          <VolumeControl state={state} />
         </div>
 
         {(aiEnabled || state.skipVotes || permissions.canControl) && (

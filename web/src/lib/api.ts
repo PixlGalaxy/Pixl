@@ -156,7 +156,6 @@ export const api = {
   skip: (channelId: string) => request<void>('/player/skip', 'POST', { channelId }),
   previous: (channelId: string) => request<void>('/player/previous', 'POST', { channelId }),
   seek: (channelId: string, positionMs: number) => request<void>('/player/seek', 'POST', { channelId, positionMs }),
-  volume: (channelId: string, volume: number) => request<void>('/player/volume', 'POST', { channelId, volume }),
   loop: (channelId: string, mode: LoopMode) => request<void>('/player/loop', 'POST', { channelId, mode }),
   shuffle: (channelId: string) => request<void>('/player/shuffle', 'POST', { channelId }),
   stop: (channelId: string) => request<void>('/player/stop', 'POST', { channelId }),
