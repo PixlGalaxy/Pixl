@@ -80,7 +80,24 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let _ = dotenvy::dotenv();
+        match dotenvy::dotenv() {
+            Ok(_) => {}
+            // No .env at all is fine (Docker passes the environment directly).
+            Err(e) if e.not_found() => {}
+            // dotenvy stops at the first line it can't parse, so everything below it is silently
+            // missing: say so (the error names the line, never its value).
+            Err(dotenvy::Error::LineParse(bad, _)) => {
+                // Locate the line by comparing with the file; its text is never logged.
+                let line = std::fs::read_to_string(".env").ok().and_then(|text| {
+                    text.lines().position(|l| l.trim() == bad.trim()).map(|i| i + 1)
+                });
+                tracing::warn!(
+                    line = ?line,
+                    "could not read .env from this line on (wrap values with spaces in double quotes); the variables below it were not loaded"
+                )
+            }
+            Err(e) => tracing::warn!(error = %e, "could not read .env"),
+        }
 
         let cfg = Self {
             discord_token: required("DISCORD_TOKEN")?,
