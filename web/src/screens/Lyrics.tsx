@@ -139,7 +139,7 @@ export function LyricsScreen() {
   const track = state?.current
   if (!track) {
     return (
-      <Card title={t('lyrics.title')} icon={<MicVocal size={18} />} bodyClassName="">
+      <Card title={t('lyrics.title')} icon={<MicVocal size={18} />} help="info.lyrics.card" bodyClassName="">
         <Empty>{t('lyrics.nothingPlaying')}</Empty>
       </Card>
     )
@@ -148,6 +148,7 @@ export function LyricsScreen() {
   return (
     <Card
       title={t('lyrics.title')}
+      help="info.lyrics.card"
       description={
         <span className="flex min-w-0 items-baseline gap-1.5">
           <span className="truncate" title={[track.title, track.artists.join(', ')].filter(Boolean).join(' · ')}>

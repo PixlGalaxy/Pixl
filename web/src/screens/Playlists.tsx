@@ -150,6 +150,7 @@ function PlaylistList({ onOpen }: { onOpen: (p: SavedPlaylist) => void }) {
       {data.saving && data.full && <Notice tone="amber">{t('playlists.full')}</Notice>}
       <Card
         title={t('playlists.title')}
+        help="info.playlists.list"
         description={data.max > 0 ? t('playlists.hint', { max: data.max }) : undefined}
         icon={<ListMusic size={18} />}
         actions={

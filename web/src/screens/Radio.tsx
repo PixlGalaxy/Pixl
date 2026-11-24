@@ -35,6 +35,7 @@ export function RadioScreen() {
       <Card
         title={t('ai.title')}
         description={t('ai.description')}
+        help="info.radio.card"
         icon={<Radio size={18} />}
         actions={
           active ? (
@@ -109,7 +110,7 @@ export function RadioScreen() {
       {!channelId && <Notice tone="amber">{t('ai.noChannel')}</Notice>}
 
       {active && (
-        <Card title={t('ai.picksTitle')} description={t('ai.picksHint')} bodyClassName="">
+        <Card title={t('ai.picksTitle')} description={t('ai.picksHint')} help="info.radio.picks" bodyClassName="">
           {picks.length === 0 ? (
             <Empty>{t('ai.noPicks')}</Empty>
           ) : (

@@ -360,7 +360,7 @@ export function TasteCard() {
   }
 
   return (
-    <Card title={t('privacy.taste')} description={t('privacy.tasteHint')} icon={<TrendingUp size={18} />}>
+    <Card title={t('privacy.taste')} description={t('privacy.tasteHint')} icon={<TrendingUp size={18} />} help="info.radio.taste">
       {body}
     </Card>
   )

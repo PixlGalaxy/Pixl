@@ -145,6 +145,7 @@ function UpcomingCard({ limit }: { limit?: number }) {
   return (
     <Card
       title={t('queue.upNext')}
+      help="info.queue.upNext"
       description={
         upcoming.length > 0
           ? t('queue.summary', { count: upcoming.length, duration: fmtTime(totalDuration(upcoming)) })
@@ -177,7 +178,7 @@ function HistoryCard() {
   const [adding, setAdding] = useState<string | null>(null)
   const history = state?.history ?? []
   return (
-    <Card title={t('queue.history')} description={t('queue.historyHint')} icon={<History size={18} />} bodyClassName="">
+    <Card title={t('queue.history')} description={t('queue.historyHint')} icon={<History size={18} />} help="info.queue.history" bodyClassName="">
       {history.length === 0 ? (
         <Empty>{t('queue.emptyHistory')}</Empty>
       ) : (
@@ -222,7 +223,7 @@ export function QueueScreen() {
   return (
     <div className="space-y-5">
       {permissions.canAdd && (
-        <Card title={t('queue.addTitle')} description={t('queue.addHint')} icon={<Plus size={18} />}>
+        <Card title={t('queue.addTitle')} description={t('queue.addHint')} icon={<Plus size={18} />} help="info.queue.add">
           <AddBox />
         </Card>
       )}

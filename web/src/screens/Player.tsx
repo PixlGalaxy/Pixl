@@ -19,7 +19,8 @@ import { AddBox } from '../components/AddBox'
 import { AiProgress } from '../components/AiProgress'
 import { JamCard, JamJoinPrompt } from '../components/JamCard'
 import { AiChip, AiTag, TrackReasonLine } from '../components/TrackBits'
-import { Artwork, Avatar, Button, Card, Chip, ConfirmButton, IconButton, Notice, Slider, Tag } from '../components/ui'
+import { InfoPopover } from '../components/InfoPopover'
+import { Artwork, Avatar, Button, Card, Chip, ConfirmButton, HelpTitle, IconButton, Notice, Slider, Tag } from '../components/ui'
 import { api } from '../lib/api'
 import { cx, fmtTime } from '../lib/format'
 import { localAnchor, useNow, usePosition } from '../lib/live'
@@ -125,6 +126,7 @@ function FeedbackButtons({ track }: { track: Track }) {
       >
         {disliked ? t('player.disliked') : t('player.dislike')}
       </Button>
+      <InfoPopover k="info.player.feedback" label={`${t('player.like')} / ${t('player.dislike')}`} />
     </div>
   )
 }
@@ -135,7 +137,9 @@ function SkipVotes({ votes }: { votes: { current: number; required: number } }) 
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-xs">
-        <span className="font-medium">{t('player.skipVotes')}</span>
+        <span className="font-medium">
+          <HelpTitle title={t('player.skipVotes')} help="info.player.skipVotes" />
+        </span>
         <span className="font-mono text-[11px] text-muted tabular-nums">
           {votes.current} / {votes.required}
         </span>
@@ -304,7 +308,12 @@ export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
                 {t(`player.status.${status}`)}
               </span>
               <Chip>{ORIGIN_LABEL[track.origin]}</Chip>
-              {track.reason && <AiChip />}
+              {track.reason && (
+                <span className="inline-flex items-center gap-0.5">
+                  <AiChip />
+                  <InfoPopover k="info.player.ai" label={t('reason.selectedByAi')} />
+                </span>
+              )}
               {!state.bot.isMain && <Chip title={t('player.nodeBot')}>{state.bot.name}</Chip>}
             </div>
             <div className="min-w-0">
@@ -335,12 +344,15 @@ export function PlayerScreen({ onOpenQueue }: { onOpenQueue: () => void }) {
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3 sm:px-5">
             {aiEnabled ? <FeedbackButtons track={track} /> : <span />}
             {permissions.canControl && channelId && (
-              <ConfirmButton
-                label={t('player.stop')}
-                question={t('player.stopQuestion')}
-                icon={<Square size={12} />}
-                onConfirm={() => run(() => api.stop(channelId))}
-              />
+              <div className="flex items-center gap-1">
+                <ConfirmButton
+                  label={t('player.stop')}
+                  question={t('player.stopQuestion')}
+                  icon={<Square size={12} />}
+                  onConfirm={() => run(() => api.stop(channelId))}
+                />
+                <InfoPopover k="info.player.stop" label={t('player.stop')} />
+              </div>
             )}
           </div>
         )}

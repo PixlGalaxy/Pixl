@@ -302,15 +302,15 @@
     "channels": "Channels",
     "channelsHint": "Leave empty to allow every channel. Managers can always use Lynx anywhere.",
     "channelsHintStrict": "Leave empty to allow every channel. Managers follow these rules too.",
-    "musicChannel": "Music channel",
+    "musicChannel": "Lynx channel",
     "musicChannelHint": "Now playing and every other Lynx message is sent here. Commands only work here (except /invite).",
     "musicChannelOff": "Off",
     "chooseMusicChannel": "Choose a channel",
-    "clearMusicChannel": "Clear the music channel",
+    "clearMusicChannel": "Clear the Lynx channel",
     "managersExempt": "Managers can use Lynx in any channel",
     "managersExemptHint": "When off, managers follow the same channel rules as everyone. /invite works anywhere.",
     "commandChannels": "Command channels",
-    "commandChannelsHint": "Text channels (or a voice channel chat) where music commands and buttons work. With a music channel, they work there and here.",
+    "commandChannelsHint": "Text channels (or a voice channel chat) where Lynx commands and buttons work. With a Lynx channel, they work there and here.",
     "voiceChannels": "Playback channels",
     "voiceChannelsHint": "Voice channels where Lynx may play.",
     "addChannel": "Add a channel",
@@ -407,7 +407,7 @@
       },
       "settings": {
         "title": "Settings",
-        "body": "Only for server managers: control mode, the DJ list, vote to skip, the queue limit and the default volume."
+        "body": "Only for server managers: control mode, the DJ list, the Lynx channel and channel rules, vote to skip, the queue limit and the default volume."
       },
       "privacy": {
         "title": "Account",
@@ -674,5 +674,141 @@
     "join": "Join jam",
     "notNow": "Not now",
     "addBot": "Add another Lynx"
+  },
+  "info": {
+    "about": "About {{name}}",
+    "example": "Example",
+    "settings": {
+      "controlMode": {
+        "body": "Decides who can pause, skip, seek, change the loop, reorder and remove songs. With Everyone (the default), anyone in the voice channel can. With DJs only, just DJs and managers can; everyone else can still add songs and remove the ones they added. Managers (owner, Administrator or Manage Server) can always control, even from outside the channel.",
+        "example": "You pick DJs only and add Ana to the DJ list. Ana and the managers can skip and reorder; Leo, who is not a DJ, can add songs and remove his own, but the Pause button is disabled for him."
+      },
+      "djs": {
+        "body": "A Lynx list, not a Discord role. DJs control playback in any control mode and skip right away even when vote skip is on. Only people who are in a voice channel of the server show up as candidates. Managers don't need to be on the list.",
+        "example": "With DJs only and vote skip on, you make Leo a DJ. From then on his Skip moves to the next song at once, while the rest of the channel still votes."
+      },
+      "lynxChannel": {
+        "body": "The single text channel where every automatic Lynx message goes: Now playing, notices, jam and radio updates, and the message after a restart. Slash commands and buttons also only work there and in the command channels, except /invite, which works anywhere. Managers are exempt while \"Managers can use Lynx in any channel\" is on. When no channel is set, messages go to the channel where the last command was used, or to the voice channel's chat.",
+        "example": "You set #music. Someone uses /play in #general: Lynx asks them to use #music. The Now playing card, the notices and the message after a restart are always posted in #music."
+      },
+      "commandChannels": {
+        "body": "Text channels (or the chat of a voice channel) where slash commands and the buttons on Lynx messages work. Leave it empty to allow every channel. With a Lynx channel set, commands work in the Lynx channel plus these. /invite always works anywhere, and managers are exempt while the managers toggle is on. Up to 25 channels.",
+        "example": "No Lynx channel, command channels #bot-commands and #music. /play works in both; in #general Lynx answers that commands must be used in #bot-commands or #music."
+      },
+      "voiceChannels": {
+        "body": "Voice channels where Lynx may play. Leave it empty to allow every voice channel. It applies to /play, the panel and the radio. Managers can play anywhere while the managers toggle is on.",
+        "example": "You allow only Lounge. Someone in Gaming uses /play: Lynx refuses and points them to Lounge. A manager in Gaming can still play there while the toggle is on."
+      },
+      "managersExempt": {
+        "body": "On by default. While it is on, managers (owner, Administrator or Manage Server) can use commands, buttons and playback in any channel, whatever the channel lists say. Turn it off to make managers follow the same channel rules as everyone. /invite works anywhere either way.",
+        "example": "The Lynx channel is #music. With the toggle on, an admin can use /queue in #staff. With it off, Lynx asks the admin to use #music too."
+      },
+      "voteSkip": {
+        "body": "Off by default. When on, a skip from someone who can't skip directly counts as a vote, and the song is skipped once enough people in the channel voted. DJs, managers and whoever requested the current song skip right away. In DJs only mode, everyone else can vote too. Votes reset when the song changes.",
+        "example": "Four people are listening and the rule is 50%. Leo presses Skip: 1 of 2 votes. Mia presses it too and the song is skipped."
+      },
+      "voteMode": {
+        "body": "How the votes needed are set. Count is a fixed number of votes; Percent is a share of the people listening, rounded up. Either way at least 1 vote is needed and never more than the number of people listening. Deafened users don't vote and don't count as listeners.",
+        "example": "Count set to 3 with only 2 people listening: 2 votes are enough. Percent set to 50% with 5 listeners: 3 votes are needed."
+      },
+      "votesNeeded": {
+        "body": "The number of votes needed to skip, from 1 to 25. If fewer people are listening than this number, every listener's vote is needed instead. People who leave the channel stop counting, which can make the existing votes enough.",
+        "example": "Set to 3 with 6 people listening: the third vote skips the song. If three of them leave after 2 votes, 2 of 3 listeners voted and the song is skipped."
+      },
+      "percentNeeded": {
+        "body": "The share of people listening whose votes are needed to skip, from 1% to 100%, rounded up. Deafened users are not counted. When people join or leave, the votes needed are worked out again.",
+        "example": "Set to 50%: with 4 listeners 2 votes are needed, with 5 listeners 3. At 100%, every listener has to vote."
+      },
+      "maxQueue": {
+        "body": "The most songs that can wait in the queue (the one playing does not count), from 1 to 5000. Default 500. When a playlist doesn't fit, only the songs that fit are added, and the radio never adds songs past it.",
+        "example": "The limit is 100 and 90 songs are queued. Someone adds a 30-song playlist: the first 10 are added and the rest are left out."
+      },
+      "defaultVolume": {
+        "body": "The volume a channel starts at when Lynx joins it, from 10% to 100%. Default 100%, which plays the audio untouched; Lynx never goes louder. Changing the volume during a session only affects that channel, and sessions restored after a restart keep their own volume.",
+        "example": "You set 60%. The next time Lynx joins a voice channel it plays at 60%. Someone turns it up to 80% there; other channels still start at 60%."
+      }
+    },
+    "player": {
+      "skipVotes": {
+        "body": "Vote skip is on in this server, so a skip from someone who isn't a DJ, a manager or the requester of this song counts as a vote. The bar shows the votes so far and how many are needed. Votes reset when the song changes; deafened users don't vote or count.",
+        "example": "The bar shows 1 / 2. One more person in the channel presses Skip and the next song starts."
+      },
+      "feedback": {
+        "body": "Tell the radio what you think of this song. Likes make it more likely to come back among your favorites; Dislikes keep it out of radio picks for everyone in the channel, but never skip it. Press again to clear your vote. Needs your listening history on.",
+        "example": "You dislike a song that is playing. It keeps playing to the end, but the radio won't pick it again while you are in the channel."
+      },
+      "ai": {
+        "body": "Songs marked AI were picked by the AI radio, not requested by a person. The line below the title says why it was picked, for example a favorite of yours or a song popular with people of similar taste.",
+        "example": "\"Requested by Ana · Selected by AI\" with \"Because you like Daft Punk\": Ana started the radio and it added this song because of her taste."
+      },
+      "stop": {
+        "body": "Ends the session in this channel: the music stops, the queue is cleared, the radio stops and Lynx leaves the voice channel. In a jam, this channel leaves it first. It needs the right to control playback and can't be undone.",
+        "example": "You press Stop and confirm. Lynx leaves the channel and the queue is gone; the next /play starts a new session."
+      }
+    },
+    "jam": {
+      "start": {
+        "body": "A jam lets several voice channels, in this server or others, hear the same queue at the same moment. Inviting turns this channel's queue into the shared one and gives you a link; whoever opens it gets the panel in their own voice channel and can join. Each channel keeps its own volume and Stop. Up to 8 channels; a jam ends when Lynx restarts.",
+        "example": "You are in Lounge with a queue going and press Invite to jam. A friend opens the link from Gaming and joins: both channels now hear the same song at the same position."
+      },
+      "active": {
+        "body": "The channels in this jam share one queue. The host channel decides the host settings, can remove channels and end the jam. Leaving gives a channel its own queue back. If the host channel leaves or empties, the host role passes to the oldest channel that still has people. A channel left empty for a few minutes drops out of the jam.",
+        "example": "Gaming joined Lounge's jam with its own queue. When Gaming leaves, its saved queue comes back right where it was; Lounge keeps playing the jam."
+      },
+      "settings": {
+        "body": "Only people in the host channel can change these, with the usual control rights of their server. Other channels of this server may join by default, other servers only if you allow it. Who edits the queue can be every channel or just the host channel; each server's DJ mode still applies. Closing keeps the channels already in and stops new ones from joining.",
+        "example": "You turn on Other servers and set Who edits the queue to Host channel. A friend's server can join and listen, but only people in your channel can add, skip or reorder."
+      }
+    },
+    "queue": {
+      "add": {
+        "body": "Paste a link or type to search. Playlist, album and artist links add their songs up to the queue limit and are saved to your Playlists tab while your history is on. You need to be in the voice channel.",
+        "example": "You paste a Spotify album link. Its songs go to the end of the queue and the album appears in your Playlists tab."
+      },
+      "upNext": {
+        "body": "The songs waiting after the current one, in order. People who can control playback can drag to reorder, remove any song or clear the queue; everyone in the channel can remove the songs they added. The queue has a limit set by the managers (500 by default).",
+        "example": "In DJs only mode, Leo added two songs. He can remove those two, but only a DJ or a manager can move them up the queue."
+      },
+      "history": {
+        "body": "The last 20 songs that played in this channel during the current session, newest first, including songs that were skipped after they started. Songs jumped over or removed before playing are not listed. It is cleared when the session ends (Stop or Lynx leaving).",
+        "example": "You skip a song halfway: it appears at the top of History, and you can add it again from there."
+      }
+    },
+    "playlists": {
+      "list": {
+        "body": "Playlists, albums and artist pages you add with /play or in the Queue tab are saved here for you, in any server, while your history is on. When the list is full, the least recently used unpinned one makes room; pinned ones stay on top and are never replaced. Song lists are shared and kept for an hour; Refresh reads the playlist again now, once every 5 seconds, and too many refreshes block it for 5 minutes.",
+        "example": "You saved 20 playlists and pinned 3. Adding a new album link removes the unpinned playlist you used the longest ago; the pinned ones stay."
+      }
+    },
+    "lyrics": {
+      "card": {
+        "body": "Lyrics come from LRCLIB, matched by artist, title and length. Synced lyrics highlight the current line and follow the song; scrolling by hand pauses that for a few seconds. If you can control playback, clicking a line jumps there. Some songs only have plain lyrics and some have none.",
+        "example": "A synced song is playing. You click the chorus line and the song jumps to it; the rest of the channel hears the jump too."
+      }
+    },
+    "radio": {
+      "card": {
+        "body": "Keeps adding songs picked from your taste and the taste of the people in the channel whose history is on. The first song is queued right away and more are added when fewer than 3 are left. An optional prompt steers the picks. Starting it needs your history on; stopping it keeps the songs already queued. It can't run during a jam. In Discord, /ai also lets you choose the mix (mostly your favorites, balanced or new music) and turn off blending the channel's taste.",
+        "example": "You start the radio with \"calm music to study\". It queues a first song at once and keeps adding similar ones until someone stops it."
+      },
+      "picks": {
+        "body": "The songs the radio queued and why it picked each one, such as one of your favorites, an artist you like, a match for the prompt, or a song popular with people of similar taste. Up to 8 are shown.",
+        "example": "\"Popular with listeners like you\": people whose taste is close to yours play this song often."
+      },
+      "taste": {
+        "body": "Your top genres and most played songs, built from your listening history and your likes. Only you can see it. Removing a song here deletes it from your history and counts as a Dislike, so the radio won't play it for you again; your taste is updated in the background.",
+        "example": "You remove a song you played a lot for a party. It leaves Most played, and your radio stops picking it."
+      }
+    },
+    "account": {
+      "privacy": {
+        "body": "With your history on, Lynx keeps the last 2000 different songs you requested and your Like and Dislike votes, for your radio and anonymous recommendations. Turning it off records nothing new and turns off Like, Dislike, /ai and playlist saving for you, but keeps what is already stored; use Delete my data for that.",
+        "example": "You turn history off. Your next songs are not recorded and Like is disabled, but your saved playlists and taste stay until you delete them."
+      },
+      "danger": {
+        "body": "Deletes, right away and for good, everything Lynx stored about your listening: history, Like and Dislike votes, taste and saved playlists. Your panel settings (language, theme, accent and the history switch) are kept.",
+        "example": "You delete your data. The Radio tab shows no taste yet, and your Playlists tab is empty until you add a new playlist."
+      }
+    }
   }
 }

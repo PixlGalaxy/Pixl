@@ -1,7 +1,7 @@
 import { Gauge, Hash, Search, Shield, UserPlus, Users, Vote, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Avatar, Button, Card, Empty, IconButton, PageSpinner, Segmented, SettingRow, Spinner, Toggle, inputCls } from '../components/ui'
+import { Avatar, Button, Card, Empty, HelpTitle, IconButton, PageSpinner, Segmented, SettingRow, Spinner, Toggle, inputCls } from '../components/ui'
 import { api } from '../lib/api'
 import { useLynx } from '../lib/lynx'
 import type { GuildChannel, GuildChannels, GuildSettings, Member } from '../lib/types'
@@ -90,7 +90,7 @@ function DjCard() {
   const options = (candidates ?? []).filter((m) => !djIds.has(m.id))
 
   return (
-    <Card title={t('settings.djs')} description={t('settings.djsHint')} icon={<Users size={18} />}>
+    <Card title={t('settings.djs')} description={t('settings.djsHint')} icon={<Users size={18} />} help="info.settings.djs">
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       {!djs ? (
         <div className="flex justify-center py-4 text-muted">
@@ -169,12 +169,14 @@ type ChannelOption = GuildChannel & { label: string }
 function ChannelPicker({
   label,
   description,
+  help,
   options,
   value,
   onChange,
 }: {
   label: string
   description: string
+  help: string
   options: ChannelOption[]
   value: string[]
   onChange: (next: string[]) => void
@@ -185,7 +187,9 @@ function ChannelPicker({
   return (
     <div className="space-y-2">
       <div>
-        <div className="text-sm font-medium">{label}</div>
+        <div className="text-sm font-medium">
+          <HelpTitle title={label} help={help} />
+        </div>
         <div className="text-xs text-muted">{description}</div>
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -250,12 +254,14 @@ function groupOptions(options: ChannelOption[], noCategory: string) {
 function SingleChannelPicker({
   label,
   description,
+  help,
   options,
   value,
   onChange,
 }: {
   label: string
   description: string
+  help: string
   options: ChannelOption[]
   value: string | null
   onChange: (next: string | null) => void
@@ -266,7 +272,9 @@ function SingleChannelPicker({
   return (
     <div className="space-y-2">
       <div>
-        <div className="text-sm font-medium">{label}</div>
+        <div className="text-sm font-medium">
+          <HelpTitle title={label} help={help} />
+        </div>
         <div className="text-xs text-muted">{description}</div>
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -348,6 +356,7 @@ function ChannelsCard({
           <SingleChannelPicker
             label={t('settings.musicChannel')}
             description={t('settings.musicChannelHint')}
+            help="info.settings.lynxChannel"
             options={text}
             value={settings.musicChannel ?? null}
             onChange={(musicChannel) => save({ musicChannel })}
@@ -356,6 +365,7 @@ function ChannelsCard({
             <ChannelPicker
               label={t('settings.commandChannels')}
               description={t('settings.commandChannelsHint')}
+              help="info.settings.commandChannels"
               options={text}
               value={settings.commandChannels ?? []}
               onChange={(commandChannels) => save({ commandChannels })}
@@ -365,13 +375,14 @@ function ChannelsCard({
             <ChannelPicker
               label={t('settings.voiceChannels')}
               description={t('settings.voiceChannelsHint')}
+              help="info.settings.voiceChannels"
               options={voice}
               value={settings.voiceChannels ?? []}
               onChange={(voiceChannels) => save({ voiceChannels })}
             />
           </div>
           <div className="border-t border-line pt-4">
-            <SettingRow label={t('settings.managersExempt')} description={t('settings.managersExemptHint')}>
+            <SettingRow label={t('settings.managersExempt')} description={t('settings.managersExemptHint')} help="info.settings.managersExempt">
               <Toggle
                 label={t('settings.managersExempt')}
                 checked={settings.managersExempt !== false}
@@ -410,6 +421,7 @@ export function SettingsScreen() {
         <SettingRow
           label={t('settings.controlMode')}
           description={settings.controlMode === 'everyone' ? t('settings.modeEveryoneHint') : t('settings.modeDjHint')}
+          help="info.settings.controlMode"
         >
           <Segmented
             label={t('settings.controlMode')}
@@ -428,7 +440,7 @@ export function SettingsScreen() {
       <ChannelsCard settings={settings} save={save} />
 
       <Card title={t('settings.voteSkip')} description={t('settings.voteSkipHint')} icon={<Vote size={18} />}>
-        <SettingRow label={t('settings.voteSkipEnabled')}>
+        <SettingRow label={t('settings.voteSkipEnabled')} help="info.settings.voteSkip">
           <Toggle
             label={t('settings.voteSkipEnabled')}
             checked={vs.enabled}
@@ -437,7 +449,11 @@ export function SettingsScreen() {
         </SettingRow>
         {vs.enabled && (
           <>
-            <SettingRow label={t('settings.voteMode')} description={vs.mode === 'count' ? t('settings.voteCountHint') : t('settings.votePercentHint')}>
+            <SettingRow
+              label={t('settings.voteMode')}
+              description={vs.mode === 'count' ? t('settings.voteCountHint') : t('settings.votePercentHint')}
+              help="info.settings.voteMode"
+            >
               <Segmented
                 label={t('settings.voteMode')}
                 value={vs.mode}
@@ -450,7 +466,10 @@ export function SettingsScreen() {
                 ]}
               />
             </SettingRow>
-            <SettingRow label={vs.mode === 'count' ? t('settings.votesNeeded') : t('settings.percentNeeded')}>
+            <SettingRow
+              label={vs.mode === 'count' ? t('settings.votesNeeded') : t('settings.percentNeeded')}
+              help={vs.mode === 'count' ? 'info.settings.votesNeeded' : 'info.settings.percentNeeded'}
+            >
               <NumberField
                 label={vs.mode === 'count' ? t('settings.votesNeeded') : t('settings.percentNeeded')}
                 value={vs.value}
@@ -465,7 +484,7 @@ export function SettingsScreen() {
       </Card>
 
       <Card title={t('settings.limits')} description={t('settings.limitsHint')} icon={<Gauge size={18} />}>
-        <SettingRow label={t('settings.maxQueue')} description={t('settings.maxQueueHint')}>
+        <SettingRow label={t('settings.maxQueue')} description={t('settings.maxQueueHint')} help="info.settings.maxQueue">
           <NumberField
             label={t('settings.maxQueue')}
             value={settings.maxQueueLength}
@@ -474,7 +493,7 @@ export function SettingsScreen() {
             onSave={(maxQueueLength) => save({ maxQueueLength })}
           />
         </SettingRow>
-        <SettingRow label={t('settings.defaultVolume')} description={t('settings.defaultVolumeHint')}>
+        <SettingRow label={t('settings.defaultVolume')} description={t('settings.defaultVolumeHint')} help="info.settings.defaultVolume">
           <NumberField
             label={t('settings.defaultVolume')}
             value={settings.defaultVolume}

@@ -2,6 +2,7 @@ import { LoaderCircle, Music } from 'lucide-react'
 import { useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx, mediaUrl } from '../lib/format'
+import { InfoPopover } from './InfoPopover'
 
 type Variant = 'primary' | 'secondary' | 'warning' | 'ghost' | 'danger'
 type Size = 'xs' | 'sm' | 'md'
@@ -134,6 +135,7 @@ export function Card({
   actions,
   children,
   bodyClassName = 'space-y-5 p-4',
+  help,
 }: {
   title: ReactNode
   description?: ReactNode
@@ -143,13 +145,17 @@ export function Card({
   actions?: ReactNode
   children: ReactNode
   bodyClassName?: string
+  /** i18n prefix of a help card (`body`, `example`) shown by a "?" next to the title. */
+  help?: string
 }) {
   return (
     <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-4">
         {media ?? (icon && <IconTile>{icon}</IconTile>)}
         <div className="min-w-0 flex-1">
-          <h2 className="font-semibold">{title}</h2>
+          <h2 className="font-semibold">
+            {help ? <HelpTitle title={title} help={help} /> : title}
+          </h2>
           {description && <p className="text-xs text-muted">{description}</p>}
         </div>
         {actions && <div className="flex items-center gap-2">{actions}</div>}
@@ -159,19 +165,32 @@ export function Card({
   )
 }
 
+/** A title followed by its help button; the popover is labelled with the title text. */
+export function HelpTitle({ title, help }: { title: ReactNode; help: string }) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 align-top">
+      <span className="min-w-0">{title}</span>
+      <InfoPopover k={help} label={typeof title === 'string' ? title : ''} />
+    </span>
+  )
+}
+
 export function SettingRow({
   label,
   description,
+  help,
   children,
 }: {
   label: ReactNode
   description?: ReactNode
+  /** i18n prefix of a help card (`body`, `example`). */
+  help?: string
   children: ReactNode
 }) {
   return (
     <div className="flex items-center justify-between gap-4">
       <div className="min-w-0">
-        <div className="text-sm font-medium">{label}</div>
+        <div className="text-sm font-medium">{help ? <HelpTitle title={label} help={help} /> : label}</div>
         {description && <div className="text-xs text-muted">{description}</div>}
       </div>
       <div className="shrink-0">{children}</div>

@@ -32,6 +32,7 @@ import { cx, mediaUrl } from '../lib/format'
 import i18n, { LANGUAGES, matchLanguage, setDocumentLanguage } from '../lib/i18n'
 import { useLynx } from '../lib/lynx'
 import type { User, UserPrefs } from '../lib/types'
+import { InfoPopover } from './InfoPopover'
 import { ConfirmButton, IconButton, inputCls, Spinner, Toggle } from './ui'
 
 /** Current theme mode and accent, re-rendering when either changes (also from the top-bar toggle). */
@@ -83,12 +84,13 @@ export async function saveAppearance(patch: { theme?: ThemeMode; accent?: Accent
 
 const MODE_ICON: Record<ThemeMode, LucideIcon> = { light: Sun, dark: Moon, system: Monitor }
 
-function Section({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
+function Section({ title, icon, help, children }: { title: string; icon: ReactNode; help?: string; children: ReactNode }) {
   return (
     <section className="border-t border-line px-4 py-4">
       <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
         <span className="text-muted">{icon}</span>
         {title}
+        {help && <InfoPopover k={help} label={title} className="-ml-1" />}
       </h3>
       <div className="space-y-4">{children}</div>
     </section>
@@ -227,7 +229,7 @@ function Privacy({ prefs, setPrefs }: { prefs: UserPrefs; setPrefs: (p: UserPref
   const { run } = useLynx()
   const list = (key: string) => t(key, { returnObjects: true }) as unknown as string[]
   return (
-    <Section title={t('account.privacy')} icon={<History size={15} />}>
+    <Section title={t('account.privacy')} icon={<History size={15} />} help="info.account.privacy">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="text-sm font-medium">{t('privacy.historyToggle')}</div>
@@ -284,6 +286,7 @@ function DangerZone({ onDeleted }: { onDeleted: () => void }) {
       <h3 className="flex items-center gap-2 text-sm font-semibold text-red-600 dark:text-red-400">
         <ShieldAlert size={15} />
         {t('account.danger.title')}
+        <InfoPopover k="info.account.danger" label={t('account.danger.title')} className="-ml-1" />
       </h3>
       <p className="mt-1 text-xs text-muted">{t('account.danger.body')}</p>
       <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-muted marker:text-red-500/50">
