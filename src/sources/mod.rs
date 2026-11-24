@@ -1103,6 +1103,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// A SoundCloud link end to end through the guards: allowed site and extractor, stream URL on
+    /// a public host, first bytes read with the guarded player client. Private links are refused.
+    #[tokio::test]
+    #[ignore]
+    async fn sources_link_end_to_end() {
+        let dir = std::env::temp_dir().join(format!("lynx-sources-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = config(dir.clone());
+        let store = Store::open(&cfg.database_path()).await.unwrap();
+        let s = Sources::new(&cfg, store, ProcessRegistry::new()).unwrap();
+        let owner = ProcOwner::new(10, 20, Some(uuid::Uuid::new_v4()));
+
+        let url = "https://soundcloud.com/forss/flickermood";
+        let (r, _) = s.resolve_for_play(url, 10, &owner, 1).await.unwrap();
+        assert_eq!(r.tracks.len(), 1);
+        let p = s.prepare(&r.tracks[0], &owner).await.unwrap();
+        let host = reqwest::Url::parse(&p.stream.url).ok().and_then(|u| u.host_str().map(str::to_owned));
+        println!("soundcloud: protocol {:?} fallback {} host {host:?}", p.stream.protocol, p.ytdlp_fallback);
+        if !p.ytdlp_fallback {
+            let http = netguard::guarded(reqwest::Client::builder()).build().unwrap();
+            let res = http.get(&p.stream.url).header(reqwest::header::RANGE, "bytes=0-1023").send().await.unwrap();
+            assert!(res.status().is_success(), "{}", res.status());
+        }
+        for url in [
+            "http://127.0.0.1:4000/api/public",
+            "http://169.254.169.254/latest/meta-data/",
+            "https://example.com/a",
+        ] {
+            let e = s.resolve_for_play(url, 10, &owner, 1).await.unwrap_err();
+            assert_eq!(e.to_string(), netguard::LINK_ERROR, "{url}: {e:?}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     #[ignore]
     async fn sources_facade_end_to_end() {
