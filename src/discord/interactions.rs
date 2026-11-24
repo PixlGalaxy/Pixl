@@ -1229,6 +1229,7 @@ async fn component(lynx: &Lynx, http: &Http, c: &ComponentInteraction) {
         CustomId::QueuePage { .. } => "queue_page",
         CustomId::Replay { .. } => "replay",
         CustomId::StartRadio { .. } | CustomId::StopRadio { .. } | CustomId::CancelRadio { .. } => "radio",
+        CustomId::PlaylistPick { .. } => "playlist_picker",
     });
     match id {
         CustomId::NowPlaying {

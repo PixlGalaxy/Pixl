@@ -241,6 +241,8 @@ impl Component {
             Self::Container { children, .. } => 1 + children.iter().map(Self::count).sum::<usize>(),
             Self::Section { texts, .. } => 2 + texts.len(),
             Self::Row(buttons) => 1 + buttons.len().min(5),
+            // An action row holding the select menu.
+            Self::Select(_) => 2,
             Self::Text(_) | Self::Separator { .. } => 1,
         }
     }
