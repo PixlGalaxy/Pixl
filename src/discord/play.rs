@@ -222,6 +222,14 @@ async fn enqueue(
     settings: &GuildSettings,
     resolved: Resolved,
 ) -> Result<Played, PlayError> {
+    // A new player plays the first track as soon as the bot has joined: resolve its stream
+    // during the voice join instead of after it.
+    if ctx.players.get(req.guild_id, req.voice_channel_id).is_none() {
+        if let Some(first) = resolved.tracks.first() {
+            let owner = ProcOwner::new(req.guild_id, req.voice_channel_id, None);
+            ctx.sources.warm_stream(first, &owner);
+        }
+    }
     let player = player_for(
         ctx,
         req.guild_id,

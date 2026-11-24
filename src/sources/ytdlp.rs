@@ -1,7 +1,7 @@
 //! yt-dlp: direct stream URLs (no download), metadata for non-YouTube URLs, and self-update.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -10,7 +10,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Semaphore;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::{SourceError, SourceResult, TrackInfo, TrackOrigin};
 use crate::{
@@ -25,6 +25,13 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 const VERSION_TIMEOUT: Duration = Duration::from_secs(20);
 const STREAM_CACHE_MAX: usize = 2048;
+/// Keys remembered as "resolve with yt-dlp's default clients" after a fast-client URL failed.
+const DEFAULT_CLIENT_KEYS_MAX: usize = 2048;
+/// YouTube player client tried first by default. Measured with yt-dlp 2026.11.23: its URLs carry
+/// no future `available_at` (with the default clients googlevideo refuses the URL for 4-14 s
+/// after the resolve), it needs no JS challenge, and it still offers itag 251 (Opus in WebM) as
+/// one seekable HTTPS file.
+pub const DEFAULT_PLAYER_CLIENT: &str = "visionos";
 /// A cached URL is reused only if it stays valid at least this long (covers a long song).
 const STREAM_MIN_REMAINING: i64 = 30 * 60;
 /// Assumed lifetime of URLs without an `expire` parameter.
@@ -78,7 +85,17 @@ struct Inner {
     /// `--limit-rate` for the piped fallback (HLS/live). Direct streams are already paced by songbird's
     /// 64 KiB read-ahead buffer, so they never download faster than they play.
     limit_rate: Option<String>,
+    /// yt-dlp's cache (player JS, challenge solutions). `None`: yt-dlp's own default.
+    cache_dir: Option<PathBuf>,
+    /// `youtube:player_client=` tried first for stream resolves; when it fails the resolve is
+    /// repeated with yt-dlp's default clients. `None`: always yt-dlp's default.
+    player_client: Option<String>,
     cache: Mutex<HashMap<String, StreamInfo>>,
+    /// One yt-dlp resolve per cache key at a time: concurrent resolves of the same video (two
+    /// jam channels, a warm-up and the player) wait for the first and take its cached result.
+    inflight: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Keys whose stream URL was invalidated (refused, failed): resolved with the default clients.
+    default_client_keys: Mutex<HashSet<String>>,
     update_lock: tokio::sync::Mutex<()>,
 }
 
@@ -100,7 +117,11 @@ impl Ytdlp {
                 sem: Semaphore::new(max_concurrent.max(1)),
                 cookies,
                 limit_rate: None,
+                cache_dir: None,
+                player_client: None,
                 cache: Mutex::new(HashMap::new()),
+                inflight: Mutex::new(HashMap::new()),
+                default_client_keys: Mutex::new(HashSet::new()),
                 update_lock: tokio::sync::Mutex::new(()),
             }),
         }
@@ -110,6 +131,26 @@ impl Ytdlp {
     pub fn with_limit_rate(mut self, rate: Option<String>) -> Self {
         if let Some(inner) = Arc::get_mut(&mut self.inner) {
             inner.limit_rate = rate.filter(|r| !r.is_empty());
+        }
+        self
+    }
+
+    /// Persistent yt-dlp cache dir, so player JS and challenge solutions survive restarts instead
+    /// of being fetched and solved again. Call right after `new`.
+    pub fn with_cache_dir(mut self, dir: Option<PathBuf>) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.cache_dir = dir;
+        }
+        self
+    }
+
+    /// YouTube player client(s) tried first for stream resolves (comma-separated, as yt-dlp's
+    /// `player_client` extractor arg). Empty or `default`: yt-dlp's default only. Call right after `new`.
+    pub fn with_player_client(mut self, client: Option<String>) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.player_client = client
+                .map(|c| c.trim().to_owned())
+                .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("default"));
         }
         self
     }
@@ -132,6 +173,10 @@ impl Ytdlp {
             "--paths".into(),
             format!("temp:{}", work_dir.display()),
         ];
+        if let Some(dir) = &self.inner.cache_dir {
+            a.push("--cache-dir".into());
+            a.push(dir.display().to_string());
+        }
         if let Some(c) = &self.inner.cookies {
             a.push("--cookies".into());
             a.push(c.display().to_string());
@@ -188,8 +233,74 @@ impl Ytdlp {
             let waited = wait_until_available(&hit).await;
             return Ok((hit, ResolveStats { cache_hit: true, waited }));
         }
+        let flight = self.flight(cache_key).await;
+        // Another caller resolved it while this one waited.
+        if let Some(hit) = self.cached(cache_key) {
+            drop(flight);
+            let waited = wait_until_available(&hit).await;
+            return Ok((hit, ResolveStats { cache_hit: true, waited }));
+        }
+        let info = self.fetch_stream(url, cache_key, owner).await?;
+        self.store(cache_key, info.clone());
+        drop(flight);
+        let waited = wait_until_available(&info).await;
+        Ok((info, ResolveStats { cache_hit: false, waited }))
+    }
+
+    /// Resolve `url` into the stream cache without waiting for `available_at`, so the player's
+    /// [`Self::resolve_stream`] finds it (or waits for this run instead of starting its own).
+    /// Errors only log: the player's own resolve reports them.
+    pub async fn warm(&self, url: &str, cache_key: &str, owner: &ProcOwner) {
+        if self.cached(cache_key).is_some() {
+            return;
+        }
+        let _flight = self.flight(cache_key).await;
+        if self.cached(cache_key).is_some() {
+            return;
+        }
+        match self.fetch_stream(url, cache_key, owner).await {
+            Ok(info) => self.store(cache_key, info),
+            Err(e) => tracing::debug!(key = cache_key, error = %e, "stream warm-up failed"),
+        }
+    }
+
+    /// Wait for any resolve of `key` already running, then hold the key until the guard drops.
+    async fn flight(&self, key: &str) -> Flight {
+        let lock = self.inner.inflight.lock().unwrap().entry(key.to_owned()).or_default().clone();
+        let guard = lock.clone().lock_owned().await;
+        Flight {
+            inner: self.inner.clone(),
+            key: key.to_owned(),
+            lock,
+            guard: Some(guard),
+        }
+    }
+
+    /// One stream resolve: the fast player client first (when configured and not ruled out for
+    /// this key), then yt-dlp's default clients.
+    async fn fetch_stream(&self, url: &str, cache_key: &str, owner: &ProcOwner) -> SourceResult<StreamInfo> {
+        let fast = self
+            .inner
+            .player_client
+            .as_deref()
+            .filter(|_| !self.inner.default_client_keys.lock().unwrap().contains(cache_key));
+        if let Some(client) = fast {
+            match self.run_resolve(url, Some(client), owner).await {
+                Ok(info) => return Ok(info),
+                Err(e) if !retry_with_default_client(&e) => return Err(e),
+                Err(e) => debug!(key = cache_key, client, error = %e, "fast player client failed; trying the default clients"),
+            }
+        }
+        self.run_resolve(url, None, owner).await
+    }
+
+    async fn run_resolve(&self, url: &str, client: Option<&str>, owner: &ProcOwner) -> SourceResult<StreamInfo> {
         let template = "%(.{id,url,http_headers,acodec,ext,format_id,protocol,duration,is_live,available_at})j";
-        let args = vec![
+        let mut args: Vec<String> = Vec::new();
+        if let Some(c) = client {
+            args.extend(["--extractor-args".into(), format!("youtube:player_client={c}")]);
+        }
+        args.extend([
             "--no-playlist".into(),
             "-f".into(),
             FORMAT.into(),
@@ -197,16 +308,13 @@ impl Ytdlp {
             template.into(),
             "--".into(),
             url.into(),
-        ];
+        ]);
         let out = self.run(owner, args, RESOLVE_TIMEOUT).await?;
         let line = String::from_utf8_lossy(&out);
         let line = line.lines().rev().find(|l| l.trim_start().starts_with('{')).unwrap_or("");
         let v: Value =
             serde_json::from_str(line).map_err(|_| SourceError::Other("yt-dlp returned no stream info".into()))?;
-        let info = parse_stream(&v, now_secs()).ok_or_else(|| SourceError::Unavailable("No audio stream".into()))?;
-        self.store(cache_key, info.clone());
-        let waited = wait_until_available(&info).await;
-        Ok((info, ResolveStats { cache_hit: false, waited }))
+        parse_stream(&v, now_secs()).ok_or_else(|| SourceError::Unavailable("No audio stream".into()))
     }
 
     fn cached(&self, key: &str) -> Option<StreamInfo> {
@@ -231,8 +339,17 @@ impl Ytdlp {
         cache.insert(key.to_owned(), info);
     }
 
+    /// Forget the cached URL of `key` (refused, or the track failed). Its next resolve skips the
+    /// fast player client, in case that client's URL is what went wrong.
     pub fn invalidate(&self, key: &str) {
         self.inner.cache.lock().unwrap().remove(key);
+        if self.inner.player_client.is_some() {
+            let mut keys = self.inner.default_client_keys.lock().unwrap();
+            if keys.len() >= DEFAULT_CLIENT_KEYS_MAX {
+                keys.clear();
+            }
+            keys.insert(key.to_owned());
+        }
     }
 
     /// Metadata for any yt-dlp supported URL (single item or flat playlist).
@@ -367,6 +484,35 @@ impl Ytdlp {
     }
 }
 
+/// Holds a key of [`Inner::inflight`]; the entry is removed once nobody else waits on it.
+struct Flight {
+    inner: Arc<Inner>,
+    key: String,
+    lock: Arc<tokio::sync::Mutex<()>>,
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl Drop for Flight {
+    fn drop(&mut self) {
+        self.guard.take();
+        let mut map = self.inner.inflight.lock().unwrap_or_else(|p| p.into_inner());
+        // Only the map's clone and ours left: no waiter.
+        if map.get(&self.key).is_some_and(|l| Arc::ptr_eq(l, &self.lock) && Arc::strong_count(l) <= 2) {
+            map.remove(&self.key);
+        }
+    }
+}
+
+/// A failed fast-client resolve is repeated with yt-dlp's default clients unless that cannot
+/// help (cancelled, timed out, or the video is private).
+fn retry_with_default_client(e: &SourceError) -> bool {
+    match e {
+        SourceError::Cancelled | SourceError::Timeout => false,
+        SourceError::Unavailable(r) => r != "Private video",
+        _ => true,
+    }
+}
+
 /// Last meaningful error from yt-dlp stderr, shortened for users and logs.
 pub fn short_reason(stderr: &str) -> String {
     const KNOWN: &[(&str, &str)] = &[
@@ -461,10 +607,12 @@ const MAX_AVAILABILITY_WAIT: Duration = Duration::from_secs(20);
 async fn wait_until_available(info: &StreamInfo) -> Duration {
     let Some(at) = info.available_at else { return Duration::ZERO };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
-    let wait_ms = (at * 1000 + 750) - now;
-    if wait_ms <= 0 {
+    // Already reached (the usual case with the fast player client): no safety margin. Measured:
+    // such URLs answer 206 right away.
+    if at * 1000 <= now {
         return Duration::ZERO;
     }
+    let wait_ms = (at * 1000 + 750) - now;
     let wait = Duration::from_millis(wait_ms as u64).min(MAX_AVAILABILITY_WAIT);
     tokio::time::sleep(wait).await;
     wait
@@ -589,6 +737,142 @@ mod tests {
         assert_eq!(t[0].youtube_id.as_deref(), Some("dQw4w9WgXcQ"));
         assert_eq!(t[0].origin, TrackOrigin::Youtube);
         assert!(t[1].youtube_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn reached_availability_is_not_waited_for() {
+        let mut s = parse_stream(&json!({ "url": "https://x.invalid/v", "protocol": "https" }), 0).unwrap();
+        assert_eq!(wait_until_available(&s).await, Duration::ZERO);
+        s.available_at = Some(now_secs() - 1);
+        assert_eq!(wait_until_available(&s).await, Duration::ZERO);
+    }
+
+    #[test]
+    fn default_client_retry_rules() {
+        assert!(retry_with_default_client(&SourceError::Unavailable("Requested format is not available".into())));
+        assert!(retry_with_default_client(&SourceError::Unavailable("Sign in to confirm you're not a bot".into())));
+        assert!(retry_with_default_client(&SourceError::Other("yt-dlp returned no stream info".into())));
+        assert!(!retry_with_default_client(&SourceError::Unavailable("Private video".into())));
+        assert!(!retry_with_default_client(&SourceError::Cancelled));
+        assert!(!retry_with_default_client(&SourceError::Timeout));
+    }
+
+    /// A fake yt-dlp in `root/bin` that logs its arguments (one line per run) to `root/runs`,
+    /// takes 300 ms, and fails runs with a player client while `root/fail_fast` exists.
+    #[cfg(unix)]
+    fn fake_ytdlp(client: Option<&str>) -> (Ytdlp, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("lynx-fake-ytdlp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+echo "$*" >> "{root}/runs"
+sleep 0.3
+case "$*" in
+  *player_client=*) if [ -e "{root}/fail_fast" ]; then echo "ERROR: [youtube] x: Requested format is not available" >&2; exit 1; fi ;;
+esac
+echo '{{"id":"x","url":"https://x.invalid/videoplayback?expire=4102444800&itag=251","acodec":"opus","ext":"webm","format_id":"251","protocol":"https","duration":200.0,"is_live":false,"available_at":1}}'
+"#,
+            root = root.display()
+        );
+        let bin = root.join("bin/yt-dlp");
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let y = Ytdlp::new(
+            root.join("bin"),
+            ProcessRegistry::new(),
+            StreamDirs::new(root.join("streams"), 100),
+            reqwest::Client::new(),
+            4,
+            None,
+        )
+        .with_cache_dir(Some(root.join("cache")))
+        .with_player_client(client.map(str::to_owned));
+        (y, root)
+    }
+
+    #[cfg(unix)]
+    fn runs(root: &Path) -> Vec<String> {
+        std::fs::read_to_string(root.join("runs")).unwrap_or_default().lines().map(str::to_owned).collect()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn concurrent_resolves_of_one_video_share_a_run() {
+        let (y, root) = fake_ytdlp(Some("visionos"));
+        let owner = ProcOwner::system();
+        let url = "https://www.youtube.com/watch?v=x";
+        let (a, b, c) = tokio::join!(
+            y.resolve_stream_stats(url, "x", &owner),
+            y.resolve_stream_stats(url, "x", &owner),
+            y.resolve_stream_stats(url, "x", &owner),
+        );
+        let (a, b, c) = (a.unwrap(), b.unwrap(), c.unwrap());
+        assert_eq!(runs(&root).len(), 1, "one yt-dlp run for three callers");
+        assert_eq!(a.0, b.0);
+        assert_eq!(b.0, c.0);
+        assert_eq!([a.1.cache_hit, b.1.cache_hit, c.1.cache_hit].iter().filter(|h| !**h).count(), 1);
+        assert!(a.0.is_opus);
+        assert!(y.inner.inflight.lock().unwrap().is_empty(), "no in-flight entry left behind");
+
+        // A warm-up and the player's resolve: still one run, and the player takes the cached URL.
+        let (_, d) = tokio::join!(y.warm(url, "y", &owner), async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            y.resolve_stream_stats(url, "y", &owner).await
+        });
+        assert!(d.unwrap().1.cache_hit);
+        assert_eq!(runs(&root).len(), 2);
+        // Different keys run side by side.
+        let start = std::time::Instant::now();
+        let (e, f) = tokio::join!(y.resolve_stream(url, "e", &owner), y.resolve_stream(url, "f", &owner));
+        e.unwrap();
+        f.unwrap();
+        assert_eq!(runs(&root).len(), 4);
+        assert!(start.elapsed() < Duration::from_millis(550), "independent keys are not serialised");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fast_client_first_then_default_clients() {
+        let (y, root) = fake_ytdlp(Some("visionos"));
+        let owner = ProcOwner::system();
+        let url = "https://www.youtube.com/watch?v=x";
+        y.resolve_stream(url, "a", &owner).await.unwrap();
+        let r = runs(&root);
+        assert_eq!(r.len(), 1);
+        assert!(r[0].contains("youtube:player_client=visionos"), "{}", r[0]);
+        assert!(r[0].contains(&format!("--cache-dir {}", root.join("cache").display())), "{}", r[0]);
+
+        // The fast client fails: the same resolve retries with yt-dlp's default clients.
+        std::fs::write(root.join("fail_fast"), "").unwrap();
+        y.resolve_stream(url, "b", &owner).await.unwrap();
+        let r = runs(&root);
+        assert_eq!(r.len(), 3);
+        assert!(r[1].contains("player_client=visionos"));
+        assert!(!r[2].contains("player_client"), "{}", r[2]);
+
+        // A refused URL is resolved again with the default clients only.
+        std::fs::remove_file(root.join("fail_fast")).unwrap();
+        y.invalidate("a");
+        y.resolve_stream(url, "a", &owner).await.unwrap();
+        let r = runs(&root);
+        assert_eq!(r.len(), 4);
+        assert!(!r[3].contains("player_client"), "{}", r[3]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn no_player_client_means_yt_dlp_default() {
+        for client in [None, Some(""), Some("default")] {
+            let (y, root) = fake_ytdlp(client);
+            y.resolve_stream("https://www.youtube.com/watch?v=x", "x", &ProcOwner::system()).await.unwrap();
+            let r = runs(&root);
+            assert_eq!(r.len(), 1);
+            assert!(!r[0].contains("player_client"), "{client:?}: {}", r[0]);
+            let _ = std::fs::remove_dir_all(root);
+        }
     }
 
     // ---- network (cargo test -- --ignored ytdlp_)

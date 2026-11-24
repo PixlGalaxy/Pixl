@@ -44,6 +44,9 @@ pub struct Config {
     pub ytdlp_cookies_file: Option<PathBuf>,
     /// `--limit-rate` for the yt-dlp piped fallback (HLS/live), like PIXL's 300K. Empty = no limit.
     pub ytdlp_limit_rate: Option<String>,
+    /// YouTube player client yt-dlp tries first for stream URLs (`YTDLP_PLAYER_CLIENT`, default
+    /// `visionos`: no start-up wait). Empty or `default`: yt-dlp's own client choice only.
+    pub ytdlp_player_client: Option<String>,
     pub empty_channel_timeout_secs: u64,
     pub max_concurrent_extractions: usize,
     pub stream_cache_max_mb: u64,
@@ -90,6 +93,10 @@ impl Config {
 
             ytdlp_cookies_file: optional("YTDLP_COOKIES_FILE").map(PathBuf::from),
             ytdlp_limit_rate: Some(optional("YTDLP_LIMIT_RATE").unwrap_or_else(|| "300K".into())),
+            ytdlp_player_client: Some(
+                optional("YTDLP_PLAYER_CLIENT")
+                    .unwrap_or_else(|| crate::sources::ytdlp::DEFAULT_PLAYER_CLIENT.into()),
+            ),
             empty_channel_timeout_secs: parse_or("EMPTY_CHANNEL_TIMEOUT_SECS", 180)?,
             max_concurrent_extractions: parse_or("MAX_CONCURRENT_EXTRACTIONS", 8)?,
             stream_cache_max_mb: parse_or("STREAM_CACHE_MAX_MB", 2048)?,
@@ -119,7 +126,12 @@ impl Config {
         self.appdata_dir.join("bin")
     }
 
-    pub fn database_path(&self) -> PathBuf {
+    /// yt-dlp's cache (YouTube player JS, challenge solutions), kept across restarts.
+    pub fn ytdlp_cache_dir(&self) -> PathBuf {
+        self.appdata_dir.join("cache").join("yt-dlp")
+    }
+
+        pub fn database_path(&self) -> PathBuf {
         self.appdata_dir.join("lynx.db")
     }
 }
