@@ -4,6 +4,10 @@ use std::{env, path::PathBuf, str::FromStr};
 
 use anyhow::{bail, Context, Result};
 
+/// `PREFETCH_TRACKS` when unset, and its upper bound.
+pub const DEFAULT_PREFETCH_TRACKS: usize = 2;
+pub const MAX_PREFETCH_TRACKS: usize = 5;
+
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Main bot: owns the slash commands, the Activity and every text message.
@@ -50,6 +54,9 @@ pub struct Config {
     pub empty_channel_timeout_secs: u64,
     pub max_concurrent_extractions: usize,
     pub stream_cache_max_mb: u64,
+    /// Upcoming tracks each player prepares ahead (stream URL plus the first ~10 s of audio on
+    /// disk), so skipping several tracks still starts at once. 0 turns prefetching off.
+    pub prefetch_tracks: usize,
     pub cache_ttl_days: u32,
     /// Saved playlists per user (Playlists tab). When full, the least recently used unpinned one
     /// is dropped. 0 turns saving off.
@@ -100,6 +107,7 @@ impl Config {
             empty_channel_timeout_secs: parse_or("EMPTY_CHANNEL_TIMEOUT_SECS", 180)?,
             max_concurrent_extractions: parse_or("MAX_CONCURRENT_EXTRACTIONS", 8)?,
             stream_cache_max_mb: parse_or("STREAM_CACHE_MAX_MB", 2048)?,
+            prefetch_tracks: parse_or::<usize>("PREFETCH_TRACKS", DEFAULT_PREFETCH_TRACKS)?.min(MAX_PREFETCH_TRACKS),
             cache_ttl_days: parse_or("CACHE_TTL_DAYS", 7)?,
             max_stored_playlists: parse_or("MAX_STORED_PLAYLISTS", 20)?,
 
