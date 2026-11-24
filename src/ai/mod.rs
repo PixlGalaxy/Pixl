@@ -516,6 +516,8 @@ pub(crate) mod test_util {
             ytdlp_cookies_file: None,
             ytdlp_limit_rate: None,
             ytdlp_player_client: None,
+            ytdlp_extractors: None,
+            link_hosts: Vec::new(),
             empty_channel_timeout_secs: 0,
             max_concurrent_extractions: 1,
             stream_cache_max_mb: 10,

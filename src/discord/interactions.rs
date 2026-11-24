@@ -436,7 +436,12 @@ fn source_error(inv: &Inv, e: &SourceError) -> Message {
         SourceError::SpotifyDisabled => inv.err("spotify_disabled", &[]),
         SourceError::Timeout => inv.err("timeout", &[]),
         SourceError::Cancelled => inv.err("generic", &[]),
-        SourceError::Unavailable(r) | SourceError::Http(r) | SourceError::Other(r) => {
+        // Internal errors (I/O, process spawn) may carry paths: log them, show the generic text.
+        SourceError::Other(r) => {
+            tracing::warn!(error = %r, "resolve failed");
+            inv.err("generic", &[])
+        }
+        SourceError::Unavailable(r) | SourceError::Http(r) => {
             inv.err("source", &[("reason", r.trim_end_matches('.'))])
         }
     }

@@ -90,7 +90,8 @@ async fn main() -> Result<()> {
         sessions: sessions.clone(),
         bots: bots.registry.clone(),
         ai: ai.clone(),
-        http: reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build()?,
+        // Fetches stream URLs (yt-dlp output for user links): public addresses only, redirects re-checked.
+        http: sources::netguard::guarded(reqwest::Client::builder().connect_timeout(Duration::from_secs(10))).build()?,
     });
     {
         let players = players.clone();
