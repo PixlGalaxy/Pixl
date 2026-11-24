@@ -191,6 +191,8 @@ pub struct ApiPlayerState {
     pub vote_skip_enabled: bool,
     /// `Jam` of the channel (filled in by the API layer, which knows the viewer).
     pub jam: Option<serde_json::Value>,
+    /// Who is dragging the progress bar (`api::seek_hold::hold_json`), filled in by the API layer.
+    pub seek_hold: Option<serde_json::Value>,
     pub server_now: i64,
 }
 
@@ -274,6 +276,7 @@ impl PlayerSnapshot {
                 .map(|(current, required)| ApiSkipVotes { current, required }),
             vote_skip_enabled: self.vote_skip_enabled,
             jam: None,
+            seek_hold: None,
             server_now: now,
         }
     }

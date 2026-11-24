@@ -17,6 +17,7 @@ mod player;
 mod playlists;
 mod queue;
 mod search;
+mod seek_hold;
 pub(crate) mod session;
 mod settings;
 mod upstream;
@@ -74,6 +75,8 @@ pub struct Options {
     pub session_ttl: Duration,
     /// Thresholds of the `/health` status rules.
     pub health_limits: health::Limits,
+    /// Longest seek-bar hold (`seek_hold::HOLD_MAX`; tests use a short one).
+    pub seek_hold_max: Duration,
 }
 
 impl Default for Options {
@@ -81,6 +84,7 @@ impl Default for Options {
         Self {
             session_ttl: SESSION_TTL,
             health_limits: health::LIMITS,
+            seek_hold_max: seek_hold::HOLD_MAX,
         }
     }
 }
@@ -110,6 +114,8 @@ pub struct Inner {
     /// Last `/health` report (see `health::CACHE_TTL`).
     pub health: health::HealthCache<health::HealthReport>,
     pub health_limits: health::Limits,
+    /// Who drags the progress bar, per player channel / jam.
+    pub seek_holds: seek_hold::SeekHolds,
 }
 
 /// Router state. Cheap to clone.
@@ -152,6 +158,7 @@ impl ApiState {
             search_refused_logged: AtomicBool::new(false),
             health: health::HealthCache::new(health::CACHE_TTL),
             health_limits: opts.health_limits,
+            seek_holds: seek_hold::SeekHolds::new(opts.seek_hold_max, seek_hold::REACQUIRE_COOLDOWN),
         })))
     }
 

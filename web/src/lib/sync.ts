@@ -1,6 +1,6 @@
 // Pure rules that keep the panel's player state in sync with the server (unit tested in
 // sync.test.ts, used by live.ts). No React here.
-import type { PlayerState } from './types'
+import type { PlayerState, SeekHold } from './types'
 
 /** Cap for the age of a sample measured with the local clock (client/server skew can't run the bar away). */
 export const MAX_LOCAL_AGE_MS = 5_000
@@ -101,4 +101,38 @@ export function freshFetch(socketOpen: boolean, startedAt: number, nowAt: number
 /** The 5 s polling fallback runs only while the socket is down and the panel is visible. */
 export function shouldPoll(socketOpen: boolean, visible: boolean): boolean {
   return !socketOpen && visible
+}
+
+/**
+ * A hold older than this is ignored (the server ends every hold after 5 s and says so; this only
+ * covers a release message that never arrived).
+ */
+export const HOLD_STALE_MS = 7_000
+
+/** Who locks the seek bar for user `me` at `now` (`performance.now()`): someone else's fresh hold. */
+export function lockedBy(hold: SeekHold | null | undefined, me: string, now: number): { id: string; name: string } | null {
+  const holder = hold?.holder
+  if (!holder || holder.id === me) return null
+  if (hold.at != null && now - hold.at >= HOLD_STALE_MS) return null
+  return holder
+}
+
+/**
+ * What a drag in progress does with a `seek_hold` message. `granted`: this panel already got the
+ * hold. `granted` when the hold is now ours; `cancel` when someone else has it, the request was
+ * refused, or our hold ended (the 5 s limit, a new track); `wait` while the request is pending.
+ */
+export function holdVerdict(
+  msg: { holder: SeekHold['holder']; denied?: boolean },
+  me: string,
+  granted: boolean,
+): 'granted' | 'cancel' | 'wait' {
+  if (msg.holder?.id === me) return 'granted'
+  if (msg.denied || msg.holder) return 'cancel'
+  return granted ? 'cancel' : 'wait'
+}
+
+/** Our hold ended while we still dragged, after about the 5 s limit: "Released after 5 seconds". */
+export function releasedByTimeout(grantedAt: number | null, now: number): boolean {
+  return grantedAt != null && now - grantedAt >= 4_500
 }

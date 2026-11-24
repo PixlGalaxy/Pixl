@@ -13,7 +13,7 @@ import {
   shownPosition,
   type PositionAnchor,
 } from './sync'
-import type { AiState, ChannelRef, GuildSettings, NoticesInfo, Permissions, PlayerState, ServerMessage } from './types'
+import type { AiState, ChannelRef, GuildSettings, NoticesInfo, Permissions, PlayerState, SeekHold, ServerMessage } from './types'
 
 export type { PositionAnchor } from './sync'
 export { positionAt } from './sync'
@@ -34,6 +34,12 @@ export function anchorFrom(positionMs: number, positionAt: number, serverNow?: n
 export function localAnchor(positionMs: number, uid?: string): PositionAnchor {
   return { positionMs, at: performance.now(), ...(uid != null ? { uid } : {}) }
 }
+
+/** A `seek_hold` socket message (see `SeekHold`). */
+export type SeekHoldMessage = Extract<ServerMessage, { type: 'seek_hold' }>
+
+/** Messages the panel sends on its socket once signed in. */
+export type ClientMessage = { type: 'seek_hold' } | { type: 'seek_release' }
 
 type Handlers = {
   onSettings: (s: GuildSettings) => void
@@ -65,8 +71,14 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
   // When the last state or position arrived (`performance.now()`), for the resync check.
   const lastSyncRef = useRef(performance.now())
 
-  const applyState = useCallback((next: PlayerState | null, serverNow?: number) => {
+  // The open, signed-in socket (null otherwise) and who listens to `seek_hold` messages.
+  const wsRef = useRef<WebSocket | null>(null)
+  const holdListenersRef = useRef(new Set<(msg: SeekHoldMessage) => void>())
+
+  const applyState = useCallback((incoming: PlayerState | null, serverNow?: number) => {
     setLoaded(true)
+    // Stamp the hold with its arrival, so a lost release can't lock the bar for good.
+    const next = incoming?.seekHold ? { ...incoming, seekHold: { ...incoming.seekHold, at: performance.now() } } : incoming
     if (!acceptState(shownRef.current, next)) return
     shownRef.current = next
     lastSyncRef.current = performance.now()
@@ -125,6 +137,7 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
           opened = true
           attempts = 0
           socketOpenRef.current = true
+          wsRef.current = ws
           setSocketOpen(true)
         }
         let msg: ServerMessage
@@ -168,10 +181,17 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
           case 'notices':
             handlersRef.current.onNotices?.({ notices: msg.notices ?? [], maintenance: msg.maintenance === true })
             break
+          case 'seek_hold': {
+            const hold: SeekHold = { holder: msg.holder ?? null, until: msg.until ?? null, at: performance.now() }
+            setState((s) => (s ? { ...s, seekHold: hold } : s))
+            for (const listener of holdListenersRef.current) listener(msg)
+            break
+          }
         }
       }
       ws.onclose = (event) => {
         socketOpenRef.current = false
+        wsRef.current = null
         setSocketOpen(false)
         clearInterval(ping)
         const action = closeAction(event.code, opened)
@@ -211,9 +231,27 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
         ws.close()
       }
       socketOpenRef.current = false
+      wsRef.current = null
       setSocketOpen(false)
     }
   }, [applyChannel, applyState, refresh])
+
+  /** Send on the signed-in socket; false when there is none (polling fallback). */
+  const sendSocket = useCallback((msg: ClientMessage): boolean => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    ws.send(JSON.stringify(msg))
+    return true
+  }, [])
+
+  /** Listen to `seek_hold` messages; returns the unsubscribe function. */
+  const onSeekHold = useCallback((listener: (msg: SeekHoldMessage) => void) => {
+    const set = holdListenersRef.current
+    set.add(listener)
+    return () => {
+      set.delete(listener)
+    }
+  }, [])
 
   // Fresh state (and a fresh position anchor) on load and whenever Discord switches between the
   // focused panel and picture-in-picture / grid: timers are throttled while minimized. A socket
@@ -250,7 +288,7 @@ export function useLivePlayer(initialChannel: ChannelRef | null, handlers: Handl
     return () => clearInterval(id)
   }, [socketOpen, refresh])
 
-  return { state, setState, channel, anchor, setAnchor, loaded, socketOpen, refresh }
+  return { state, setState, channel, anchor, setAnchor, loaded, socketOpen, refresh, sendSocket, onSeekHold }
 }
 
 /**

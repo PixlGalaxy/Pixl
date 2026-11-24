@@ -35,7 +35,8 @@
     "jam_other": "Your channel is in another jam. Leave it first.",
     "refresh_blocked": "Too many refreshes. Please wait 5 minutes.",
     "playlists_full": "Every saved playlist is pinned. Unpin or remove one in the Playlists tab first.",
-    "saving_off": "Saving playlists is turned off on this bot."
+    "saving_off": "Saving playlists is turned off on this bot.",
+    "seek_held": "Someone else is moving the bar. Try again in a moment."
   },
   "login": {
     "title": "Connecting to Lynx",
@@ -86,6 +87,9 @@
     "emptyChannelBody": "Music resumes when someone joins.",
     "live": "Live",
     "seek": "Seek",
+    "seekLocked": "{{name}} is moving the bar",
+    "seekReleased": "Released after 5 seconds",
+    "seekWait": "Wait a moment before moving the bar again.",
     "like": "Like",
     "liked": "Liked",
     "dislike": "Dislike",
@@ -448,7 +452,7 @@
         "body": "Invite to jam (in the panel or on the Now playing message) shares a link. Whoever opens it gets the panel in their own voice channel and can join: every channel plays the same queue at the same position, and the volume stays per channel. The host channel decides who may join (other channels of the server, other servers), who edits the shared queue, closes the jam, removes channels or ends it. Joining saves your channel's own queue; it comes back when you leave or the jam ends. If the host channel empties, the host role passes to the channel that joined first. Jams are not kept across a Lynx restart: each channel resumes its own queue."
       }
     },
-    "seekNote": "Moving to a point in the song is only possible here, with the slider. There is no seek command.",
+    "seekNote": "Moving to a point in the song is only possible here, with the slider. There is no seek command. While someone drags it, the others see it locked for up to 5 seconds.",
     "feedbackNote": "Like and Dislike tune your radio: a dislike keeps that song out of your mixes.",
     "commandsTitle": "Slash commands",
     "commandsHint": "Type them in any text channel of the server while you are in a voice channel.",

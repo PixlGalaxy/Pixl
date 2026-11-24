@@ -191,6 +191,16 @@ async fn harness_full(
     bot_count: usize,
     health_limits: super::health::Limits,
 ) -> Harness {
+    harness_opts(session_ttl, ai_enabled, bot_count, health_limits, super::seek_hold::HOLD_MAX).await
+}
+
+async fn harness_opts(
+    session_ttl: Duration,
+    ai_enabled: bool,
+    bot_count: usize,
+    health_limits: super::health::Limits,
+    seek_hold_max: Duration,
+) -> Harness {
     let dir = std::env::temp_dir().join(format!("lynx-api-test-{}", uuid::Uuid::new_v4()));
     let mut cfg = crate::ai::test_util::config(dir);
     cfg.discord_client_id = "4242".into();
@@ -251,6 +261,7 @@ async fn harness_full(
         Options {
             session_ttl,
             health_limits,
+            seek_hold_max,
         },
     )
     .unwrap();
@@ -2065,4 +2076,202 @@ async fn add_next_needs_control_in_dj_mode() {
     let (s, _) = h.call("POST", "/api/queue/add", Some(&ana), Some(add(Some("middle")))).await;
     assert_eq!(s.as_u16() / 100, 4);
     assert_ne!(s, StatusCode::FORBIDDEN);
+}
+
+/// The next socket message of `kind` (others, like `state` and `position`, are skipped).
+async fn next_of(socket: &mut TestSocket, kind: &str) -> Value {
+    for _ in 0..50 {
+        let v = next(socket).await;
+        if v["type"] == kind {
+            return v;
+        }
+    }
+    panic!("no {kind} message");
+}
+
+async fn send_json(socket: &mut TestSocket, v: Value) {
+    use futures_util::SinkExt;
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::text(v.to_string()))
+        .await
+        .unwrap();
+}
+
+/// A signed-in socket past its first `channel` / `state` (/ `jam`) / `permissions` messages; the state.
+async fn ws_ready(addr: std::net::SocketAddr, session: &str) -> (TestSocket, Value) {
+    let mut socket = ws_open(addr, session).await;
+    assert_eq!(next(&mut socket).await["type"], "channel");
+    let state = next(&mut socket).await;
+    assert_eq!(state["type"], "state");
+    // A jam message may come first.
+    next_of(&mut socket, "permissions").await;
+    (socket, state)
+}
+
+#[tokio::test]
+async fn seek_bar_hold_locks_the_others_until_released() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    h.fake.set_voice(BOSS, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (boss, _) = h.login("boss", Some(VOICE)).await;
+    detached_player(&h, VOICE, &["a", "b"]);
+    let addr = serve(&h).await;
+    let (mut a, state) = ws_ready(addr, &ana).await;
+    assert_eq!(state["state"]["seekHold"], json!({ "holder": null, "until": null }));
+    let (mut b, _) = ws_ready(addr, &boss).await;
+    let seek = json!({ "channelId": "100", "positionMs": 1000 });
+
+    // Ana starts dragging: everyone in the channel sees her hold, with its end time.
+    send_json(&mut a, json!({ "type": "seek_hold" })).await;
+    for s in [&mut a, &mut b] {
+        let v = next_of(s, "seek_hold").await;
+        assert_eq!(v["holder"], json!({ "id": ANA.to_string(), "name": "ANA" }), "{v}");
+        assert!(v["until"].as_i64().unwrap() > 0);
+    }
+    // A panel opened now sees it in the state.
+    let (_, v) = h.call("GET", "/api/player?channelId=100", Some(&boss), None).await;
+    assert_eq!(v["seekHold"]["holder"]["id"], ANA.to_string());
+    // The other one can not take it, nor seek.
+    send_json(&mut b, json!({ "type": "seek_hold" })).await;
+    let v = next_of(&mut b, "seek_hold").await;
+    assert_eq!((v["denied"].clone(), v["holder"]["id"].clone()), (json!(true), json!(ANA.to_string())));
+    let (s, v) = h.call("POST", "/api/player/seek", Some(&boss), Some(seek.clone())).await;
+    assert_eq!((s, code(&v)), (StatusCode::CONFLICT, "seek_held"), "{v}");
+    // The holder's own seek on release is accepted (nothing plays in this test channel, so the
+    // player answers not found) and frees the bar for everyone.
+    let (s, v) = h.call("POST", "/api/player/seek", Some(&ana), Some(seek.clone())).await;
+    assert_eq!((s, code(&v)), (StatusCode::NOT_FOUND, "not_found"), "{v}");
+    for s in [&mut a, &mut b] {
+        assert_eq!(next_of(s, "seek_hold").await["holder"], Value::Null);
+    }
+    let (s, v) = h.call("POST", "/api/player/seek", Some(&boss), Some(seek.clone())).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
+
+    // seek_release frees it too.
+    send_json(&mut b, json!({ "type": "seek_hold" })).await;
+    assert_eq!(next_of(&mut a, "seek_hold").await["holder"]["id"], BOSS.to_string());
+    send_json(&mut b, json!({ "type": "seek_release" })).await;
+    assert_eq!(next_of(&mut a, "seek_hold").await["holder"], Value::Null);
+
+    // Closing the holder's socket frees it.
+    send_json(&mut b, json!({ "type": "seek_hold" })).await;
+    assert_eq!(next_of(&mut a, "seek_hold").await["holder"]["id"], BOSS.to_string());
+    drop(b);
+    assert_eq!(next_of(&mut a, "seek_hold").await["holder"], Value::Null);
+
+    // The player stopping frees it.
+    send_json(&mut a, json!({ "type": "seek_hold" })).await;
+    assert_eq!(next_of(&mut a, "seek_hold").await["holder"]["id"], ANA.to_string());
+    let (s, _) = h
+        .call("POST", "/api/player/stop", Some(&boss), Some(json!({ "channelId": "100" })))
+        .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert_eq!(next_of(&mut a, "seek_hold").await["holder"], Value::Null);
+}
+
+#[tokio::test]
+async fn seek_bar_hold_needs_the_control_rule() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (boss, _) = h.login("boss", None).await;
+    detached_player(&h, VOICE, &["a"]);
+    h.call("PUT", "/api/settings", Some(&boss), Some(json!({ "controlMode": "dj" })))
+        .await;
+    let addr = serve(&h).await;
+    let (mut a, _) = ws_ready(addr, &ana).await;
+    send_json(&mut a, json!({ "type": "seek_hold" })).await;
+    let v = next_of(&mut a, "seek_hold").await;
+    assert_eq!((v["denied"].clone(), v["holder"].clone()), (json!(true), Value::Null));
+}
+
+#[tokio::test]
+async fn seek_bar_hold_times_out_and_the_holder_waits() {
+    let max = Duration::from_millis(300);
+    let h = harness_opts(Duration::from_secs(3600), true, 1, super::health::LIMITS, max).await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    h.fake.set_voice(BOSS, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (boss, _) = h.login("boss", Some(VOICE)).await;
+    detached_player(&h, VOICE, &["a"]);
+    let addr = serve(&h).await;
+    let (mut a, _) = ws_ready(addr, &ana).await;
+    let (mut b, _) = ws_ready(addr, &boss).await;
+    let started = std::time::Instant::now();
+    send_json(&mut a, json!({ "type": "seek_hold" })).await;
+    assert_eq!(next_of(&mut a, "seek_hold").await["holder"]["id"], ANA.to_string());
+    // The pointer stays down: the server ends the hold at the limit and tells everyone.
+    assert_eq!(next_of(&mut a, "seek_hold").await["holder"], Value::Null);
+    assert!(started.elapsed() >= max - Duration::from_millis(50), "{:?}", started.elapsed());
+    assert_eq!(next_of(&mut b, "seek_hold").await["holder"]["id"], ANA.to_string());
+    assert_eq!(next_of(&mut b, "seek_hold").await["holder"], Value::Null);
+    // Asking again at once is refused (cooldown); the other one may take it.
+    send_json(&mut a, json!({ "type": "seek_hold" })).await;
+    let v = next_of(&mut a, "seek_hold").await;
+    assert_eq!((v["denied"].clone(), v["holder"].clone()), (json!(true), Value::Null));
+    send_json(&mut b, json!({ "type": "seek_hold" })).await;
+    assert_eq!(next_of(&mut b, "seek_hold").await["holder"]["id"], BOSS.to_string());
+}
+
+#[tokio::test]
+async fn seek_bar_hold_is_shared_by_a_jam_and_ends_with_the_track() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    h.fake.set_voice(BOSS, Some(LOUNGE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (boss, _) = h.login("boss", Some(LOUNGE)).await;
+    detached_player(&h, VOICE, &["a", "b", "c"]);
+    detached_player(&h, LOUNGE, &["x"]);
+    let (s, v) = h
+        .call("POST", "/api/jam/create", Some(&ana), Some(json!({ "channelId": "100" })))
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let id = v["jamId"].as_str().unwrap().to_owned();
+    let (s, v) = h
+        .call(
+            "POST",
+            "/api/jam/join",
+            Some(&boss),
+            Some(json!({ "channelId": "101", "jamId": id })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    eventually(&h, "/api/player?channelId=101", &boss, |v| {
+        v["jam"]["members"].as_array().is_some_and(|m| m.len() == 2)
+    })
+    .await;
+    // Play: the shared queue starts its first track in every member channel.
+    let (s, v) = h
+        .call("POST", "/api/player/resume", Some(&ana), Some(json!({ "channelId": "100" })))
+        .await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    eventually(&h, "/api/player?channelId=101", &boss, |v| v["current"]["title"] == "Song a").await;
+    let addr = serve(&h).await;
+    let (mut a, _) = ws_ready(addr, &ana).await;
+    let (mut b, _) = ws_ready(addr, &boss).await;
+
+    // A hold in the host channel locks the bar in the member channel too.
+    send_json(&mut a, json!({ "type": "seek_hold" })).await;
+    assert_eq!(next_of(&mut b, "seek_hold").await["holder"]["id"], ANA.to_string());
+    let (s, v) = h
+        .call(
+            "POST",
+            "/api/player/seek",
+            Some(&boss),
+            Some(json!({ "channelId": "101", "positionMs": 1000 })),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (StatusCode::CONFLICT, "seek_held"), "{v}");
+    let (_, v) = h.call("GET", "/api/player?channelId=101", Some(&boss), None).await;
+    assert_eq!(v["seekHold"]["holder"]["id"], ANA.to_string());
+
+    // A new shared track ends it.
+    let (s, v) = h
+        .call("POST", "/api/player/skip", Some(&boss), Some(json!({ "channelId": "101" })))
+        .await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    assert_eq!(next_of(&mut b, "seek_hold").await["holder"], Value::Null);
+    assert_eq!(next_of(&mut a, "seek_hold").await["holder"]["id"], ANA.to_string());
+    assert_eq!(next_of(&mut a, "seek_hold").await["holder"], Value::Null);
 }

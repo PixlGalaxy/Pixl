@@ -35,7 +35,8 @@
     "jam_other": "Tu canal está en otra escucha compartida. Sal de ella primero.",
     "refresh_blocked": "Demasiadas actualizaciones. Espera 5 minutos.",
     "playlists_full": "Todas tus listas guardadas están fijadas. Desfija o quita una en la pestaña Playlists primero.",
-    "saving_off": "Guardar listas está desactivado en este bot."
+    "saving_off": "Guardar listas está desactivado en este bot.",
+    "seek_held": "Otra persona está moviendo la barra. Inténtalo de nuevo en un momento."
   },
   "login": {
     "title": "Conectando con Lynx",
@@ -86,6 +87,9 @@
     "emptyChannelBody": "La música sigue cuando alguien entre.",
     "live": "En directo",
     "seek": "Posición",
+    "seekLocked": "{{name}} está moviendo la barra",
+    "seekReleased": "Se soltó tras 5 segundos",
+    "seekWait": "Espera un momento antes de volver a mover la barra.",
     "like": "Me gusta",
     "liked": "Te gusta",
     "dislike": "No me gusta",
@@ -448,7 +452,7 @@
         "body": "Invitar a escuchar (en el panel o en el mensaje de lo que suena) comparte un enlace. Quien lo abra ve el panel en su propio canal de voz y puede unirse: todos los canales ponen la misma cola en el mismo punto y el volumen es de cada canal. El canal anfitrión decide quién puede unirse (otros canales del servidor, otros servidores), quién edita la cola compartida, la cierra, quita canales o la termina. Al unirte se guarda la cola de tu canal y vuelve cuando sales o termina. Si el canal anfitrión se vacía, el papel de anfitrión pasa al canal que se unió primero. Las escuchas compartidas no se conservan si Lynx se reinicia: cada canal retoma su propia cola."
       }
     },
-    "seekNote": "Ir a un punto de la canción solo se puede aquí, con el slider. No hay comando para eso.",
+    "seekNote": "Ir a un punto de la canción solo se puede aquí, con el slider. No hay comando para eso. Mientras alguien lo arrastra, los demás lo ven bloqueado hasta 5 segundos.",
     "feedbackNote": "Me gusta y No me gusta ajustan tu radio: con No me gusta esa canción no vuelve a tus mezclas.",
     "commandsTitle": "Comandos slash",
     "commandsHint": "Escríbelos en cualquier canal de texto del servidor mientras estás en un canal de voz.",
