@@ -252,6 +252,7 @@ async fn run(st: ApiState, token: String, user: u64, guild: u64, socket: WebSock
                     Ok(GuildEvent::User(u)) if u == user => {
                         conn.state(player.as_ref().map(|p| &p.0)).await && conn.permissions().await
                     }
+                    Ok(GuildEvent::Notices(msg)) => conn.push(msg),
                     Ok(_) => true,
                     Err(broadcast::error::RecvError::Lagged(_)) => conn.permissions().await,
                     Err(broadcast::error::RecvError::Closed) => false,

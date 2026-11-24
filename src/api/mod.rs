@@ -4,6 +4,7 @@
 //! this router only defines `/api/...`, `/ws`, `/cdn/...`, `/img` and `/healthz` (plan/api.md).
 //! `/health` (public report for uptime monitors) is also proxied at the domain root.
 
+pub mod admin;
 mod ai;
 mod auth;
 mod error;
@@ -12,6 +13,7 @@ mod health;
 mod jam;
 mod me;
 mod media;
+mod notices;
 mod player;
 mod playlists;
 mod queue;
@@ -65,6 +67,8 @@ pub enum GuildEvent {
     Settings(u64, serde_json::Value),
     /// Something only one user sees changed (their votes, their DJ role): resend state and permissions.
     User(u64),
+    /// Operator notices changed (every socket): the ready `notices` message.
+    Notices(serde_json::Value),
 }
 
 pub struct Options {
@@ -167,6 +171,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/health/", get(health::health))
         .route("/health/bots/{index}", get(health::bot))
         .route("/api/public", get(auth::public))
+        .route("/api/notices", get(notices::list))
         .route("/api/auth", post(auth::login))
         .route("/api/player", get(player::state))
         .route("/api/player/pause", post(player::pause))
@@ -238,6 +243,7 @@ pub async fn serve(state: AppState) -> Result<()> {
             }
         });
     }
+    tokio::spawn(notices::forward(api.clone(), state.shutdown.clone()));
     let app = router(api);
     let addr: SocketAddr = format!("{}:{}", state.config.http_host, state.config.http_port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;

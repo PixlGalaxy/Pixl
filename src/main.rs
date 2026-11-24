@@ -3,6 +3,7 @@ mod api;
 mod config;
 mod discord;
 mod i18n;
+mod notices;
 mod perms;
 mod player;
 mod procs;
@@ -20,6 +21,7 @@ use crate::{
     config::Config,
     discord::{about::YtdlpVersion, jam::JamInvites, registry::BotRegistry, Bots, Lynx},
     i18n::I18n,
+    notices::NoticeBoard,
     player::{PlayerDeps, PlayerManager},
     procs::ProcessRegistry,
     sources::Sources,
@@ -45,6 +47,8 @@ pub struct AppState {
     pub ai: AiEngine,
     /// Cached yt-dlp version (`/about` and the health endpoint).
     pub ytdlp_version: Arc<YtdlpVersion>,
+    /// Operator notices and runtime flags (admin panel).
+    pub notices: NoticeBoard,
     pub shutdown: CancellationToken,
 }
 
@@ -71,6 +75,11 @@ async fn main() -> Result<()> {
     let procs = ProcessRegistry::new();
     let sources = Sources::new(&config, store.clone(), procs.clone())?;
     let (sessions, session_task) = SessionWriter::spawn(store.clone());
+    let notices = NoticeBoard::load(&store).await?;
+    sources.ytdlp().set_updates_paused(notices.flags().ytdlp_updates_paused);
+    notices::install(notices.clone(), i18n.clone());
+    let notice_task = notices.spawn_ticker(store.clone(), shutdown.clone());
+    let admin_config = api::admin::AdminConfig::from_env()?;
 
     // Background housekeeping.
     let maintenance = store::spawn_maintenance(
@@ -116,6 +125,7 @@ async fn main() -> Result<()> {
         players: players.clone(),
         ai: ai.clone(),
         ytdlp_version: ytdlp_version.clone(),
+        notices: notices.clone(),
         shutdown: shutdown.clone(),
     };
     let lynx = Arc::new(Lynx {
@@ -127,6 +137,7 @@ async fn main() -> Result<()> {
         players: players.clone(),
         jam: JamInvites::new(),
         ytdlp_version,
+        notices: notices.clone(),
         booted: Default::default(),
     });
     lynx.ytdlp_version.refresh_if_stale(&lynx.sources);
@@ -143,6 +154,17 @@ async fn main() -> Result<()> {
             }
         })
     };
+
+    // Admin panel: its own listener (127.0.0.1:4001 by default, nginx serves it on 8081), only when
+    // ADMIN_PASSWORD is set. The Activity listener above never routes anything admin.
+    let admin = admin_config.enabled().then(|| {
+        let state = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = api::admin::serve(state, admin_config).await {
+                tracing::error!(error = %e, "admin http server failed; the admin panel is unavailable");
+            }
+        })
+    });
 
     wait_for_signal().await;
     info!("shutdown requested");
@@ -162,6 +184,10 @@ async fn main() -> Result<()> {
     let _ = tokio::time::timeout(Duration::from_secs(10), async {
         let _ = gateways.await;
         let _ = api.await;
+        if let Some(admin) = admin {
+            let _ = admin.await;
+        }
+        let _ = notice_task.await;
         let _ = maintenance.await;
         for t in ai_tasks {
             let _ = t.await;

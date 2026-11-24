@@ -249,7 +249,16 @@
       "title": "Tu historial está desactivado",
       "body": "Me gusta, No me gusta y la radio usan tu historial de escucha. Actívalo en el panel, en Privacidad."
     },
+    "announcement": {
+      "line": "{label} {when}: {text}",
+      "line_bare": "{label} {when}.",
+      "upcoming": "el {start} ({relative}) durante unos {duration}",
+      "active": "hasta las {end} ({relative})",
+      "label": { "maintenance": "Mantenimiento programado", "maintenance_active": "Mantenimiento en curso", "info": "Aviso", "warning": "Advertencia" },
+      "duration": { "minute": "1 minuto", "minutes": "{n} minutos", "hour": "1 hora", "hours": "{n} horas", "mixed": "{h} h {m} min" }
+    },
     "error": {
+      "maintenance": { "title": "Lynx está en mantenimiento.", "body": "Ahora no se pueden añadir canciones nuevas. La música que ya suena sigue sonando." },
       "generic": { "title": "Algo salió mal.", "body": "Inténtalo de nuevo en un momento." },
       "guild_only": { "title": "Esto solo funciona en un servidor.", "body": "Usa Lynx desde un canal de texto de un servidor." },
       "not_in_voice": { "title": "Primero entra a un canal de voz.", "body": "Pongo música en el canal de voz en el que estás." },

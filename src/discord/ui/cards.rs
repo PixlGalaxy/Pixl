@@ -912,6 +912,21 @@ pub fn error_key(key: &str, args: &[(&str, &str)], i18n: &I18n) -> Message {
     )
 }
 
+/// `/play` refused during the admin panel's maintenance mode: the reason plus the visible notice
+/// line (scheduled downtime with its times), when there is one.
+pub fn maintenance(notice_line: Option<&str>, i18n: &I18n) -> Message {
+    let text = format!(
+        "**{}** {}",
+        i18n.t("bot.error.maintenance.title", &[]),
+        i18n.t("bot.error.maintenance.body", &[])
+    );
+    let mut children = vec![Component::text(text)];
+    if let Some(line) = notice_line {
+        children.push(Component::text(line));
+    }
+    container(Tone::Warn, children).ephemeral(true)
+}
+
 /// Vote to skip in progress, with a button to add a vote.
 pub fn vote(
     title: &str,
@@ -2068,5 +2083,33 @@ yt-dlp: **checking**"
         assert_eq!(format_uptime(Duration::from_secs(86_400 + 5)), "1d 0h 0m");
         assert_eq!(format_bytes(85 * 1024 * 1024 + 300_000), "85 MB");
         assert_eq!(format_bytes(1229 * 1024 * 1024), "1.2 GB");
+    }
+}
+
+#[cfg(test)]
+mod maintenance_tests {
+    use super::*;
+    use crate::discord::ui::FLAG_EPHEMERAL;
+
+    #[test]
+    fn maintenance_refusal_shows_the_notice() {
+        let i = I18n::load("en").unwrap();
+        let line = "-# Scheduled downtime on <t:1700000000:F> (<t:1700000000:R>) for about 10 minutes: **Upgrade**";
+        let v = maintenance(Some(line), &i).to_json_with(&|_| None);
+        assert_ne!(v["flags"].as_u64().unwrap() & FLAG_EPHEMERAL, 0, "only the requester sees it");
+        let texts: Vec<&str> = v["components"][0]["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["content"].as_str())
+            .collect();
+        assert_eq!(texts.len(), 2);
+        assert!(texts[0].starts_with("**Lynx is in maintenance.**"), "{}", texts[0]);
+        assert_eq!(texts[1], line);
+        assert_eq!(v["allowed_mentions"], serde_json::json!({ "parse": [] }));
+        let bare = maintenance(None, &i).to_json_with(&|_| None);
+        assert_eq!(bare["components"][0]["components"].as_array().unwrap().len(), 1);
+        let es = maintenance(None, &I18n::load("es").unwrap()).to_json_with(&|_| None);
+        assert!(es.to_string().contains("mantenimiento"));
     }
 }

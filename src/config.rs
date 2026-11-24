@@ -144,7 +144,7 @@ impl Config {
     }
 }
 
-fn optional(key: &str) -> Option<String> {
+pub(crate) fn optional(key: &str) -> Option<String> {
     env::var(key).ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
 }
 
@@ -158,7 +158,7 @@ fn list(key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn flag(key: &str, default: bool) -> Result<bool> {
+pub(crate) fn flag(key: &str, default: bool) -> Result<bool> {
     match optional(key).map(|v| v.to_ascii_lowercase()) {
         None => Ok(default),
         Some(v) if matches!(v.as_str(), "true" | "1" | "yes" | "on") => Ok(true),
@@ -167,7 +167,7 @@ fn flag(key: &str, default: bool) -> Result<bool> {
     }
 }
 
-fn parse_or<T: FromStr>(key: &str, default: T) -> Result<T>
+pub(crate) fn parse_or<T: FromStr>(key: &str, default: T) -> Result<T>
 where
     T::Err: std::fmt::Display,
 {

@@ -1,5 +1,7 @@
 //! Router tests with an in-memory store and a fake Discord (no network).
 
+mod notices;
+
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
@@ -233,6 +235,7 @@ async fn harness_full(
         players,
         ai,
         ytdlp_version: Default::default(),
+        notices: Default::default(),
         shutdown: CancellationToken::new(),
     };
     let fake = Arc::new(Fake::default());

@@ -11,6 +11,7 @@ mod history;
 mod maintenance;
 mod meta;
 mod nodes;
+mod notices;
 mod panel_sessions;
 mod playlists;
 mod prefs;

@@ -34,10 +34,13 @@ pub async fn public(State(st): State<ApiState>) -> Json<Value> {
             links.insert(k.into(), Value::String(v.clone()));
         }
     }
+    let notices = st.app.notices.public_json(crate::store::now_secs());
     Json(json!({
         "clientId": c.discord_client_id,
         "features": { "ai": c.ai_enabled },
         "links": links,
+        "notices": notices["notices"],
+        "maintenance": notices["maintenance"],
     }))
 }
 
