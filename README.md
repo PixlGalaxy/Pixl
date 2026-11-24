@@ -46,6 +46,56 @@ Before each use Lynx asks Ollama which models are loaded (`/api/ps`, cached for 
 
 On startup the main bot uploads its own button icons as application emojis of its Discord application (16 small PNGs from [assets/emojis/](assets/emojis/), only the missing ones; nothing is ever deleted). If that fails, the buttons simply show text only. To change the icons, edit and run `scripts/gen-emojis.mjs`; emojis are matched by name, so delete the old one in the Developer Portal (Emojis tab) for a redrawn icon to be uploaded again.
 
+## Monitoring
+
+Lynx serves a public health report for uptime monitors at the root of the Activity domain, outside the panel's Discord-only check:
+
+- `GET https://<activity-domain>/health`: the whole report. HTTP `200` when the status is `ok` or `degraded`, `503` when it is `down`.
+- `GET https://<activity-domain>/health/bots/N`: one bot (`0` is the main bot, `1..` the voice bots in `NODE_TOKENS` order). HTTP `200` while that bot is connected, `503` when it is down, `404` for an unknown number.
+
+```json
+{
+  "status": "ok",
+  "version": "0.1.0",
+  "commit": "abc1234",
+  "uptimeSecs": 12345,
+  "checkedAt": "2026-11-24T12:00:00Z",
+  "bots": [
+    { "index": 0, "role": "main", "name": "Lynx", "status": "ok", "connected": true,
+      "shards": { "total": 1, "connected": 1 }, "gatewayPingMs": 42, "guilds": 120,
+      "voiceSessions": 3, "downSince": null },
+    { "index": 1, "role": "voice", "name": "Lynx 2", "status": "ok", "connected": true,
+      "shards": { "total": 1, "connected": 1 }, "gatewayPingMs": 45, "guilds": 80,
+      "voiceSessions": 2, "downSince": null }
+  ],
+  "services": {
+    "database": { "ok": true, "latencyMs": 1 },
+    "ytdlp": { "ok": true, "version": "2026.11.23" },
+    "ollama": { "ok": true }
+  },
+  "players": { "active": 5, "playing": 3 }
+}
+```
+
+`role` is `main` or `voice`; `connected` means every shard of that bot has a live gateway session; `downSince` is when the current outage started (RFC 3339, `null` while fully connected); `ollama` is `null` when Ollama is not configured; `ytdlp.version` is `null` for the first seconds after a start, before yt-dlp has been asked. The report contains no tokens, ids, server or channel names, user data or error details.
+
+Status rules (a gateway outage shorter than 30 seconds is a normal reconnect and does not count yet):
+
+| Status | When |
+| --- | --- |
+| `down` (503) | The main bot has had no gateway connection for over 30 s, or the database does not answer `SELECT 1` within 2 s. |
+| `degraded` (200) | A voice bot has been disconnected for over 30 s, a shard of the main bot has been down for over 30 s, a bot's gateway ping is over 1000 ms, yt-dlp is missing or unusable, or Ollama is configured but does not answer. |
+| `ok` (200) | Everything else. |
+
+A bot's own `status` (used by `/health/bots/N`) follows the same rules for that bot alone. The report is computed at most once every 5 seconds and served from memory in between; the yt-dlp version comes from a cache refreshed every 15 minutes, and Ollama is checked with `/api/ps` (which never loads a model), reusing an answer up to a minute old. nginx limits these paths to 10 requests per second per IP (burst 20; over the limit answers `429`) and marks them `Cache-Control: no-store` and `X-Robots-Tag: noindex`. The internal `/backend/healthz` used by the Docker health check is unchanged.
+
+### Better Uptime (Better Stack)
+
+1. **Monitors → Create monitor**, type *URL becomes unavailable*, URL `https://<activity-domain>/health`. A `503` (down), a timeout or any other non-2xx answer alerts; `degraded` still answers `200`.
+2. Optional, for partial outages: a second monitor on the same URL of type *URL doesn't contain keyword* / *Keyword should not exist* with the keyword `"degraded"` (with the quotes, so it matches the status value and never a bot name).
+3. Optional, one monitor per bot: `https://<activity-domain>/health/bots/0` (main), `https://<activity-domain>/health/bots/1`, and so on, each of type *URL becomes unavailable*.
+4. **Status pages → your page → Structure**: add a section "Discord bots" and put the monitors in it: "Lynx" (the `/health` monitor, plus the keyword monitor if you made it) and, optionally, one entry per bot. Lynx then shows green when everything works, degraded when the keyword monitor fires, and red when `/health` fails.
+
 ## Development
 
 The Rust toolchain runs inside Docker, so nothing needs to be installed on the host:

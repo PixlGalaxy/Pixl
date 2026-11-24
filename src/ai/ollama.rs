@@ -53,6 +53,8 @@ struct Inner {
     /// capabilities); then `think: false` is sent, since structured answers do not need it.
     thinking: Mutex<HashMap<String, bool>>,
     state: Mutex<SelectState>,
+    /// Last `/api/ps` answer: when, and whether Ollama answered (health endpoint).
+    last_ps: Mutex<Option<(Instant, bool)>>,
 }
 
 #[derive(Default)]
@@ -157,6 +159,7 @@ impl Ollama {
                 sem: Arc::new(Semaphore::new(1)),
                 thinking: Mutex::new(HashMap::new()),
                 state: Mutex::new(SelectState::default()),
+                last_ps: Mutex::new(None),
             }),
         }
     }
@@ -185,6 +188,30 @@ impl Ollama {
 
     /// Names of the models loaded in memory (`/api/ps`). None when Ollama does not answer.
     pub async fn loaded_models(&self) -> Option<Vec<String>> {
+        let out = self.fetch_loaded_models().await;
+        if let Ok(mut last) = self.inner.last_ps.lock() {
+            *last = Some((Instant::now(), out.is_some()));
+        }
+        out
+    }
+
+    /// Whether Ollama answers. Reuses the last `/api/ps` answer when it is younger than `max_age`,
+    /// else asks `/api/ps` (lists loaded models, never loads one).
+    pub async fn reachable(&self, max_age: Duration) -> bool {
+        let recent = self
+            .inner
+            .last_ps
+            .lock()
+            .ok()
+            .and_then(|l| *l)
+            .filter(|(at, _)| at.elapsed() < max_age);
+        match recent {
+            Some((_, ok)) => ok,
+            None => self.loaded_models().await.is_some(),
+        }
+    }
+
+    async fn fetch_loaded_models(&self) -> Option<Vec<String>> {
         #[derive(Deserialize)]
         struct Ps {
             #[serde(default)]

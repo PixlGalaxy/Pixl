@@ -367,6 +367,14 @@ impl AiEngine {
         self.inner.ollama.is_some()
     }
 
+    /// Whether the configured Ollama answers (None: not configured). See [`ollama::Ollama::reachable`].
+    pub async fn ollama_reachable(&self, max_age: Duration) -> Option<bool> {
+        match &self.inner.ollama {
+            Some(o) => Some(o.reachable(max_age).await),
+            None => None,
+        }
+    }
+
     /// Genre tagging runs whenever a tag source is configured (now-playing genres work without
     /// AI_ENABLED); the taste job only with AI_ENABLED. Both end on `stop`.
     pub fn spawn_background(&self, stop: CancellationToken) -> Vec<JoinHandle<()>> {

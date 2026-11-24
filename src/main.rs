@@ -18,7 +18,7 @@ use tracing::{info, warn};
 use crate::{
     ai::AiEngine,
     config::Config,
-    discord::{jam::JamInvites, registry::BotRegistry, Bots, Lynx},
+    discord::{about::YtdlpVersion, jam::JamInvites, registry::BotRegistry, Bots, Lynx},
     i18n::I18n,
     player::{PlayerDeps, PlayerManager},
     procs::ProcessRegistry,
@@ -43,6 +43,8 @@ pub struct AppState {
     pub bots: Arc<BotRegistry>,
     pub players: PlayerManager,
     pub ai: AiEngine,
+    /// Cached yt-dlp version (`/about` and the health endpoint).
+    pub ytdlp_version: Arc<YtdlpVersion>,
     pub shutdown: CancellationToken,
 }
 
@@ -103,6 +105,7 @@ async fn main() -> Result<()> {
     }
     tokio::spawn(stream_limit_task(sources.clone(), players.clone(), shutdown.clone()));
 
+    let ytdlp_version = Arc::new(YtdlpVersion::default());
     let state = AppState {
         config: config.clone(),
         store: store.clone(),
@@ -112,6 +115,7 @@ async fn main() -> Result<()> {
         bots: bots.registry.clone(),
         players: players.clone(),
         ai: ai.clone(),
+        ytdlp_version: ytdlp_version.clone(),
         shutdown: shutdown.clone(),
     };
     let lynx = Arc::new(Lynx {
@@ -122,7 +126,7 @@ async fn main() -> Result<()> {
         bots: bots.registry.clone(),
         players: players.clone(),
         jam: JamInvites::new(),
-        ytdlp_version: Default::default(),
+        ytdlp_version,
         booted: Default::default(),
     });
     lynx.ytdlp_version.refresh_if_stale(&lynx.sources);
