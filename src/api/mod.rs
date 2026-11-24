@@ -92,6 +92,8 @@ pub struct Inner {
     pub genres: TtlCache<String, Vec<String>>,
     /// Profiles being fetched in the background (deduplication).
     pub profile_pending: dashmap::DashSet<u64>,
+    /// Open WebSockets per user (cap, and closing them on sign-out).
+    pub sockets: ws::Sockets,
     pub events: broadcast::Sender<GuildEvent>,
     pub media: reqwest::Client,
     pub search_refused_logged: AtomicBool,
@@ -129,6 +131,7 @@ impl ApiState {
             profiles: TtlCache::new(PROFILE_TTL, 20_000),
             genres: TtlCache::new(GENRE_TTL, 20_000),
             profile_pending: dashmap::DashSet::new(),
+            sockets: ws::Sockets::default(),
             events: broadcast::channel(256).0,
             media,
             search_refused_logged: AtomicBool::new(false),
@@ -154,7 +157,7 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/api/public", get(auth::public))
-        .route("/api/auth", post(auth::login))
+        .route("/api/auth", post(auth::login).delete(auth::logout))
         .route("/api/player", get(player::state))
         .route("/api/player/pause", post(player::pause))
         .route("/api/player/resume", post(player::resume))

@@ -232,5 +232,14 @@ export const api = {
   forgetTrack: (key: string) => request<void>(`/me/history/${encodeURIComponent(key)}`, 'DELETE'),
   /** Voice channel the panel follows (polling fallback of the socket's `channel` message). */
   meChannel: () => request<{ channel: ChannelRef | null }>('/me/channel'),
-  deleteData: () => request<void>('/me/data', 'DELETE'),
+  /** The wipe also signs out every session of the user: sign in again right away (silently). */
+  deleteData: async () => {
+    await request<void>('/me/data', 'DELETE')
+    await renewSession()
+  },
+  /** Sign this session out (`DELETE /api/auth`); its socket closes too. */
+  signOut: async () => {
+    await request<void>('/auth', 'DELETE')
+    setSession(null)
+  },
 }

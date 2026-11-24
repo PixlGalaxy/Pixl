@@ -788,6 +788,8 @@ async fn history_disabled_blocks_feedback() {
     assert_eq!(v, json!({ "topGenres": [], "topTracks": [] }));
     let (s, _) = h.call("DELETE", "/api/me/data", Some(&ana), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
+    // The wipe signs every session out.
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
 
     let (s, v) = h
         .call("POST", "/api/ai/start", Some(&ana), Some(json!({ "channelId": "100" })))
@@ -867,32 +869,53 @@ where
     serde_json::from_str(msg.to_text().unwrap()).unwrap()
 }
 
+type TestSocket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Serve the router on a local port (real sockets).
+async fn serve(h: &Harness) -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = h.app.clone();
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    addr
+}
+
+/// Open `/ws` (no token in the URL) and send the `auth` message first.
+async fn ws_open(addr: std::net::SocketAddr, session: &str) -> TestSocket {
+    use futures_util::SinkExt;
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await.unwrap();
+    let hello = json!({ "type": "auth", "session": session }).to_string();
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::text(hello))
+        .await
+        .unwrap();
+    socket
+}
+
+/// Skip data messages until the server closes; its close code.
+async fn close_code(socket: &mut TestSocket) -> Option<u16> {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::Message;
+    loop {
+        let msg = tokio::time::timeout(Duration::from_secs(10), socket.next()).await.unwrap();
+        match msg {
+            Some(Ok(Message::Close(frame))) => return frame.map(|f| u16::from(f.code)),
+            Some(Ok(_)) => {}
+            _ => return None,
+        }
+    }
+}
+
 #[tokio::test]
 async fn websocket_handshake() {
     let h = harness().await;
     h.fake.set_voice(ANA, Some(VOICE));
     let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let addr = serve(&h).await;
 
-    // Through the router: a bad session is refused before the upgrade is looked at.
-    let req = Request::builder()
-        .uri(format!("/ws?session={}&channelId=100", "f".repeat(64)))
-        .header("connection", "upgrade")
-        .header("upgrade", "websocket")
-        .header("sec-websocket-version", "13")
-        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
-        .body(Body::empty())
-        .unwrap();
-    let res = h.app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-
-    // A real socket with a valid session gets the full state (nothing playing) and permissions.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let app = h.app.clone();
-    tokio::spawn(async move { axum::serve(listener, app).await });
-
-    let url = format!("ws://{addr}/ws?session={ana}&channelId=100");
-    let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    // A real socket with a valid session (sent as the first message, never in the URL) gets the full
+    // state (nothing playing) and permissions.
+    let mut socket = ws_open(addr, &ana).await;
     let v = next(&mut socket).await;
     assert_eq!(
         v,
@@ -922,9 +945,100 @@ async fn websocket_handshake() {
     assert_eq!(v["type"], "permissions");
     assert_eq!(v["permissions"]["canControl"], false);
 
-    // A bad session over a real socket fails the handshake.
-    let bad = format!("ws://{addr}/ws?session={}&channelId=100", "0".repeat(64));
-    assert!(tokio_tungstenite::connect_async(bad).await.is_err());
+    // A bad session in the auth message: closed with the unauthorized code (the panel renews it).
+    let mut bad = ws_open(addr, &"0".repeat(64)).await;
+    assert_eq!(close_code(&mut bad).await, Some(super::ws::CLOSE_UNAUTHORIZED));
+    // A session in the URL is not looked at: without the auth message the socket gets nothing.
+    let (mut legacy, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws?session={ana}"))
+        .await
+        .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(1), futures_util::StreamExt::next(&mut legacy)).await;
+    assert!(first.is_err(), "no data before the auth message");
+    // A first message that is not `auth`: refused.
+    {
+        use futures_util::SinkExt;
+        legacy
+            .send(tokio_tungstenite::tungstenite::Message::text(r#"{"type":"ping"}"#))
+            .await
+            .unwrap();
+    }
+    assert_eq!(close_code(&mut legacy).await, Some(super::ws::CLOSE_UNAUTHORIZED));
+}
+
+#[tokio::test]
+async fn websocket_without_auth_closes_after_the_timeout() {
+    let h = harness().await;
+    let addr = serve(&h).await;
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await.unwrap();
+    assert_eq!(close_code(&mut socket).await, Some(super::ws::CLOSE_AUTH_TIMEOUT));
+}
+
+#[tokio::test]
+async fn websockets_per_user_are_capped_and_closed_on_sign_out() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    let (ana, _) = h.login("ana", Some(VOICE)).await;
+    let (other, _) = h.login("ana", Some(VOICE)).await;
+    let addr = serve(&h).await;
+
+    let mut sockets = Vec::new();
+    for _ in 0..super::ws::MAX_SOCKETS_PER_USER {
+        let mut s = ws_open(addr, &ana).await;
+        assert_eq!(next(&mut s).await["type"], "channel");
+        sockets.push(s);
+    }
+    assert_eq!(h.state.sockets.count(ANA), super::ws::MAX_SOCKETS_PER_USER);
+    // One more: the oldest is closed, the count stays at the cap.
+    let mut newest = ws_open(addr, &other).await;
+    assert_eq!(next(&mut newest).await["type"], "channel");
+    assert_eq!(close_code(&mut sockets[0]).await, Some(super::ws::CLOSE_REPLACED));
+    assert_eq!(h.state.sockets.count(ANA), super::ws::MAX_SOCKETS_PER_USER);
+
+    // Signing one session out closes its sockets right away, not the other session's.
+    let (s, _) = h.call("DELETE", "/api/auth", Some(&ana), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert_eq!(close_code(&mut sockets[1]).await, Some(super::ws::CLOSE_UNAUTHORIZED));
+    let (s, _) = h.call("GET", "/api/me/channel", Some(&ana), None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, _) = h.call("GET", "/api/me/channel", Some(&other), None).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = h.call("DELETE", "/api/auth", None, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    // Closed sockets unregister.
+    for _ in 0..50 {
+        if h.state.sockets.count(ANA) == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(h.state.sockets.count(ANA), 1, "only the other session's socket is left");
+}
+
+#[tokio::test]
+async fn deleting_my_data_signs_out_every_session() {
+    let h = harness().await;
+    h.fake.set_voice(ANA, Some(VOICE));
+    let (a, _) = h.login("ana", Some(VOICE)).await;
+    let (b, _) = h.login("ana", Some(TEXT)).await;
+    let (boss, _) = h.login("boss", None).await;
+    let addr = serve(&h).await;
+    let mut socket = ws_open(addr, &b).await;
+    assert_eq!(next(&mut socket).await["type"], "channel");
+
+    let (s, _) = h.call("DELETE", "/api/me/data", Some(&a), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    for t in [&a, &b] {
+        let (s, _) = h.call("GET", "/api/me/prefs", Some(t), None).await;
+        assert_eq!(s, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(close_code(&mut socket).await, Some(super::ws::CLOSE_UNAUTHORIZED));
+    // Also gone from SQLite, not only from the cache.
+    let restarted = ApiState::new(h.state.app.clone(), h.fake.clone(), Options::default()).unwrap();
+    assert!(restarted.sessions.get(&a).await.is_none());
+    assert!(restarted.sessions.get(&boss).await.is_some(), "other users stay signed in");
+    // Signing in again works.
+    let (_, v) = h.login("ana", Some(VOICE)).await;
+    assert!(v["session"].is_string());
 }
 
 #[tokio::test]
@@ -1006,14 +1120,8 @@ async fn websocket_follows_voice_moves() {
     let h = harness().await;
     h.fake.set_voice(ANA, Some(VOICE));
     let (ana, _) = h.login("ana", Some(TEXT)).await;
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let app = h.app.clone();
-    tokio::spawn(async move { axum::serve(listener, app).await });
-
-    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws?session={ana}"))
-        .await
-        .unwrap();
+    let addr = serve(&h).await;
+    let mut socket = ws_open(addr, &ana).await;
     assert_eq!(next(&mut socket).await["channel"]["id"], "100");
     assert_eq!(next(&mut socket).await["type"], "state");
     assert_eq!(next(&mut socket).await["type"], "permissions");
@@ -1649,6 +1757,7 @@ async fn saved_playlists_follow_history_and_data_deletion() {
     assert_eq!(v["playlists"].as_array().unwrap().len(), 1, "saved ones stay until removed");
     let (s, _) = h.call("DELETE", "/api/me/data", Some(&ana), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
+    let (ana, _) = h.login("ana", None).await;
     let (_, v) = h.call("GET", "/api/playlists", Some(&ana), None).await;
     assert_eq!(v["playlists"], json!([]), "Delete my data removes saved playlists");
 }

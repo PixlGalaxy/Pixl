@@ -147,6 +147,22 @@ impl Sessions {
         self.map.insert(hash, session);
     }
 
+    /// Sign one token out (memory and SQLite). Err when the row could not be deleted.
+    pub async fn revoke(&self, token: &str) -> anyhow::Result<()> {
+        let hash = hash_token(token);
+        self.map.remove(&hash);
+        self.store.delete_panel_session(&hash).await
+    }
+
+    /// Sign a user out everywhere (memory and SQLite); returns how many stored sessions were removed.
+    pub async fn revoke_user(&self, user_id: u64) -> anyhow::Result<u64> {
+        self.map.retain(|_, s| s.user_id != user_id);
+        let n = self.store.delete_user_panel_sessions(user_id).await?;
+        // A lookup that read its row before the delete may have cached it again meanwhile.
+        self.map.retain(|_, s| s.user_id != user_id);
+        Ok(n)
+    }
+
     /// Drop expired sessions from memory (SQLite rows go in the store maintenance sweep).
     pub fn sweep(&self) -> usize {
         let before = self.map.len();
@@ -277,6 +293,24 @@ mod tests {
             created_at: 0,
             expires_at: 0,
         }
+    }
+
+    #[tokio::test]
+    async fn revoked_sessions_are_gone_from_memory_and_sqlite() {
+        let store = Store::open_in_memory().await.unwrap();
+        let s = Sessions::new(store.clone(), Duration::from_secs(60), 10);
+        let a = s.create(session()).await;
+        let b = s.create(session()).await;
+        let other = s.create(Session { user_id: 9, ..session() }).await;
+        s.revoke(&a).await.unwrap();
+        assert!(s.get(&a).await.is_none());
+        assert!(s.get(&b).await.is_some());
+        assert_eq!(s.revoke_user(1).await.unwrap(), 1);
+        assert!(s.get(&b).await.is_none());
+        // Not only from the memory cache: a restart (fresh cache) refuses them too.
+        let fresh = Sessions::new(store, Duration::from_secs(60), 10);
+        assert!(fresh.get(&b).await.is_none());
+        assert!(fresh.get(&other).await.is_some());
     }
 
     #[tokio::test]
