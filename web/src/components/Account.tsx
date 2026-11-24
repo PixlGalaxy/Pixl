@@ -19,6 +19,7 @@ import {
   ACCENTS,
   applyAccent,
   applyTheme,
+  originOf,
   getAccent,
   getTheme,
   onAppearanceChange,
@@ -113,8 +114,8 @@ function Appearance() {
                 key={m}
                 type="button"
                 aria-pressed={selected}
-                onClick={() => {
-                  applyTheme(m)
+                onClick={(e) => {
+                  applyTheme(m, originOf(e.currentTarget))
                   void saveAppearance({ theme: m })
                 }}
                 className={cx(

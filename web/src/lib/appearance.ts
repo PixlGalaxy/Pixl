@@ -94,11 +94,50 @@ export function isDark(): boolean {
   return document.documentElement.classList.contains('dark')
 }
 
-export function applyTheme(next: ThemeMode) {
-  mode = next
-  store(THEME_KEY, next)
-  paintTheme()
-  notify()
+type ViewTransitionDoc = Document & {
+  startViewTransition?: (update: () => void) => { ready: Promise<void> }
+}
+
+/**
+ * Switch the theme. With `origin` (the clicked button's centre, in viewport px) and a browser
+ * that supports View Transitions, the new theme grows out of the button as a circle; without
+ * it, or when the user prefers reduced motion, it switches at once.
+ */
+export function applyTheme(next: ThemeMode, origin?: { x: number; y: number }) {
+  const update = () => {
+    mode = next
+    store(THEME_KEY, next)
+    paintTheme()
+  }
+  const doc = document as ViewTransitionDoc
+  const wasDark = isDark()
+  const willBeDark = next === 'system' ? (media?.matches ?? true) : next === 'dark'
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  if (!origin || !doc.startViewTransition || reduced || wasDark === willBeDark) {
+    update()
+    notify()
+    return
+  }
+  const { x, y } = origin
+  const radius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y))
+  const transition = doc.startViewTransition(() => {
+    update()
+    notify()
+  })
+  transition.ready
+    .then(() => {
+      document.documentElement.animate(
+        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
+        { duration: 650, easing: 'cubic-bezier(.4, 0, .2, 1)', pseudoElement: '::view-transition-new(root)' },
+      )
+    })
+    .catch(() => {})
+}
+
+/** Centre of the element that was clicked, for `applyTheme`'s reveal origin. */
+export function originOf(el: Element): { x: number; y: number } {
+  const r = el.getBoundingClientRect()
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
 }
 
 export function applyAccent(next: AccentId) {

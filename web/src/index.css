@@ -416,3 +416,17 @@ html {
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
 @keyframes fade-in  { from { opacity: 0; } }
 @keyframes pop-in   { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
+
+/* Theme switch: the new theme is revealed in a circle from the button (lib/appearance.ts
+   animates ::view-transition-new(root)); the default cross-fade is turned off. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 2;
+}

@@ -1,7 +1,7 @@
 import { Headphones, Moon, Sun } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { applyTheme, isDark } from '../lib/appearance'
+import { applyTheme, isDark, originOf } from '../lib/appearance'
 import { onOpenAccount } from '../lib/events'
 import { cx } from '../lib/format'
 import { useLynx } from '../lib/lynx'
@@ -50,9 +50,9 @@ function ThemeToggle() {
       type="button"
       aria-label={dark ? t('topbar.lightTheme') : t('topbar.darkTheme')}
       title={dark ? t('topbar.lightTheme') : t('topbar.darkTheme')}
-      onClick={() => {
+      onClick={(e) => {
         const next = dark ? 'light' : 'dark'
-        applyTheme(next)
+        applyTheme(next, originOf(e.currentTarget))
         void saveAppearance({ theme: next })
       }}
       className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg"
