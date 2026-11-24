@@ -1211,7 +1211,8 @@ mod tests {
         assert_eq!(r[..2], [format!("bytes=0-{last}"), format!("bytes=600000-{last}")], "{r:?}");
         let end = format!("bytes={}-{last}", SIZE - 500);
         let after_prefix = format!("bytes={PREFIX_CACHE}-{last}");
-        assert!(r.contains(&end), "{r:?}");
+        // The seek to the end needs its own range only when the read-ahead has not reached the
+        // end yet (timing-dependent), so it is allowed but not required.
         assert!(r[2..].iter().all(|x| *x == end || *x == after_prefix), "{r:?}");
     }
 
