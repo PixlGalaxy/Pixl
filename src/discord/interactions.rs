@@ -46,6 +46,8 @@ struct Inv<'a> {
     user_id: u64,
     text_channel: u64,
     permissions: Option<u64>,
+    /// The member who interacted (roles included), for permissions in other channels.
+    member: Option<Member>,
     name: String,
     avatar: Option<String>,
     deferred: AtomicBool,
@@ -72,6 +74,7 @@ impl<'a> Inv<'a> {
             user_id: user.id.get(),
             text_channel: channel,
             permissions: member.and_then(|m| m.permissions).map(|p| p.bits()),
+            member: member.cloned(),
             name: member
                 .and_then(|m| m.nick.clone())
                 .or_else(|| user.global_name.clone())
@@ -1126,15 +1129,25 @@ async fn jam_button(inv: &Inv<'_>, player: PlayerHandle, vc: u64) -> Message {
         lynx.config.discord_client_id.parse().unwrap_or(0)
     };
     let share = jam.view().share_link(&app.to_string());
-    let can_invite = main
-        .channel_permissions(inv.guild_id, vc)
-        .is_none_or(|p| p.administrator() || p.create_instant_invite());
-    let code = if can_invite {
+    // A server invite only for people who could make one themselves in that voice channel (the bot
+    // must be able to as well); everyone else gets the Activity link only.
+    let clicker = inv
+        .member
+        .as_ref()
+        .and_then(|m| main.member_permissions_in(inv.guild_id, vc, m));
+    let code = if may_share_invite(clicker, main.channel_permissions(inv.guild_id, vc)) {
         lynx.jam.get_or_create(&main.http, app, vc).await.ok()
     } else {
         None
     };
     cards::jam(vc, &share, code.as_deref(), &lynx.i18n)
+}
+
+/// Whether "Invite to jam" may hand out a server invite: the clicker has Create Invite (or
+/// Administrator) in the voice channel (unknown: no), and the bot is not known to lack it.
+fn may_share_invite(clicker: Option<serenity::all::Permissions>, bot: Option<serenity::all::Permissions>) -> bool {
+    let invite = |p: serenity::all::Permissions| p.administrator() || p.create_instant_invite();
+    clicker.is_some_and(invite) && bot.is_none_or(invite)
 }
 
 /// "Play it again": restart the deleted queue in the user's voice channel.
@@ -1205,5 +1218,19 @@ mod tests {
         assert!(!suggest("song", &limits, 1), "over the budget: no suggestions");
         assert!(!limits.search.allow(1), "the panel search shares it");
         assert!(suggest("song", &limits, 2), "per user");
+    }
+
+    #[test]
+    fn jam_invites_need_create_invite_for_the_clicker() {
+        use serenity::all::Permissions as P;
+        let invite = Some(P::CREATE_INSTANT_INVITE);
+        let admin = Some(P::ADMINISTRATOR);
+        let plain = Some(P::VIEW_CHANNEL | P::CONNECT);
+        assert!(may_share_invite(invite, invite));
+        assert!(may_share_invite(admin, invite));
+        assert!(may_share_invite(invite, None), "bot permissions unknown: Discord decides");
+        assert!(!may_share_invite(plain, invite), "no Create Invite: Activity link only");
+        assert!(!may_share_invite(None, invite), "unknown clicker permissions: no invite");
+        assert!(!may_share_invite(invite, plain), "the bot can't either");
     }
 }
