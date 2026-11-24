@@ -262,7 +262,9 @@ impl Sources {
                     config.max_concurrent_extractions,
                     config.ytdlp_cookies_file.clone(),
                 )
-                .with_limit_rate(config.ytdlp_limit_rate.clone()),
+                .with_limit_rate(config.ytdlp_limit_rate.clone())
+                .with_cache_dir(Some(config.ytdlp_cache_dir()))
+                .with_player_client(config.ytdlp_player_client.clone()),
                 spotify,
                 apple: apple::Apple::new(http.clone()),
                 lrclib: lyrics::Lrclib::new(http.clone()),
@@ -665,6 +667,29 @@ impl Sources {
         }
     }
 
+    /// Start resolving the stream of a track about to play (e.g. while the bot joins the voice
+    /// channel), so [`Self::prepare`] finds the URL cached or joins this run. Runs in the
+    /// background; never fails. Catalog tracks are matched first (the match is cached too).
+    pub fn warm_stream(&self, track: &TrackInfo, owner: &ProcOwner) {
+        let (sources, track, owner) = (self.clone(), track.clone(), owner.clone());
+        tokio::spawn(async move {
+            let Ok(track) = sources.ensure_youtube(&track).await else {
+                return;
+            };
+            match &track.youtube_id {
+                Some(id) => {
+                    // A known substitute (or known failure) is handled by prepare itself.
+                    let known: Option<Option<String>> =
+                        sources.inner.store.cache_get(fallback::CACHE_NS, id).await.ok().flatten();
+                    if known.is_none() {
+                        sources.inner.ytdlp.warm(&watch_url(id), id, &owner).await;
+                    }
+                }
+                None => sources.inner.ytdlp.warm(&track.url, &track.url, &owner).await,
+            }
+        });
+    }
+
     /// Forget a cached stream URL (e.g. after the CDN answered 403), including the substitute's.
     pub fn invalidate_stream(&self, track: &TrackInfo) {
         let key = track.youtube_id.as_deref().unwrap_or(&track.url);
@@ -853,6 +878,7 @@ mod tests {
             ollama_load_retry_secs: 30,
             ytdlp_cookies_file: None,
             ytdlp_limit_rate: None,
+            ytdlp_player_client: None,
             empty_channel_timeout_secs: 0,
             max_concurrent_extractions: 2,
             stream_cache_max_mb: 100,
