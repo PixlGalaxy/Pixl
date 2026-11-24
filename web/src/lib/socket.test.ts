@@ -1,4 +1,4 @@
-// Run with `pnpm test` (Node's test runner; Node strips the types).
+// Run with `pnpm test` (types are stripped by the test runner).
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { authMessage, closeAction, WS_CLOSE } from './socket.ts'
