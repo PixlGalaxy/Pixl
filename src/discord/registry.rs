@@ -697,7 +697,7 @@ mod tests {
                     i,
                     Arc::new(Http::new("x")),
                     Arc::new(Cache::new()),
-                    Songbird::serenity(),
+                    { crate::test_support::songbird_scheduler(); Songbird::serenity() },
                 ))
             })
             .collect();

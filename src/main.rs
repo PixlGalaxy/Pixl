@@ -17,6 +17,8 @@ mod stats;
 mod store;
 mod text;
 mod updates;
+#[cfg(test)]
+mod test_support;
 
 use std::{sync::Arc, time::Duration};
 

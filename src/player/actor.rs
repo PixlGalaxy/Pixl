@@ -2826,7 +2826,7 @@ mod tests {
             0,
             Arc::new(Http::new("x")),
             Arc::new(Cache::new()),
-            Songbird::serenity(),
+            { crate::test_support::songbird_scheduler(); Songbird::serenity() },
         ));
         let bots = Arc::new(BotRegistry::new(vec![bot.clone()]));
         let ai = AiEngine::new(&config, store.clone(), sources.clone());
@@ -2909,7 +2909,7 @@ mod tests {
             0,
             Arc::new(Http::new("x")),
             Arc::new(Cache::new()),
-            Songbird::serenity(),
+            { crate::test_support::songbird_scheduler(); Songbird::serenity() },
         ));
         let bots = Arc::new(BotRegistry::new(vec![bot.clone()]));
         let ai = AiEngine::new(&config, store.clone(), sources.clone());
